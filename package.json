@@ -1,0 +1,16 @@
+{
+  "name": "boxwarden",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  },
+  "trustedDependencies": [
+    "electron"
+  ]
+}
