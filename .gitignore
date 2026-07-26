@@ -1,0 +1,81 @@
+# Dependencies
+node_modules/
+jspm_packages/
+.pnp
+.pnp.js
+.pnp.cjs
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# Diagnostic / profiling output
+pids
+*.pid
+*.seed
+*.pid.lock
+*.heapsnapshot
+*.cpuprofile
+
+# Build output (electron-vite emits to out/, electron-builder to release/)
+out/
+dist/
+dist-ssr/
+build/
+release/
+*.tsbuildinfo
+
+# Test and coverage output
+coverage/
+*.lcov
+.nyc_output/
+.vitest-cache/
+
+# Caches
+.cache/
+.parcel-cache/
+.eslintcache
+.stylelintcache
+.npm
+.rpt2_cache/
+.rts2_cache_cjs/
+.rts2_cache_es/
+.rts2_cache_umd/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Editor and OS cruft
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/launch.json
+!.vscode/tasks.json
+.idea/
+*.swp
+*.swo
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# Local tooling
+.node_repl_history
+*.tgz
+.yarn-integrity

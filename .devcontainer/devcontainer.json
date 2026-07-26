@@ -1,0 +1,78 @@
+{
+  "name": "boxwarden",
+
+  // Pinned to an exact image version rather than the floating ":22" tag so a
+  // rebuild months from now produces the same toolchain. 5.0.1-22-trixie is
+  // what mcr.microsoft.com/devcontainers/typescript-node:22 resolves to as of
+  // this commit (same digest), so this is a pin, not a change of base.
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:5.0.1-22-trixie",
+
+  "features": {
+    // ---------------------------------------------------------------------
+    // Why docker-OUTSIDE-of-docker (DooD) and not docker-in-docker (DinD):
+    //
+    // boxwarden's entire job is to discover and manage the dev containers
+    // running on the developer's machine. DinD would give this container its
+    // own private, empty Docker daemon — a nested sandbox with no containers
+    // in it except the ones we create for ourselves. We would be developing
+    // against a world that looks nothing like the one the app ships into.
+    //
+    // DooD instead bind-mounts the HOST's Docker socket in, so `docker ps`
+    // and dockerode inside this container see the developer's real daemon and
+    // their real dev containers. That is what we need to test discovery,
+    // labels (devcontainer.local_folder), start/stop, and status.
+    //
+    // Two consequences that will bite if forgotten:
+    //   1. Any path we hand to the Docker API is interpreted by the HOST
+    //      daemon, so it must be a host path. Paths inside this container are
+    //      NOT meaningful to it. This is exactly the translation problem the
+    //      app has to solve anyway (see the host path translation work), so
+    //      developing this way keeps us honest.
+    //   2. We are talking to the real daemon. Containers we stop or remove
+    //      while poking at things are the developer's actual containers.
+    // ---------------------------------------------------------------------
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1.10.0": {
+      "version": "latest",
+      "moby": true,
+      "installDockerBuildx": true,
+      "dockerDashComposeVersion": "v2"
+    }
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "bradlc.vscode-tailwindcss"
+      ],
+      "settings": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+          "source.fixAll.eslint": "explicit"
+        },
+        "eslint.useFlatConfig": true,
+        // Tailwind IntelliSense does not activate on its own inside
+        // clsx/cva-style helpers; these teach it where class strings live.
+        "tailwindCSS.experimental.classRegex": [
+          ["cva\\(([^)]*)\\)", "[\"'`]([^\"'`]*).*?[\"'`]"],
+          ["cx\\(([^)]*)\\)", "(?:'|\"|`)([^']*)(?:'|\"|`)"]
+        ],
+        "typescript.tsdk": "node_modules/typescript/lib"
+      }
+    }
+  },
+
+  // Guarded only because there is no package.json yet at Phase 1 — a bare
+  // `npm install` exits non-zero with ENOENT and makes the very first container
+  // open look broken. Once package.json lands this behaves identically to
+  // `npm install`, and the guard can be dropped.
+  "postCreateCommand": "if [ -f package.json ]; then npm install; fi",
+
+  "remoteUser": "node"
+
+  // Deliberately NOT configured: X11/Wayland forwarding. The Electron GUI is
+  // expected to run on the host. This container is for main-process code,
+  // tests, and linting.
+}
