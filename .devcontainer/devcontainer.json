@@ -36,6 +36,33 @@
       "moby": true,
       "installDockerBuildx": true,
       "dockerDashComposeVersion": "v2"
+    },
+
+    // ---------------------------------------------------------------------
+    // Bun is the package manager and script runner ONLY. It is deliberately
+    // not the runtime, and that is not a preference we can revisit:
+    //
+    //   Electron ships its own Node embedded inside Chromium. The `electron`
+    //   binary executes main and renderer code in THAT interpreter. Running
+    //   `bun run dev` only spawns the electron binary — our app code still
+    //   runs on Electron's Node, never on Bun. There is no flag that changes
+    //   this.
+    //
+    // So the split is:
+    //   bun  -> `bun install`, `bun run <script>`
+    //   node -> electron, electron-vite, vitest, electron-builder
+    //
+    // Verified compatible: dockerode's HTTP-over-unix-socket transport
+    // behaves identically under Bun and Node, so Bun is safe for running the
+    // Docker-facing test suites.
+    //
+    // Gotcha this project WILL hit: Bun blocks dependency lifecycle scripts by
+    // default. Electron's postinstall is what downloads its ~100MB binary, so
+    // package.json needs `"trustedDependencies": ["electron"]` or the app will
+    // install "successfully" and then refuse to launch.
+    // ---------------------------------------------------------------------
+    "ghcr.io/devcontainers-extra/features/bun:1.1.0": {
+      "version": "1.3.14"
     }
   },
 
@@ -44,7 +71,8 @@
       "extensions": [
         "dbaeumer.vscode-eslint",
         "esbenp.prettier-vscode",
-        "bradlc.vscode-tailwindcss"
+        "bradlc.vscode-tailwindcss",
+        "oven.bun-vscode"
       ],
       "settings": {
         "editor.defaultFormatter": "esbenp.prettier-vscode",
@@ -64,11 +92,11 @@
     }
   },
 
-  // Guarded only because there is no package.json yet at Phase 1 — a bare
-  // `npm install` exits non-zero with ENOENT and makes the very first container
-  // open look broken. Once package.json lands this behaves identically to
-  // `npm install`, and the guard can be dropped.
-  "postCreateCommand": "if [ -f package.json ]; then npm install; fi",
+  // Guarded only because there is no package.json yet at Phase 1 — installing
+  // with no manifest exits non-zero and makes the very first container open
+  // look broken. Once package.json lands this is just `bun install`, and the
+  // guard can be dropped.
+  "postCreateCommand": "if [ -f package.json ]; then bun install; fi",
 
   "remoteUser": "node"
 
