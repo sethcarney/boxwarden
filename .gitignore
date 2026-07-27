@@ -75,6 +75,10 @@ ehthumbs.db
 Thumbs.db
 desktop.ini
 
+# Claude Code personal settings. The rest of .claude/ (project settings,
+# skills, commands) is meant to be committed and shared.
+.claude/settings.local.json
+
 # Local tooling
 .node_repl_history
 *.tgz
