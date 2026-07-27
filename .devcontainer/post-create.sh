@@ -18,11 +18,14 @@ CLAUDE_DIR="${HOME}/.claude"
 # Cheap and idempotent, so just assert it every time rather than reasoning
 # about which case applies on a given rebuild.
 # ---------------------------------------------------------------------------
+# Guarded on writability rather than ownership: it is the condition that
+# actually matters, and it stays a no-op when a root-owned directory is
+# already group-writable. Once correct this never fires again, so accumulated
+# session history is not recursively chowned on every rebuild.
 if [ -d "${CLAUDE_DIR}" ]; then
-  owner="$(stat -c '%U' "${CLAUDE_DIR}")"
-  if [ "${owner}" != "$(id -un)" ]; then
-    echo "post-create: ${CLAUDE_DIR} is owned by ${owner}, reclaiming for $(id -un)"
-    sudo chown -R "$(id -un):$(id -gn)" "${CLAUDE_DIR}"
+  if [ ! -w "${CLAUDE_DIR}" ]; then
+    echo "post-create: ${CLAUDE_DIR} not writable by $(id -un), reclaiming"
+    sudo chown -R "$(id -u):$(id -g)" "${CLAUDE_DIR}"
   fi
 else
   mkdir -p "${CLAUDE_DIR}"

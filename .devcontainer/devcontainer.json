@@ -88,9 +88,25 @@
   // token, settings, and session history in ~/.claude, so that path gets a
   // named volume — which outlives the container.
   //
-  // Target must match remoteUser's home (node -> /home/node). Because we
-  // mount at ~/.claude exactly, CLAUDE_CONFIG_DIR is NOT needed; it is only
-  // required when the volume lands somewhere else.
+  // CLAUDE_CONFIG_DIR below is NOT optional, despite the volume being mounted
+  // at ~/.claude exactly. Claude Code splits its state across two locations:
+  //
+  //   ~/.claude/      settings, session history, backups/, projects/
+  //   ~/.claude.json  THE OAUTH SESSION, app state, personal MCP servers
+  //
+  // That second one is a file sitting BESIDE the directory, so a volume on
+  // ~/.claude alone persists everything except the login — the one thing this
+  // is for. Verified against CLI v2.1.220: with the variable unset,
+  // .claude.json is written to $HOME; with it set, .claude.json moves inside
+  // the config dir and $HOME stays clean.
+  //
+  // The tell for this bug is a startup message pointing at a backup under
+  // ~/.claude/backups/ that cannot be restored — backups/ is inside the
+  // volume, the file it was copied from was not.
+  //
+  // All three settings (mount target, CLAUDE_CONFIG_DIR, remoteUser's home)
+  // must name the same directory. A mismatch fails SILENTLY: no error, just a
+  // login prompt on every rebuild. scripts/check-devcontainer.mjs asserts it.
   //
   // ${devcontainerId} scopes the volume to this project, so session history
   // and settings from other repos stay out. The tradeoff is one sign-in per
@@ -104,6 +120,10 @@
   "mounts": [
     "source=claude-code-config-${devcontainerId},target=/home/node/.claude,type=volume"
   ],
+
+  "containerEnv": {
+    "CLAUDE_CONFIG_DIR": "/home/node/.claude"
+  },
 
   "customizations": {
     "vscode": {
