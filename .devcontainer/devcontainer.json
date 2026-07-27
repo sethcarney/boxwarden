@@ -63,8 +63,47 @@
     // ---------------------------------------------------------------------
     "ghcr.io/devcontainers-extra/features/bun:1.1.0": {
       "version": "1.3.14"
-    }
+    },
+
+    // ---------------------------------------------------------------------
+    // Claude Code. The feature also installs the VS Code extension, so it is
+    // deliberately absent from the extensions list below.
+    //
+    // Note what this pin does and does not cover: :1.0.5 pins the feature's
+    // INSTALL SCRIPT, not the CLI release. The feature always installs the
+    // latest Claude Code, which then auto-updates itself inside the container.
+    // Pinning the CLI too would mean dropping the feature and doing
+    // `npm i -g @anthropic-ai/claude-code@X.Y.Z` from a Dockerfile plus
+    // DISABLE_AUTOUPDATER — more machinery than a fast-moving dev tool is
+    // worth here, but that is the route if reproducibility ever demands it.
+    // ---------------------------------------------------------------------
+    "ghcr.io/anthropics/devcontainer-features/claude-code:1.0.5": {}
   },
+
+  // ---------------------------------------------------------------------
+  // Credential persistence across rebuilds.
+  //
+  // A dev container's home directory is discarded on every rebuild, so
+  // without this you re-authenticate each time. Claude Code keeps its OAuth
+  // token, settings, and session history in ~/.claude, so that path gets a
+  // named volume — which outlives the container.
+  //
+  // Target must match remoteUser's home (node -> /home/node). Because we
+  // mount at ~/.claude exactly, CLAUDE_CONFIG_DIR is NOT needed; it is only
+  // required when the volume lands somewhere else.
+  //
+  // ${devcontainerId} scopes the volume to this project, so session history
+  // and settings from other repos stay out. The tradeoff is one sign-in per
+  // project; drop the suffix for a single shared volume and one sign-in ever.
+  //
+  // Security: the token sits unencrypted in this volume. That is the same
+  // exposure as ~/.claude on the host, but it is worth knowing before adding
+  // untrusted dependencies to this container. Host secrets (~/.ssh, cloud
+  // credential files) are deliberately NOT mounted.
+  // ---------------------------------------------------------------------
+  "mounts": [
+    "source=claude-code-config-${devcontainerId},target=/home/node/.claude,type=volume"
+  ],
 
   "customizations": {
     "vscode": {
@@ -92,11 +131,7 @@
     }
   },
 
-  // Guarded only because there is no package.json yet at Phase 1 — installing
-  // with no manifest exits non-zero and makes the very first container open
-  // look broken. Once package.json lands this is just `bun install`, and the
-  // guard can be dropped.
-  "postCreateCommand": "if [ -f package.json ]; then bun install; fi",
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
 
   "remoteUser": "node"
 
