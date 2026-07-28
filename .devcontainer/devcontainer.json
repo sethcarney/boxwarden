@@ -31,9 +31,20 @@
     //   2. We are talking to the real daemon. Containers we stop or remove
     //      while poking at things are the developer's actual containers.
     // ---------------------------------------------------------------------
+    //
+    // moby MUST be false on this base image. The image is pinned to Debian
+    // 'trixie' (Debian 13), and Debian does not publish the 'moby-cli' /
+    // 'moby-engine' packages for trixie. With "moby": true the feature tries
+    // to apt-install those packages and fails the build outright:
+    //   (!) The 'moby' option is not supported on debian 'trixie'
+    // Setting it false makes the feature install Docker CE from Docker's own
+    // apt repo, which does support trixie. For docker-OUTSIDE-of-docker only
+    // the client CLI matters (it talks to the host's socket), so Docker CE vs
+    // moby is functionally identical here. If the base image is ever moved
+    // back to bookworm, "moby": true becomes available again.
     "ghcr.io/devcontainers/features/docker-outside-of-docker:1.10.0": {
       "version": "latest",
-      "moby": true,
+      "moby": false,
       "installDockerBuildx": true,
       "dockerDashComposeVersion": "v2"
     },
