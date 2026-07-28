@@ -75,13 +75,23 @@ function applySessionHardening(): void {
     });
   });
 
-  // Item 5: handle permission requests. This app needs none of them —
-  // no camera, microphone, geolocation, notifications, or clipboard reads —
-  // so the honest handler is a blanket deny.
-  defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => {
-    callback(false);
+  // Item 5: handle permission requests. This app needs almost none of them —
+  // no camera, microphone, geolocation, or notifications — so the default is a
+  // blanket deny with one narrow exception.
+  //
+  // `clipboard-sanitized-write` is granted because the diagnostics path offers
+  // "Copy URI" when launching an editor fails, and that is the one remaining
+  // way for the user to get where they were going. It is write-only and
+  // sanitized; clipboard READ stays denied, since a renderer that could read
+  // the clipboard could exfiltrate whatever the user last copied.
+  const ALLOWED_PERMISSIONS = new Set(['clipboard-sanitized-write']);
+
+  defaultSession.setPermissionRequestHandler((_contents, permission, callback) => {
+    callback(ALLOWED_PERMISSIONS.has(permission));
   });
-  defaultSession.setPermissionCheckHandler(() => false);
+  defaultSession.setPermissionCheckHandler((_contents, permission) =>
+    ALLOWED_PERMISSIONS.has(permission),
+  );
 }
 
 /**
@@ -102,7 +112,9 @@ const ALLOWED_EXTERNAL_ORIGINS = new Set([
 
 function applyNavigationHardening(contents: WebContents): void {
   contents.on('will-navigate', (event, url) => {
-    const isDevServer = IS_DEV && RENDERER_URL !== undefined && url.startsWith(RENDERER_URL);
+    // RENDERER_URL is only set in development, so this single check covers
+    // both "are we in dev" and "is this our own dev server".
+    const isDevServer = RENDERER_URL !== undefined && url.startsWith(RENDERER_URL);
     if (!isDevServer) event.preventDefault();
   });
 

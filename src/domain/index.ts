@@ -1,9 +1,4 @@
-export type {
-  HostPath,
-  UnresolvedPath,
-  MaybeHostPath,
-  ContainerPath,
-} from './paths.js';
+export type { HostPath, UnresolvedPath, MaybeHostPath, ContainerPath } from './paths.js';
 export { asContainerPath, projectName, formatHostPath } from './paths.js';
 
 export type {

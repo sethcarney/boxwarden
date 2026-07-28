@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { mapContainer, mapRuntime, parsePorts, resolveWorkspaceFolder, type InspectResponse } from './mapping.js';
+import {
+  mapContainer,
+  mapRuntime,
+  parsePorts,
+  resolveWorkspaceFolder,
+  type InspectResponse,
+} from './mapping.js';
 import { parseLocalFolder } from './host-path.js';
 
 const BASE: InspectResponse = {
@@ -209,5 +215,55 @@ describe('resolveWorkspaceFolder', () => {
   it('gives up rather than guessing when the host path is unresolved', () => {
     const noWorkingDir: InspectResponse = { ...BASE, Config: { ...BASE.Config, WorkingDir: '' } };
     expect(resolveWorkspaceFolder(noWorkingDir, parseLocalFolder('garbage'))).toBeUndefined();
+  });
+});
+
+describe('mapContainer + WSL mounts', () => {
+  it('upgrades an ambiguous POSIX label to a WSL path when the mounts prove it', () => {
+    const wsl: InspectResponse = {
+      ...BASE,
+      Config: {
+        ...BASE.Config,
+        Labels: { 'devcontainer.local_folder': '/home/dev/infra' },
+      },
+      Mounts: [
+        { Source: '/run/desktop/mnt/host/wsl/docker-desktop-bind-mounts/Ubuntu/9f2c1a' },
+        { Source: '/var/run/docker.sock' },
+      ],
+    };
+    expect(mapContainer(wsl)?.localFolder).toEqual({
+      kind: 'wsl',
+      distro: 'Ubuntu',
+      path: '/home/dev/infra',
+    });
+  });
+
+  it('leaves a native Linux path alone when the mounts say nothing about WSL', () => {
+    const native: InspectResponse = {
+      ...BASE,
+      Mounts: [{ Source: '/home/dev/code/webapp' }, { Source: '/var/run/docker.sock' }],
+    };
+    expect(mapContainer(native)?.localFolder).toEqual({
+      kind: 'posix',
+      path: '/home/dev/code/webapp',
+    });
+  });
+
+  it('does not upgrade when there are no mounts at all', () => {
+    expect(mapContainer(BASE)?.localFolder.kind).toBe('posix');
+  });
+
+  /**
+   * The raw label is what builds the editor URI, so an upgrade must not touch
+   * it. If it did, reattach would break on exactly the platform this feature
+   * is meant to help.
+   */
+  it('does not disturb the raw label the editor URI is built from', () => {
+    const wsl: InspectResponse = {
+      ...BASE,
+      Config: { ...BASE.Config, Labels: { 'devcontainer.local_folder': '/home/dev/infra' } },
+      Mounts: [{ Source: '/mnt/wsl/docker-desktop-bind-mounts/Debian/abc' }],
+    };
+    expect(mapContainer(wsl)?.labels.localFolderRaw).toBe('/home/dev/infra');
   });
 });

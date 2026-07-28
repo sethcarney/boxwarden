@@ -31,12 +31,12 @@ your machine and reattaches an editor to them.
 that touches the outside world lives in `src/main/` and is written as a thin
 shell around a pure function:
 
-| Impure edge | Pure core it wraps |
-| --- | --- |
+| Impure edge                    | Pure core it wraps                         |
+| ------------------------------ | ------------------------------------------ |
 | `docker/client.ts` (dockerode) | `docker/mapping.ts`, `docker/host-path.ts` |
-| `docker/client.ts` (probing) | `docker/endpoint.ts` |
-| `editor/launch.ts` (spawn) | `editor/uri.ts` |
-| `editor/resolve.ts` (fs, exec) | `editor/targets.ts` (data) |
+| `docker/client.ts` (probing)   | `docker/endpoint.ts`                       |
+| `editor/launch.ts` (spawn)     | `editor/uri.ts`                            |
+| `editor/resolve.ts` (fs, exec) | `editor/targets.ts` (data)                 |
 
 That split is why the test suite needs no Docker daemon and no display: 66
 tests cover the cores, and the shells are small enough to read.
@@ -94,6 +94,29 @@ diagnostics UI. Probing five sockets and reporting only "couldn't connect to
 Docker" is what makes this class of tool infuriating; naming the socket that
 was missing turns a support thread into a glance.
 
+## Compose projects are one object
+
+A compose-based dev container is several containers — workspace, database,
+maybe a cache. `renderer/grouping.ts` folds the flat list into
+`ContainerGroup`, a union of `single` and `compose`, and the UI renders a
+project as one framed group with its own Start all / Stop all.
+
+Two decisions worth knowing:
+
+- **Group actions loop over the existing single-container IPC calls** rather
+  than adding a `startMany` channel. The IPC surface stays five narrow verbs,
+  and a project is a handful of containers so the round trips do not matter.
+  `Promise.allSettled`, not `all` — one service failing should not abandon its
+  siblings half-started.
+- **A project takes the position of its first member**, so the caller's
+  running-first sort still governs. Sorting groups separately would sink a
+  project whose workspace is running below stopped singles because of one
+  stopped sibling.
+
+The known gap: grouping only sees containers carrying
+`devcontainer.local_folder`. A compose sibling without that label is invisible
+to it, so "Stop all" will miss it. See the roadmap.
+
 ## Why containers are never dropped
 
 A container whose label cannot be parsed still appears in the list — greyed,
@@ -104,7 +127,7 @@ bug report nobody can act on.
 ## Running inside a dev container
 
 This repo's own devcontainer uses **docker-outside-of-docker**, so boxwarden
-running inside it talks to the *host's* daemon and sees the developer's real
+running inside it talks to the _host's_ daemon and sees the developer's real
 containers. Two consequences:
 
 1. Any path handed to the Docker API is interpreted by the host daemon. Paths

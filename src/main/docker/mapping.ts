@@ -8,7 +8,7 @@ import type {
   PortBinding,
 } from '../../domain/index.js';
 import { asContainerId, asContainerPath } from '../../domain/index.js';
-import { parseLocalFolder } from './host-path.js';
+import { parseLocalFolder, withWslDistro, wslDistroFromMountSources } from './host-path.js';
 
 /**
  * Docker inspect JSON -> DevContainer. Pure, and typed against a structural
@@ -33,6 +33,16 @@ export interface InspectPortBinding {
   readonly HostPort?: string;
 }
 
+/**
+ * Only `Source` is read, and only to recover a WSL distro name — see
+ * `wslDistroFromMountSources`. The rest of the mount record is deliberately
+ * not modelled: nothing in the app needs it, and listing fields implies a
+ * dependency that does not exist.
+ */
+export interface InspectMount {
+  readonly Source?: string;
+}
+
 export interface InspectResponse {
   readonly Id: string;
   readonly Name?: string;
@@ -46,6 +56,7 @@ export interface InspectResponse {
   readonly NetworkSettings?: {
     readonly Ports?: Readonly<Record<string, readonly InspectPortBinding[] | null>>;
   };
+  readonly Mounts?: readonly InspectMount[];
 }
 
 export const DEV_CONTAINER_LABEL = 'devcontainer.local_folder';
@@ -105,7 +116,9 @@ export function parsePorts(
       result.push({
         containerPort,
         protocol,
-        ...(binding.HostIp === undefined || binding.HostIp === '' ? {} : { hostIp: binding.HostIp }),
+        ...(binding.HostIp === undefined || binding.HostIp === ''
+          ? {}
+          : { hostIp: binding.HostIp }),
         ...(Number.isNaN(hostPort) ? {} : { hostPort }),
       });
     }
@@ -230,7 +243,17 @@ export function mapContainer(inspect: InspectResponse): DevContainer | undefined
   const localFolderRaw = labels[DEV_CONTAINER_LABEL];
   if (localFolderRaw === undefined) return undefined;
 
-  const localFolder = parseLocalFolder(localFolderRaw);
+  // A bare POSIX label is ambiguous between a native Linux path and a path
+  // inside a WSL distro; the mounts can settle it. A no-op on every other
+  // platform and whenever the mounts say nothing.
+  const mountSources = (inspect.Mounts ?? [])
+    .map((mount) => mount.Source)
+    .filter((source): source is string => source !== undefined);
+  const localFolder = withWslDistro(
+    parseLocalFolder(localFolderRaw),
+    wslDistroFromMountSources(mountSources),
+  );
+
   const runtime = mapRuntime(inspect.State);
   const ports = parsePorts(inspect.NetworkSettings?.Ports);
 

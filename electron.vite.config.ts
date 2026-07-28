@@ -1,5 +1,5 @@
 import { resolve } from 'node:path';
-import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
+import { defineConfig } from 'electron-vite';
 import react from '@vitejs/plugin-react';
 
 /**
@@ -9,40 +9,55 @@ import react from '@vitejs/plugin-react';
  *   preload  -> the isolated bridge between the two
  *   renderer -> Chromium, no Node access at all
  *
- * externalizeDepsPlugin keeps `dependencies` out of the main bundle. dockerode
- * pulls in ssh2, which has optional native bindings; bundling it produces
- * either a build failure or a binary that breaks the moment someone points
- * DOCKER_HOST at ssh://. Leaving it external means it is require()d from
- * node_modules at runtime, which is what it expects.
+ * The two halves want OPPOSITE dependency handling, which is the least
+ * obvious thing in this file — see each block.
+ *
+ * Note on versions: Vite is pinned to 7.x because electron-vite 5 declares no
+ * support for 8, and under 8's rolldown backend dependency externalization
+ * silently stopped applying — the build then tried to bundle dockerode's
+ * optional native ssh2 bindings into the main process and failed.
  */
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
     build: {
+      // Default true; stated explicitly because it is load-bearing. dockerode
+      // pulls in ssh2, which has optional native bindings; bundling it
+      // produces either a build failure or a binary that breaks the moment
+      // someone points DOCKER_HOST at ssh://. External means it is require()d
+      // from node_modules at runtime, which is what it expects.
+      externalizeDeps: true,
       rollupOptions: {
         input: { index: resolve(__dirname, 'src/main/index.ts') },
       },
     },
   },
+
   preload: {
-    plugins: [externalizeDepsPlugin()],
     build: {
+      // The OPPOSITE of main, and deliberately so. A sandboxed preload cannot
+      // require() out of node_modules at runtime, so anything it imports has
+      // to be bundled into the file itself.
+      //
+      // It costs nothing today — the preload imports only `electron` (always
+      // provided by the runtime) and a plain const object from src/shared.
+      // It is set anyway because the day someone adds a real dependency to the
+      // preload, externalizing it would produce a preload that fails to load,
+      // and the symptom is an undefined `window.boxwarden` rather than an
+      // error naming the cause.
+      externalizeDeps: false,
       rollupOptions: {
         input: { index: resolve(__dirname, 'src/preload/index.ts') },
-        // A SANDBOXED preload must be CommonJS — ESM preloads are only
+        // A SANDBOXED preload must also be CommonJS — ESM preloads are only
         // supported with sandbox disabled, which is not a trade this app makes
         // (see the security notes in src/main/index.ts). package.json declares
         // "type": "module", so the extension has to be .cjs for Node to read
         // the file as CommonJS. main/index.ts points its `preload` path at
         // ../preload/index.cjs to match.
-        //
-        // The failure mode if this drifts is quiet: the preload fails to load,
-        // `window.boxwarden` is undefined, and the UI shows an empty list
-        // rather than an error.
         output: { format: 'cjs', entryFileNames: '[name].cjs' },
       },
     },
   },
+
   renderer: {
     root: resolve(__dirname, 'src/renderer'),
     plugins: [react()],

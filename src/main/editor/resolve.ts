@@ -44,10 +44,7 @@ async function pathLookup(command: string, os: NodeJS.Platform): Promise<string 
  * Spotlight being enabled, which is why this is one strategy among several
  * rather than the only one.
  */
-async function macosBundle(
-  bundleId: string,
-  cliRelativePath: string,
-): Promise<string | undefined> {
+async function macosBundle(bundleId: string, cliRelativePath: string): Promise<string | undefined> {
   try {
     const { stdout } = await execFileAsync(
       'mdfind',

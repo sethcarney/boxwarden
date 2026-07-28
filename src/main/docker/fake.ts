@@ -101,7 +101,11 @@ function fixtures(now: number): InspectResponse[] {
       Id: 'a1b2c3d4e5f60000000000000000000000000000000000000000000000000005',
       Name: '/vsc-legacy-thing-77aa20-uid',
       Created: new Date(now - 40 * 24 * HOUR).toISOString(),
-      State: { Status: 'exited', ExitCode: 137, FinishedAt: new Date(now - 12 * HOUR).toISOString() },
+      State: {
+        Status: 'exited',
+        ExitCode: 137,
+        FinishedAt: new Date(now - 12 * HOUR).toISOString(),
+      },
       Config: {
         Image: 'vsc-legacy-thing-77aa20',
         Labels: { 'devcontainer.local_folder': 'relative/not/absolute' },
@@ -115,8 +119,33 @@ function fixtures(now: number): InspectResponse[] {
       Config: {
         Image: 'mcr.microsoft.com/devcontainers/base:trixie',
         WorkingDir: '/workspaces/infra-scripts',
-        Labels: { 'devcontainer.local_folder': '\\\\wsl.localhost\\Ubuntu\\home\\dev\\infra-scripts' },
+        // The AMBIGUOUS spelling on purpose: a bare POSIX label that is
+        // actually inside a WSL distro. VS Code running in WSL writes it this
+        // way, indistinguishable from a native Linux path. Only the mount
+        // below reveals the distro — this fixture is what exercises that.
+        Labels: { 'devcontainer.local_folder': '/home/dev/infra-scripts' },
       },
+      Mounts: [
+        { Source: '/run/desktop/mnt/host/wsl/docker-desktop-bind-mounts/Ubuntu/01fe3b' },
+        { Source: '/var/run/docker.sock' },
+      ],
+    },
+    {
+      // Second member of the compose project above. Its whole reason for
+      // existing is to make the grouping visible: stopping `platform` without
+      // this one would leave the database running.
+      Id: 'a1b2c3d4e5f60000000000000000000000000000000000000000000000000007',
+      Name: '/platform_devcontainer-db-1',
+      Created: new Date(now - 9 * HOUR).toISOString(),
+      State: { Status: 'running', StartedAt: new Date(now - 9 * HOUR).toISOString() },
+      Config: {
+        Image: 'postgres:17',
+        Labels: {
+          'devcontainer.local_folder': '/home/dev/code/platform',
+          'com.docker.compose.project': 'platform_devcontainer',
+        },
+      },
+      NetworkSettings: { Ports: { '5432/tcp': [{ HostIp: '127.0.0.1', HostPort: '15432' }] } },
     },
   ];
 }

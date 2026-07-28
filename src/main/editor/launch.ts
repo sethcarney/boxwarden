@@ -19,11 +19,7 @@ import type { EditorTarget } from '../../domain/index.js';
  *     with it. Without this the editor is a child process in our process
  *     group and dies with us.
  */
-export function launchEditor(
-  binaryPath: string,
-  target: EditorTarget,
-  uri: string,
-): Promise<void> {
+export function launchEditor(binaryPath: string, target: EditorTarget, uri: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn(binaryPath, [target.folderUriFlag, uri], {
       detached: true,

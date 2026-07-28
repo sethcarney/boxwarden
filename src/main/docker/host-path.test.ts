@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseLocalFolder } from './host-path.js';
+import { parseLocalFolder, withWslDistro, wslDistroFromMountSources } from './host-path.js';
 
 describe('parseLocalFolder', () => {
   it('reads an absolute POSIX path', () => {
@@ -61,5 +61,72 @@ describe('parseLocalFolder', () => {
     const result = parseLocalFolder('  nonsense  ');
     expect(result.kind).toBe('unresolved');
     if (result.kind === 'unresolved') expect(result.raw).toBe('  nonsense  ');
+  });
+});
+
+describe('wslDistroFromMountSources', () => {
+  it('recovers the distro from Docker Desktop\u2019s WSL staging paths', () => {
+    expect(
+      wslDistroFromMountSources([
+        '/run/desktop/mnt/host/wsl/docker-desktop-bind-mounts/Ubuntu/9f2c1a',
+      ]),
+    ).toBe('Ubuntu');
+    expect(
+      wslDistroFromMountSources(['/mnt/wsl/docker-desktop-bind-mounts/Ubuntu-22.04/9f2c1a']),
+    ).toBe('Ubuntu-22.04');
+  });
+
+  it('finds it among unrelated mounts', () => {
+    expect(
+      wslDistroFromMountSources([
+        '/var/run/docker.sock',
+        '/run/desktop/mnt/host/wsl/docker-desktop-bind-mounts/Debian/abc',
+        '/some/volume',
+      ]),
+    ).toBe('Debian');
+  });
+
+  /**
+   * The false-positive cases. A bind-mounted Windows drive and a native Linux
+   * mount must both come back undefined, or every Linux user's paths would be
+   * relabelled as WSL.
+   */
+  it('ignores Windows drive mounts and ordinary Linux paths', () => {
+    expect(wslDistroFromMountSources(['/run/desktop/mnt/host/c/Users/dev/code'])).toBeUndefined();
+    expect(wslDistroFromMountSources(['/home/dev/code/webapp'])).toBeUndefined();
+    expect(wslDistroFromMountSources([])).toBeUndefined();
+  });
+
+  it('ignores a staging path with an empty distro segment', () => {
+    expect(wslDistroFromMountSources(['/docker-desktop-bind-mounts//abc'])).toBeUndefined();
+  });
+});
+
+describe('withWslDistro', () => {
+  it('upgrades a bare POSIX path when a distro was found', () => {
+    expect(withWslDistro({ kind: 'posix', path: '/home/dev/proj' }, 'Ubuntu')).toEqual({
+      kind: 'wsl',
+      distro: 'Ubuntu',
+      path: '/home/dev/proj',
+    });
+  });
+
+  it('leaves the path alone when no distro was found', () => {
+    const posix = { kind: 'posix', path: '/home/dev/proj' } as const;
+    expect(withWslDistro(posix, undefined)).toBe(posix);
+  });
+
+  /**
+   * Only `posix` is ambiguous. Attaching a distro to an unresolved path would
+   * be inventing a location rather than discovering one.
+   */
+  it('never touches windows, wsl, or unresolved paths', () => {
+    const windows = { kind: 'windows', path: 'C:\\code' } as const;
+    const wsl = { kind: 'wsl', distro: 'Debian', path: '/srv' } as const;
+    const unresolved = { kind: 'unresolved', raw: 'junk', reason: 'nope' } as const;
+
+    expect(withWslDistro(windows, 'Ubuntu')).toBe(windows);
+    expect(withWslDistro(wsl, 'Ubuntu')).toBe(wsl);
+    expect(withWslDistro(unresolved, 'Ubuntu')).toBe(unresolved);
   });
 });

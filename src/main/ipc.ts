@@ -1,5 +1,5 @@
 import { ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron';
-import type { ContainerId, DevContainer, EditorId } from '../domain/index.js';
+import type { ContainerId, DevContainer } from '../domain/index.js';
 import { IPC } from '../shared/ipc.js';
 import type {
   ActionResult,
@@ -46,7 +46,11 @@ export function registerIpcHandlers(context: IpcContext): void {
   const known = new Map<ContainerId, DevContainer>();
 
   /** Wraps a handler with the sender check and turns throws into typed failures. */
-  function handle<T>(channel: string, fn: (...args: unknown[]) => Promise<T>, onError: (message: string) => T): void {
+  function handle<T>(
+    channel: string,
+    fn: (...args: unknown[]) => Promise<T>,
+    onError: (message: string) => T,
+  ): void {
     ipcMain.handle(channel, async (event: IpcMainInvokeEvent, ...args: unknown[]): Promise<T> => {
       if (!context.isTrustedSender(event.sender)) {
         return onError('Rejected an IPC message from an unrecognised frame.');
@@ -156,13 +160,19 @@ export function registerIpcHandlers(context: IpcContext): void {
         return {
           ok: false,
           code: 'unresolved-host-path',
-          message: 'The devcontainer.local_folder label is empty, so there is no folder to reattach to.',
+          message:
+            'The devcontainer.local_folder label is empty, so there is no folder to reattach to.',
         };
       }
 
       const target = editorTarget(String(rawEditorId));
       if (target === undefined) {
-        return { ok: false, code: 'editor-not-found', message: `Unknown editor: ${String(rawEditorId)}`, uri };
+        return {
+          ok: false,
+          code: 'editor-not-found',
+          message: `Unknown editor: ${String(rawEditorId)}`,
+          uri,
+        };
       }
 
       const resolved = await resolveEditor(target);
@@ -177,7 +187,7 @@ export function registerIpcHandlers(context: IpcContext): void {
 
       try {
         await launchEditor(resolved.binaryPath, target, uri);
-        return { ok: true, editorId: target.id as EditorId, uri };
+        return { ok: true, editorId: target.id, uri };
       } catch (error) {
         return {
           ok: false,

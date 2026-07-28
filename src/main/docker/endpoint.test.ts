@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { apiVersionAtLeast, candidateEndpoints, classifyError, parseDockerHost } from './endpoint.js';
+import {
+  apiVersionAtLeast,
+  candidateEndpoints,
+  classifyError,
+  parseDockerHost,
+} from './endpoint.js';
 
 describe('parseDockerHost', () => {
   it('reads each transport DOCKER_HOST can name', () => {

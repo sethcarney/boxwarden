@@ -10,24 +10,24 @@ this repo so a reviewer can check the claim rather than take it on trust.
 
 ## Where the settings live
 
-| Item | Setting | Where |
-| --- | --- | --- |
-| 1. Only load secure content | Renderer is local; `connect-src 'none'` in production | `src/main/index.ts` (CSP) |
-| 2. No Node integration for remote content | `nodeIntegration: false`, plus the worker and sub-frame variants | `src/main/index.ts` |
-| 3. Enable context isolation | `contextIsolation: true` | `src/main/index.ts` |
-| 4. **Enable process sandboxing** | `sandbox: true` **and** `app.enableSandbox()` | `src/main/index.ts` |
-| 5. Handle permission requests | `setPermissionRequestHandler` / `setPermissionCheckHandler`, both blanket deny | `src/main/index.ts` |
-| 6. Do not disable `webSecurity` | `webSecurity: true` | `src/main/index.ts` |
-| 7. Define a CSP | Response header, plus a `<meta>` fallback | `src/main/index.ts`, `src/renderer/index.html` |
-| 8. Do not allow insecure content | `allowRunningInsecureContent: false` | `src/main/index.ts` |
-| 9. No experimental features | `experimentalFeatures: false` | `src/main/index.ts` |
-| 10. No `enableBlinkFeatures` | Never set | — |
-| 11/12. WebView hardening | `webviewTag: false`, `will-attach-webview` prevented | `src/main/index.ts` |
-| 13. Limit navigation | `will-navigate` blocked except the dev server | `src/main/index.ts` |
-| 14. Limit new windows | `setWindowOpenHandler` returns `deny` unconditionally | `src/main/index.ts` |
-| 15. `shell.openExternal` only on trusted input | Allow-list of four origins; never a renderer-chosen URL | `src/main/index.ts` |
-| 16. Current Electron | Electron 43 | `package.json` |
-| 17. Validate IPC senders | `isTrustedSender` compares the `WebContents` object | `src/main/ipc.ts` |
+| Item                                           | Setting                                                                        | Where                                          |
+| ---------------------------------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------- |
+| 1. Only load secure content                    | Renderer is local; `connect-src 'none'` in production                          | `src/main/index.ts` (CSP)                      |
+| 2. No Node integration for remote content      | `nodeIntegration: false`, plus the worker and sub-frame variants               | `src/main/index.ts`                            |
+| 3. Enable context isolation                    | `contextIsolation: true`                                                       | `src/main/index.ts`                            |
+| 4. **Enable process sandboxing**               | `sandbox: true` **and** `app.enableSandbox()`                                  | `src/main/index.ts`                            |
+| 5. Handle permission requests                  | `setPermissionRequestHandler` / `setPermissionCheckHandler`, both blanket deny | `src/main/index.ts`                            |
+| 6. Do not disable `webSecurity`                | `webSecurity: true`                                                            | `src/main/index.ts`                            |
+| 7. Define a CSP                                | Response header, plus a `<meta>` fallback                                      | `src/main/index.ts`, `src/renderer/index.html` |
+| 8. Do not allow insecure content               | `allowRunningInsecureContent: false`                                           | `src/main/index.ts`                            |
+| 9. No experimental features                    | `experimentalFeatures: false`                                                  | `src/main/index.ts`                            |
+| 10. No `enableBlinkFeatures`                   | Never set                                                                      | —                                              |
+| 11/12. WebView hardening                       | `webviewTag: false`, `will-attach-webview` prevented                           | `src/main/index.ts`                            |
+| 13. Limit navigation                           | `will-navigate` blocked except the dev server                                  | `src/main/index.ts`                            |
+| 14. Limit new windows                          | `setWindowOpenHandler` returns `deny` unconditionally                          | `src/main/index.ts`                            |
+| 15. `shell.openExternal` only on trusted input | Allow-list of four origins; never a renderer-chosen URL                        | `src/main/index.ts`                            |
+| 16. Current Electron                           | Electron 43                                                                    | `package.json`                                 |
+| 17. Validate IPC senders                       | `isTrustedSender` compares the `WebContents` object                            | `src/main/ipc.ts`                              |
 
 Several of these are already Electron 43 defaults. They are written out anyway:
 a default that flips in a future major is the kind of regression nobody
@@ -53,10 +53,10 @@ error screen naming this exact cause.
 ### Sender validation is object identity, not URL matching
 
 ```ts
-isTrustedSender: (contents) => contents === mainWindow?.webContents
+isTrustedSender: (contents) => contents === mainWindow?.webContents;
 ```
 
-`ipcMain.handle` will answer *any* frame in the app. A URL comparison invites a
+`ipcMain.handle` will answer _any_ frame in the app. A URL comparison invites a
 near-miss — a frame that merely claims the right origin. Comparing the object
 is exact.
 
@@ -73,9 +73,19 @@ container label, so it is attacker-influenced by anyone who can create
 containers on the daemon. Through argv it is inert data; through a shell string
 it would be command injection.
 
-`shell.openExternal` is deliberately *not* used for this — it would hand the
+`shell.openExternal` is deliberately _not_ used for this — it would hand the
 URI to whatever is registered for the scheme. It is used only for the four
 allow-listed documentation origins.
+
+### The one granted permission
+
+Everything is denied except `clipboard-sanitized-write`. That exists because
+the diagnostics path offers **Copy URI** when launching an editor fails, and
+the URI is the one remaining way for the user to get where they were going.
+
+It is write-only and sanitized. Clipboard **read** stays denied: a renderer
+that could read the clipboard could exfiltrate whatever the user last copied,
+and nothing in this app needs it.
 
 ## Not yet done
 

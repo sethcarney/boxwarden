@@ -37,7 +37,12 @@ body,
 body {
   background: var(--bg);
   color: var(--text);
-  font: 13px/1.5 ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font:
+    13px/1.5 ui-sans-serif,
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -394,4 +399,71 @@ select {
   border: 1px solid var(--border);
   border-radius: 5px;
   padding: 3px 6px;
+}
+
+/* ---------- compose groups ---------- */
+
+/*
+ * A project reads as one object with cards nested inside it, rather than as
+ * three sibling cards that happen to be adjacent. The inset border is doing
+ * the work: without it "Stop all" looks like it belongs to the first card.
+ */
+.group {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.group-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.group-title h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.group-count {
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.group-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.group-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+/* Nested cards drop their own frame so the group's frame is the only one. */
+.group-body .card {
+  background: var(--surface);
+}
+
+.notice-actions {
+  display: flex;
+  gap: 12px;
+  flex: 0 0 auto;
 }

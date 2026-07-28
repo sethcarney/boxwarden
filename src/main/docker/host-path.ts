@@ -79,3 +79,59 @@ export function parseLocalFolder(raw: string): MaybeHostPath {
     reason: 'Not an absolute path in any format boxwarden recognises.',
   };
 }
+
+/**
+ * Recover the WSL distribution name from a container's bind-mount sources.
+ *
+ * THE PROBLEM THIS SOLVES
+ *
+ * `parseLocalFolder` cannot tell a native Linux path from a path inside a WSL
+ * distro seen from a VS Code instance running in WSL. Both arrive as
+ * `/home/me/proj`, and the label alone carries nothing to separate them.
+ *
+ * The mounts do. When Docker Desktop's WSL2 backend bind-mounts a folder that
+ * lives inside a distro, it rewrites the source through a staging path that
+ * names the distro:
+ *
+ *   /run/desktop/mnt/host/wsl/docker-desktop-bind-mounts/Ubuntu/<hash>
+ *   /mnt/wsl/docker-desktop-bind-mounts/Ubuntu-22.04/<hash>
+ *
+ * A native Linux daemon never produces that shape, and neither does a
+ * bind-mounted Windows drive (which comes through as
+ * `/run/desktop/mnt/host/c/...`). So a match is strong evidence, and no match
+ * means "leave it alone" rather than "it is native".
+ *
+ * BLAST RADIUS IF THIS IS WRONG
+ *
+ * Display only. An incorrect upgrade changes `formatHostPath` from
+ * `/home/me/proj` to `\\wsl.localhost\Ubuntu\home\me\proj` — wrong, visible,
+ * and annoying. It cannot break opening the container, because the editor URI
+ * is built from the raw label and never from this. That asymmetry is what
+ * makes a heuristic acceptable here at all.
+ *
+ * This is strategy 1 of the three in docs/roadmap.md; `wsl -l -q` matching and
+ * prompt-and-cache are still to come, for the cases this misses.
+ */
+const WSL_BIND_MOUNT = /(?:^|\/)docker-desktop-bind-mounts\/([^/]+)\//;
+
+export function wslDistroFromMountSources(sources: readonly string[]): string | undefined {
+  for (const source of sources) {
+    const match = WSL_BIND_MOUNT.exec(source);
+    const distro = match?.[1];
+    if (distro !== undefined && distro !== '') return distro;
+  }
+  return undefined;
+}
+
+/**
+ * Upgrade a bare POSIX path to a WSL path when the mounts prove it is one.
+ *
+ * Only `posix` is eligible. A `windows` path is already unambiguous, a `wsl`
+ * path is already resolved, and an `unresolved` one should stay unresolved —
+ * attaching a distro to a string we could not parse would be inventing a
+ * location rather than discovering it.
+ */
+export function withWslDistro(path: MaybeHostPath, distro: string | undefined): MaybeHostPath {
+  if (distro === undefined || path.kind !== 'posix') return path;
+  return { kind: 'wsl', distro, path: path.path };
+}

@@ -85,7 +85,7 @@ async function probeCli(): Promise<DockerCliProbe> {
   } catch (error) {
     const code =
       typeof error === 'object' && error !== null && 'code' in error
-        ? String((error as { code: unknown }).code)
+        ? String(error.code)
         : undefined;
     if (code === 'ENOENT') return { ok: false, code: 'not-on-path' };
     if (code === 'EACCES') return { ok: false, code: 'not-executable' };
@@ -128,7 +128,10 @@ export class DockerodeBackend implements DockerBackend {
     const api: EndpointProbe = connected?.probe ??
       attempts[0] ?? {
         ok: false,
-        endpoint: { transport: { transport: 'unix', socketPath: '(none)' }, origin: { kind: 'manual' } },
+        endpoint: {
+          transport: { transport: 'unix', socketPath: '(none)' },
+          origin: { kind: 'manual' },
+        },
         failure: { code: 'not-present', detail: 'No candidate endpoints for this platform.' },
       };
 

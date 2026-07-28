@@ -15,8 +15,11 @@ your machine and reattaches your editor to them.
   containers are deliberately not listed.
 - Shows project name, host folder, image, state, health, and published vs.
   exposed-only ports.
-- Starts and stops them.
-- Opens them in VS Code, VS Code Insiders, Cursor, or Windsurf.
+- Groups Docker Compose projects, so stopping a workspace does not leave its
+  database running.
+- Starts and stops them, individually or per project.
+- Opens them in VS Code, VS Code Insiders, Cursor, or Windsurf — with a
+  copyable URI fallback when launching fails.
 - When Docker cannot be reached, names every socket it tried and why each one
   failed — rather than a bare "couldn't connect".
 
@@ -35,12 +38,12 @@ bun run dev:fake
 
 ## Docs
 
-| | |
-| --- | --- |
-| [Architecture](docs/architecture.md) | Process model, the two path spaces, why the raw label matters |
-| [Electron security](docs/electron-security.md) | The upstream checklist and where each item lands here |
-| [Development](docs/development.md) | Commands, fixtures, the two TS projects, testing |
-| [Roadmap](docs/roadmap.md) | What is unproven, and what to build next |
+|                                                |                                                               |
+| ---------------------------------------------- | ------------------------------------------------------------- |
+| [Architecture](docs/architecture.md)           | Process model, the two path spaces, why the raw label matters |
+| [Electron security](docs/electron-security.md) | The upstream checklist and where each item lands here         |
+| [Development](docs/development.md)             | Commands, fixtures, the two TS projects, testing              |
+| [Roadmap](docs/roadmap.md)                     | What is unproven, and what to build next                      |
 
 ## Licence
 

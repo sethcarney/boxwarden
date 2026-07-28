@@ -13,12 +13,7 @@
  */
 
 export type ContainerRuntimeKind =
-  | 'docker-desktop'
-  | 'orbstack'
-  | 'colima'
-  | 'rancher-desktop'
-  | 'podman'
-  | 'docker-engine';
+  'docker-desktop' | 'orbstack' | 'colima' | 'rancher-desktop' | 'podman' | 'docker-engine';
 
 export interface DockerTls {
   readonly caPath?: string;

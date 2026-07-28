@@ -31,9 +31,10 @@ export function ContainerCard({
   onOpen,
 }: Props) {
   const unresolved = container.localFolder.kind === 'unresolved';
-  const ports = container.runtime.state === 'running' || container.runtime.state === 'paused'
-    ? container.runtime.ports
-    : [];
+  const ports =
+    container.runtime.state === 'running' || container.runtime.state === 'paused'
+      ? container.runtime.ports
+      : [];
 
   // Opening needs a folder inside the container to point at. Saying which
   // precondition failed beats a disabled button with no explanation.
@@ -49,22 +50,29 @@ export function ContainerCard({
       <header className="card-head">
         <div className="card-title">
           <StatusDot runtime={container.runtime} />
-          <h2>{projectName(container.localFolder)}</h2>
-          {container.labels.composeProject !== undefined && (
-            <span className="tag" title="Part of a Docker Compose project — stopping this leaves its siblings running.">
-              compose
-            </span>
-          )}
+          {/* Compose members show their container name: inside a group every
+              card would otherwise share the project's folder name and read as
+              three identical headings. The group header carries the project. */}
+          <h2>
+            {container.labels.composeProject === undefined
+              ? projectName(container.localFolder)
+              : container.name}
+          </h2>
         </div>
         <span className="card-status">{statusLabel(container.runtime, now)}</span>
       </header>
 
       <dl className="card-meta">
         <dt>Folder</dt>
-        <dd className={unresolved ? 'unresolved' : undefined} title={hostPathLabel(container.localFolder)}>
+        <dd
+          className={unresolved ? 'unresolved' : undefined}
+          title={hostPathLabel(container.localFolder)}
+        >
           {hostPathLabel(container.localFolder)}
-          {unresolved && (
-            <span className="hint"> — {container.localFolder.kind === 'unresolved' ? container.localFolder.reason : ''}</span>
+          {/* `unresolved` is a const derived from the same check, so TypeScript
+              narrows localFolder here — no second guard needed. */}
+          {container.localFolder.kind === 'unresolved' && (
+            <span className="hint"> — {container.localFolder.reason}</span>
           )}
         </dd>
 

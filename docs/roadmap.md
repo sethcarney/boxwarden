@@ -9,16 +9,22 @@ unblocks the most.
   `devcontainer.local_folder` label.
 - Lists them with project name, host path, image, state, health, and published
   vs. exposed-only ports. Running first, then alphabetical.
-- Start and stop.
-- Open in VS Code / Insiders / Cursor / Windsurf via `vscode-remote://`.
+- **Groups compose projects** and offers Start all / Stop all, so stopping a
+  workspace no longer leaves its database running.
+- Start and stop, individually or per project.
+- Open in VS Code / Insiders / Cursor / Windsurf via `vscode-remote://`, with a
+  **Copy URI** fallback when launching fails.
+- Recovers the **WSL distribution** from bind-mount sources, so a path inside a
+  distro is not displayed as a native Linux path.
 - A diagnostics screen naming every socket that was tried and why each failed.
 - Polls every 5s; actions re-read from Docker rather than patching optimistically.
 
 ## Verified and unverified
 
-Verified here: the build, 66 unit tests, typecheck across both TS projects, and
-a headless launch under `xvfb` against `BOXWARDEN_FAKE_DOCKER=1` — 6 cards
-rendered, preload bridge live, IPC round-tripped, ports and compose tag correct.
+Verified here: build, ESLint + Prettier, typecheck across both TS projects,
+112 unit and component tests, and a headless launch under `xvfb` against
+`BOXWARDEN_FAKE_DOCKER=1` — 7 cards in 1 compose group, group actions correct
+for the members' states, WSL path resolved from mounts, ports and footer right.
 
 **Not verified**, because the environment this was built in has no Docker
 socket and no editor installed:
@@ -47,74 +53,55 @@ the app should be considered unproven rather than working.
 ## 2. Verify the forks
 
 `EditorTarget.remoteScheme` and `folderUriFlag` are configurable purely as
-insurance: every VS Code fork is *expected* to use `vscode-remote` and
+insurance: every VS Code fork is _expected_ to use `vscode-remote` and
 `--folder-uri`, but Cursor and Windsurf have not been checked against a real
 install. Confirm empirically. **If neither diverges, delete both fields** —
 they are speculative generality until proven otherwise.
 
-## 3. WSL host paths
+## 3. WSL host paths — strategies 2 and 3
 
-`parseLocalFolder` cannot distinguish a native Linux path from a path inside a
-WSL distro seen from a VS Code instance running in WSL: the label is identical
-(`/home/me/proj`) and nothing else in the inspect output disambiguates it.
+Strategy 1 (bind-mount sources) is **done**: Docker Desktop's WSL2 backend
+rewrites mount sources through
+`.../docker-desktop-bind-mounts/<Distro>/<hash>`, and
+`wslDistroFromMountSources` reads the distro out of that. A native Linux daemon
+never produces that shape, so a no-match means "leave it alone" rather than
+"it is native".
 
-The domain already models this (`HostPath`'s `wsl` arm requires `distro`, so
-the type refuses to hold a half-built WSL path). What is missing is resolution.
-Planned order:
+Still missing, for the cases that heuristic does not cover (a non-Docker-Desktop
+WSL setup, or a mount that has been staged differently):
 
-1. Container bind-mount source — the `Mounts` array often reveals the real host
-   path.
-2. Match against `wsl -l -q`.
-3. Prompt once and cache.
+1. Match against `wsl -l -q`.
+2. Prompt once and cache.
 
-When every strategy fails the path stays `unresolved`, never a guess.
+When every strategy fails the path stays `posix`, never a guess. Note the blast
+radius is display only — the editor URI is built from the raw label, so a wrong
+guess is visible but harmless.
 
-## 4. Compose grouping
-
-`DevContainerLabels.composeProject` is captured and shown as a tag, but actions
-still operate on single containers — stopping a compose-based dev container
-leaves its database sibling running. Group rows by project and act on the
-group. The domain was shaped to allow this without a type change.
-
-## 5. Replace polling with an event stream
+## 4. Replace polling with an event stream
 
 The 5s poll is fine for a handful of containers and wasteful for a daemon with
 hundreds. Docker's `/events` endpoint (`docker.getEvents()`) gives
 start/stop/die/destroy pushes. Keep a slow poll as a reconciliation backstop —
 event streams drop.
 
-## 6. Rebuild and create
+Deliberately not attempted yet: it cannot be verified without a real daemon,
+and unverifiable complexity in the discovery path is the last thing this needs.
+
+## 5. Rebuild and create
 
 Needs `@devcontainers/cli`, which shells out to the `docker` binary. This is
 exactly why `DockerEnvironment` probes the API and the CLI **separately** —
 `api.ok` gates today's features, `cli.ok` gates these. The diagnostics panel
 already reports CLI absence.
 
-## 7. Packaging
+## 6. Packaging
 
 `electron-builder` is not wired up; there is no distributable. Needs ASAR
 integrity, code signing and notarisation on macOS, and an auto-update story or
 an explicit decision not to have one.
 
-## 8. Renderer tests
+## 7. Smaller things
 
-The pure layer is well covered; the components are not tested at all. Add
-`@testing-library/react` with `vitest`'s `jsdom` environment. Highest-value
-cases: the degraded row for an unresolved path, the disabled "Open" button with
-its reason, and the diagnostics panel listing every attempt.
-
-## 9. Lint and format
-
-`.devcontainer/devcontainer.json` configures the ESLint and Prettier
-extensions, and `editor.codeActionsOnSave` runs `source.fixAll.eslint` — but
-**neither tool is installed and neither has a config file**. The editor
-settings are currently inert. Add `eslint.config.js` (flat config, per
-`eslint.useFlatConfig`) and `.prettierrc`, then wire both into `bun run check`.
-
-## 10. Smaller things
-
-- **Copy the URI** as a fallback when launching fails. `OpenInEditorResult`
-  already carries `uri` on the failure arm for exactly this.
 - **Attached containers.** Containers attached to rather than created by the
   extension use a different authority (`attached-container+<hex of JSON>`).
   Not handled.
@@ -124,6 +111,27 @@ settings are currently inert. Add `eslint.config.js` (flat config, per
   Either detect and disable opening, or say what it means.
 - **`docker context`.** Only `DOCKER_HOST` and well-known sockets are read.
   Users who switch contexts with `docker context use` are not followed.
+- **Compose siblings without the devcontainer label.** Grouping only sees
+  containers carrying `devcontainer.local_folder`. A compose project whose
+  database service lacks that label will not appear in the group, so "Stop all"
+  will miss it. Fixing this means a second query filtered on
+  `com.docker.compose.project` for projects already known.
+- **App-level tests.** `App.tsx` — polling, the busy set, group fan-out — has
+  no test of its own; the pieces it composes are covered individually.
 - **Accessibility.** No keyboard shortcuts, no focus management, no screen
   reader pass.
 - **Window state.** Size and position are not persisted.
+- **CI.** No workflow runs any of this on push.
+
+## Done
+
+Items completed since the first MVP pass, kept for the record:
+
+- ~~Renderer tests~~ — jsdom + Testing Library, covering the degraded row, the
+  disabled Open button and its reason, the diagnostics panel, and compose groups.
+- ~~Lint and format~~ — ESLint flat config with type-aware rules, Prettier, both
+  in `bun run check`. This closed a real gap: the devcontainer configured both
+  editor extensions and ran `source.fixAll.eslint` on save while neither tool
+  was installed.
+- ~~Compose grouping~~.
+- ~~Copy the URI as a fallback~~.

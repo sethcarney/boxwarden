@@ -35,7 +35,9 @@ export function authorityFor(localFolderRaw: string): DevContainerAuthority {
 
 /** Inverse of the hex step, for tests and for explaining a URI in diagnostics. */
 export function decodeAuthority(authority: DevContainerAuthority): string | undefined {
-  const hex = authority.startsWith('dev-container+') ? authority.slice('dev-container+'.length) : undefined;
+  const hex = authority.startsWith('dev-container+')
+    ? authority.slice('dev-container+'.length)
+    : undefined;
   if (hex === undefined || hex.length % 2 !== 0 || !/^[0-9a-f]*$/i.test(hex)) return undefined;
 
   const bytes = new Uint8Array(hex.length / 2);

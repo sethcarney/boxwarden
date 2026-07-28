@@ -176,9 +176,7 @@ export function describeTransport(transport: DockerTransport): string {
  */
 export function classifyError(error: unknown): EndpointFailure {
   const code =
-    typeof error === 'object' && error !== null && 'code' in error
-      ? String((error as { code: unknown }).code)
-      : undefined;
+    typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : undefined;
   const detail = error instanceof Error ? error.message : String(error);
 
   switch (code) {

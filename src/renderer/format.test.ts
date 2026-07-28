@@ -28,7 +28,10 @@ describe('statusLabel', () => {
 
   it('appends health when Docker reports it', () => {
     expect(
-      statusLabel({ state: 'running', startedAt: ago(3_600_000), ports: [], health: 'unhealthy' }, NOW),
+      statusLabel(
+        { state: 'running', startedAt: ago(3_600_000), ports: [], health: 'unhealthy' },
+        NOW,
+      ),
     ).toBe('Up 1 hour · unhealthy');
   });
 
@@ -90,8 +93,8 @@ describe('explainFailure', () => {
     );
     expect(explainFailure({ code: 'connection-refused' }, target)).toContain('not running');
     expect(explainFailure({ code: 'timeout', ms: 3000 }, target)).toContain('3000ms');
-    expect(explainFailure({ code: 'api-too-old', server: '1.24', minimum: '1.41' }, target)).toContain(
-      '1.41',
-    );
+    expect(
+      explainFailure({ code: 'api-too-old', server: '1.24', minimum: '1.41' }, target),
+    ).toContain('1.41');
   });
 });
