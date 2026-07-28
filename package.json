@@ -4,14 +4,37 @@
   "private": true,
   "type": "module",
   "license": "MIT",
+  "main": "out/main/index.js",
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "dev:fake": "BOXWARDEN_FAKE_DOCKER=1 electron-vite dev",
+    "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.web.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "bun run typecheck && bun run test && bun run check:devcontainer",
     "check:devcontainer": "node scripts/check-devcontainer.mjs"
   },
   "devDependencies": {
-    "typescript": "5.9.3"
+    "@types/dockerode": "^4.0.1",
+    "@types/node": "^26.1.2",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5",
+    "electron": "^43.2.0",
+    "electron-vite": "^5.0.0",
+    "typescript": "5.9.3",
+    "vite": "^7",
+    "vitest": "^4.1.10"
   },
   "trustedDependencies": [
-    "electron"
-  ]
+    "electron",
+    "esbuild"
+  ],
+  "dependencies": {
+    "dockerode": "^5.0.1",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  }
 }

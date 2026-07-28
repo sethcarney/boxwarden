@@ -1,0 +1,18 @@
+{
+  // Main process, preload, shared domain, and build config. Runs on Node, so
+  // no DOM lib — a `document` reference in main-process code should not
+  // typecheck.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022"],
+    "types": ["node"]
+  },
+  "include": [
+    "src/main/**/*.ts",
+    "src/preload/**/*.ts",
+    "src/domain/**/*.ts",
+    "src/shared/**/*.ts",
+    "electron.vite.config.ts",
+    "vitest.config.ts"
+  ]
+}
