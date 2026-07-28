@@ -109,7 +109,11 @@ check(
 
 const mounts = (config.mounts ?? []).map(parseMount);
 const claudeMount = mounts.find((m) => m.target === expected);
-check(`a mount targets ${expected}`, Boolean(claudeMount), `mounts: ${mounts.map((m) => m.target).join(', ') || '(none)'}`);
+check(
+  `a mount targets ${expected}`,
+  Boolean(claudeMount),
+  `mounts: ${mounts.map((m) => m.target).join(', ') || '(none)'}`,
+);
 
 // A bind mount would expose host credential files to the container.
 check(
@@ -123,7 +127,9 @@ for (const { label, ok, detail } of checks) {
 }
 
 if (failures.length > 0) {
-  console.error(`\n${failures.length} check(s) failed. Claude Code credentials will NOT persist across rebuilds.`);
+  console.error(
+    `\n${failures.length} check(s) failed. Claude Code credentials will NOT persist across rebuilds.`,
+  );
   process.exit(1);
 }
 console.log(`\nAll ${checks.length} checks passed.`);

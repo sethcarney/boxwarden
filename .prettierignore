@@ -1,0 +1,11 @@
+out/
+dist/
+release/
+coverage/
+bun.lock
+node_modules/
+
+# JSONC with comments that Prettier's json parser would mangle. The comments
+# in devcontainer.json carry the reasoning for docker-outside-of-docker and the
+# credential-persistence setup, and they are the most valuable thing in the file.
+.devcontainer/devcontainer.json

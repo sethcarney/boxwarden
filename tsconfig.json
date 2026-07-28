@@ -1,18 +1,9 @@
 {
-  "compilerOptions": {
-    "target": "ES2022",
-    "lib": ["ES2022"],
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "verbatimModuleSyntax": true,
-    "strict": true,
-    "noUncheckedIndexedAccess": true,
-    "exactOptionalPropertyTypes": true,
-    "noImplicitOverride": true,
-    "noFallthroughCasesInSwitch": true,
-    "isolatedModules": true,
-    "skipLibCheck": true,
-    "noEmit": true
-  },
-  "include": ["src/**/*.ts"]
+  // Solution file. The real settings live in tsconfig.node.json (main,
+  // preload, domain) and tsconfig.web.json (renderer) because the two halves
+  // need different libs — the renderer has DOM and no Node, the main process
+  // the reverse. Both extend tsconfig.base.json, which holds the strictness
+  // settings this file used to carry. `bun run typecheck` checks both.
+  "files": [],
+  "references": [{ "path": "./tsconfig.node.json" }, { "path": "./tsconfig.web.json" }]
 }

@@ -1,0 +1,298 @@
+import type {
+  ContainerPath,
+  DevContainer,
+  DevContainerLabels,
+  DevContainerRuntime,
+  Health,
+  MaybeHostPath,
+  PortBinding,
+} from '../../domain/index.js';
+import { asContainerId, asContainerPath } from '../../domain/index.js';
+import { parseLocalFolder, withWslDistro, wslDistroFromMountSources } from './host-path.js';
+
+/**
+ * Docker inspect JSON -> DevContainer. Pure, and typed against a structural
+ * subset of the response rather than dockerode's own types.
+ *
+ * That indirection earns its keep twice: the tests can build a fixture from a
+ * literal without constructing a full `ContainerInspectInfo`, and the fields
+ * this app actually depends on are listed in one place instead of being
+ * implied by scattered property accesses.
+ */
+
+export interface InspectState {
+  readonly Status?: string;
+  readonly ExitCode?: number;
+  readonly StartedAt?: string;
+  readonly FinishedAt?: string;
+  readonly Health?: { readonly Status?: string };
+}
+
+export interface InspectPortBinding {
+  readonly HostIp?: string;
+  readonly HostPort?: string;
+}
+
+/**
+ * Only `Source` is read, and only to recover a WSL distro name — see
+ * `wslDistroFromMountSources`. The rest of the mount record is deliberately
+ * not modelled: nothing in the app needs it, and listing fields implies a
+ * dependency that does not exist.
+ */
+export interface InspectMount {
+  readonly Source?: string;
+}
+
+export interface InspectResponse {
+  readonly Id: string;
+  readonly Name?: string;
+  readonly Created?: string;
+  readonly State?: InspectState;
+  readonly Config?: {
+    readonly Image?: string;
+    readonly WorkingDir?: string;
+    readonly Labels?: Readonly<Record<string, string>>;
+  };
+  readonly NetworkSettings?: {
+    readonly Ports?: Readonly<Record<string, readonly InspectPortBinding[] | null>>;
+  };
+  readonly Mounts?: readonly InspectMount[];
+}
+
+export const DEV_CONTAINER_LABEL = 'devcontainer.local_folder';
+
+/**
+ * Docker uses this sentinel for "never happened" rather than omitting the
+ * field, so a container that has never run reports StartedAt in year 1.
+ * Passing that through would render as "started 2025 years ago".
+ */
+const NEVER = '0001-01-01T00:00:00Z';
+
+function parseDate(value: string | undefined): Date | undefined {
+  if (value === undefined || value === '' || value.startsWith('0001-01-01')) return undefined;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date;
+}
+
+function parseHealth(status: string | undefined): Health | undefined {
+  switch (status) {
+    case 'starting':
+    case 'healthy':
+    case 'unhealthy':
+    case 'none':
+      return status;
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * `{"3000/tcp": [{HostIp, HostPort}]}` -> PortBinding[].
+ *
+ * A null value means the port is exposed by the image but not published to the
+ * host, which the domain models as a binding with no `hostPort`. Dropping
+ * those would be wrong: "3000 exposed, not published" is exactly the state a
+ * user is trying to diagnose when they wonder why localhost:3000 is dead.
+ */
+export function parsePorts(
+  ports: Readonly<Record<string, readonly InspectPortBinding[] | null>> | undefined,
+): readonly PortBinding[] {
+  if (ports === undefined) return [];
+  const result: PortBinding[] = [];
+
+  for (const [spec, bindings] of Object.entries(ports)) {
+    const [portText, protocolText] = spec.split('/');
+    const containerPort = Number.parseInt(portText ?? '', 10);
+    if (Number.isNaN(containerPort)) continue;
+    const protocol = protocolText === 'udp' ? 'udp' : 'tcp';
+
+    if (bindings === null || bindings.length === 0) {
+      result.push({ containerPort, protocol });
+      continue;
+    }
+
+    for (const binding of bindings) {
+      const hostPort = Number.parseInt(binding.HostPort ?? '', 10);
+      result.push({
+        containerPort,
+        protocol,
+        ...(binding.HostIp === undefined || binding.HostIp === ''
+          ? {}
+          : { hostIp: binding.HostIp }),
+        ...(Number.isNaN(hostPort) ? {} : { hostPort }),
+      });
+    }
+  }
+
+  return result.sort((a, b) => a.containerPort - b.containerPort);
+}
+
+/**
+ * Docker's seven states map one-to-one onto the domain union, so this is a
+ * translation rather than a decision. Anything unrecognised becomes `dead`,
+ * which is the safest default: it renders as stopped and offers a start
+ * button, where guessing `running` would offer a stop that does nothing.
+ */
+export function mapRuntime(state: InspectState | undefined): DevContainerRuntime {
+  const startedAt = parseDate(state?.StartedAt);
+  const ports: readonly PortBinding[] = [];
+
+  switch (state?.Status) {
+    case 'created':
+      return { state: 'created' };
+    case 'running': {
+      const health = parseHealth(state.Health?.Status);
+      return {
+        state: 'running',
+        startedAt: startedAt ?? new Date(0),
+        ports,
+        ...(health === undefined ? {} : { health }),
+      };
+    }
+    case 'paused':
+      return { state: 'paused', startedAt: startedAt ?? new Date(0), ports };
+    case 'restarting':
+      return { state: 'restarting', ...(startedAt === undefined ? {} : { startedAt }) };
+    case 'exited':
+      return {
+        state: 'exited',
+        exitCode: state.ExitCode ?? 0,
+        finishedAt: parseDate(state.FinishedAt) ?? new Date(0),
+      };
+    case 'removing':
+      return { state: 'removing' };
+    case 'dead':
+    default:
+      return { state: 'dead' };
+  }
+}
+
+/**
+ * The container-side path that becomes the last segment of the editor URI.
+ *
+ * Three sources in descending order of trustworthiness. Returning undefined is
+ * a real outcome, not a failure to try: the domain disables "Open in editor"
+ * with a reason rather than opening a path that may not exist.
+ */
+export function resolveWorkspaceFolder(
+  inspect: InspectResponse,
+  localFolder: MaybeHostPath,
+): ContainerPath | undefined {
+  // 1. devcontainer.metadata, when it names one. The label's shape is not
+  //    stable across CLI versions, so this reads defensively and gives up
+  //    quietly rather than trusting it.
+  const metadata = inspect.Config?.Labels?.['devcontainer.metadata'];
+  if (metadata !== undefined) {
+    const fromMetadata = workspaceFolderFromMetadata(metadata);
+    if (fromMetadata !== undefined) return asContainerPath(fromMetadata);
+  }
+
+  // 2. WorkingDir, which the devcontainer CLI sets to the workspace folder.
+  //    '/' is excluded — that is the Docker default meaning "unset", not a
+  //    workspace anybody wants opened.
+  const workingDir = inspect.Config?.WorkingDir;
+  if (workingDir !== undefined && workingDir !== '' && workingDir !== '/') {
+    return asContainerPath(workingDir);
+  }
+
+  // 3. The /workspaces/<basename> convention. A guess, but the convention the
+  //    CLI follows by default, so it is right far more often than not.
+  if (localFolder.kind !== 'unresolved') {
+    const separator = localFolder.kind === 'windows' ? '\\' : '/';
+    const trimmed = localFolder.path.replace(/[/\\]+$/, '');
+    const index = trimmed.lastIndexOf(separator);
+    const base = index === -1 ? trimmed : trimmed.slice(index + 1);
+    if (base !== '') return asContainerPath(`/workspaces/${base}`);
+  }
+
+  return undefined;
+}
+
+function workspaceFolderFromMetadata(raw: string): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+
+  // Seen as both a bare object and an array of merged fragments.
+  const entries = Array.isArray(parsed) ? parsed : [parsed];
+  for (const entry of entries) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const value = (entry as Record<string, unknown>)['workspaceFolder'];
+    if (typeof value === 'string' && value !== '') return value;
+  }
+  return undefined;
+}
+
+/** Docker prefixes container names with a slash. */
+function displayName(name: string | undefined, id: string): string {
+  const trimmed = (name ?? '').replace(/^\//, '');
+  return trimmed === '' ? id.slice(0, 12) : trimmed;
+}
+
+/**
+ * Returns undefined when the container is not a dev container — i.e. carries
+ * no `devcontainer.local_folder` label. Callers filter on that rather than
+ * this throwing, because a non-dev-container is an ordinary thing to meet when
+ * listing a developer's daemon, not an error.
+ */
+export function mapContainer(inspect: InspectResponse): DevContainer | undefined {
+  const labels = inspect.Config?.Labels ?? {};
+  const localFolderRaw = labels[DEV_CONTAINER_LABEL];
+  if (localFolderRaw === undefined) return undefined;
+
+  // A bare POSIX label is ambiguous between a native Linux path and a path
+  // inside a WSL distro; the mounts can settle it. A no-op on every other
+  // platform and whenever the mounts say nothing.
+  const mountSources = (inspect.Mounts ?? [])
+    .map((mount) => mount.Source)
+    .filter((source): source is string => source !== undefined);
+  const localFolder = withWslDistro(
+    parseLocalFolder(localFolderRaw),
+    wslDistroFromMountSources(mountSources),
+  );
+
+  const runtime = mapRuntime(inspect.State);
+  const ports = parsePorts(inspect.NetworkSettings?.Ports);
+
+  const devContainerLabels: DevContainerLabels = {
+    localFolderRaw,
+    ...(labels['devcontainer.config_file'] === undefined
+      ? {}
+      : { configFileRaw: labels['devcontainer.config_file'] }),
+    ...(labels['devcontainer.metadata'] === undefined
+      ? {}
+      : { metadataRaw: labels['devcontainer.metadata'] }),
+    ...(labels['com.docker.compose.project'] === undefined
+      ? {}
+      : { composeProject: labels['com.docker.compose.project'] }),
+  };
+
+  const configFileRaw = labels['devcontainer.config_file'];
+  const configFile = configFileRaw === undefined ? undefined : parseLocalFolder(configFileRaw);
+  const workspaceFolder = resolveWorkspaceFolder(inspect, localFolder);
+
+  return {
+    id: asContainerId(inspect.Id),
+    name: displayName(inspect.Name, inspect.Id),
+    image: inspect.Config?.Image ?? '(unknown image)',
+    createdAt: parseDate(inspect.Created) ?? new Date(0),
+    localFolder,
+    ...(workspaceFolder === undefined ? {} : { workspaceFolder }),
+    ...(configFile === undefined || configFile.kind === 'unresolved' ? {} : { configFile }),
+    labels: devContainerLabels,
+    // `ports` only exists on the running/paused arms, so it is attached after
+    // the fact rather than threaded through mapRuntime, which would have to
+    // take a parameter it ignores in five of seven cases.
+    runtime:
+      runtime.state === 'running'
+        ? { ...runtime, ports }
+        : runtime.state === 'paused'
+          ? { ...runtime, ports }
+          : runtime,
+  };
+}
+
+export { NEVER as DOCKER_NEVER_TIMESTAMP };
