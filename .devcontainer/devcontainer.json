@@ -129,6 +129,48 @@
   // credential files) are deliberately NOT mounted.
   // ---------------------------------------------------------------------
   "mounts": [
+    // -------------------------------------------------------------------
+    // The host Docker socket, and why this line exists rather than letting
+    // the docker-outside-of-docker feature mount it.
+    //
+    // That feature declares a FIXED bind mount of the host's
+    // /var/run/docker.sock onto /var/run/docker-host.sock. On a rootful
+    // Docker host that is correct and this line is a no-op restatement of
+    // it. On a ROOTLESS host — rootless Docker, or Podman, which is
+    // rootless by default — /var/run/docker.sock does not exist: the socket
+    // lives under $XDG_RUNTIME_DIR (/run/user/<uid>/podman/podman.sock for
+    // Podman, /run/user/<uid>/docker.sock for rootless Docker). The feature
+    // has no option for the HOST path, so the only lever is to restate the
+    // mount here: the CLI merges config and feature mounts and de-duplicates
+    // them by target, keeping the config's entry, so this replaces the
+    // feature's rather than colliding with it.
+    //
+    // Get this wrong and the failure is loud but deeply unhelpful. The
+    // feature's entrypoint, /usr/local/share/docker-init.sh, runs
+    // `stat -c '%g' /var/run/docker-host.sock` under `set -e` to find the
+    // socket's group. With nothing at that path stat fails, the entrypoint
+    // dies before `exec "$@"`, and the container exits 1 during startup —
+    // after a SUCCESSFUL image build. What surfaces in the Dev Containers
+    // log is the whole `docker run`/`podman run` command line and
+    // "Exit code 1", with the real cause (a one-line stat error, or a mount
+    // error from the runtime, depending on whether the runtime tolerated the
+    // missing source) far above it.
+    //
+    // BOXWARDEN_DOCKER_SOCKET is read from the environment of whatever
+    // started the editor, not from this container. For rootless Podman on
+    // WSL or Linux, export it from your shell profile and reload the window:
+    //   systemctl --user enable --now podman.socket
+    //   export BOXWARDEN_DOCKER_SOCKET="${XDG_RUNTIME_DIR}/podman/podman.sock"
+    // The default keeps rootful Docker and Docker Desktop (including its
+    // Windows named-pipe shim) working with nothing set. See
+    // docs/development.md for the full Podman walkthrough.
+    //
+    // Note this is the same socket the APP talks to, so the path translation
+    // caveat above applies unchanged: paths returned by the daemon are HOST
+    // paths.
+    // -------------------------------------------------------------------
+    "source=${localEnv:BOXWARDEN_DOCKER_SOCKET:/var/run/docker.sock},target=/var/run/docker-host.sock,type=bind",
+
     "source=claude-code-config-${devcontainerId},target=/home/node/.claude,type=volume"
   ],
 

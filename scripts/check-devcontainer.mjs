@@ -1,11 +1,15 @@
 #!/usr/bin/env node
 /**
- * Asserts that Claude Code's credential persistence is wired correctly in
- * .devcontainer/devcontainer.json.
+ * Asserts the parts of .devcontainer/devcontainer.json whose failure modes are
+ * misleading rather than obvious:
  *
- * This exists because every failure mode here is SILENT. Nothing errors, the
- * container builds fine, and the only symptom is being asked to sign in after
- * every rebuild — which is easy to mistake for normal behaviour.
+ *   1. Claude Code's credential persistence, which fails SILENTLY. Nothing
+ *      errors, the container builds fine, and the only symptom is being asked
+ *      to sign in after every rebuild — easy to mistake for normal behaviour.
+ *   2. The host Docker socket mount, which fails LOUDLY but points nowhere
+ *      useful: on a rootless host the container exits 1 during startup, after
+ *      a successful build, and the log shows the runtime command line rather
+ *      than the missing socket.
  *
  * Deliberately a plain script with no test framework: the choice between
  * Vitest and `bun test` is still open, and a regression guard should not be
@@ -122,13 +126,58 @@ check(
   claudeMount ? `got type=${claudeMount.type}` : 'no matching mount',
 );
 
+// ---------------------------------------------------------------------------
+// The host Docker socket.
+//
+// docker-outside-of-docker hardcodes the HOST side of this mount to
+// /var/run/docker.sock, which does not exist on a rootless host (Podman, or
+// rootless Docker). Restating the mount in devcontainer.json is the only way
+// to change it — the CLI de-duplicates mounts by target and keeps the
+// config's — so the check is that the restatement is still there and still
+// parameterized. Dropping it is an easy "cleanup" to make, and it breaks
+// every Podman user with a startup crash that names no socket.
+// ---------------------------------------------------------------------------
+const SOCKET_TARGET = '/var/run/docker-host.sock';
+
+check(
+  'docker-outside-of-docker feature present',
+  featureIds.some((id) => id.includes('features/docker-outside-of-docker')),
+  `features: ${featureIds.join(', ') || '(none)'}`,
+);
+
+const socketMount = mounts.find((m) => m.target === SOCKET_TARGET);
+check(
+  `a mount overrides the feature's socket bind at ${SOCKET_TARGET}`,
+  Boolean(socketMount),
+  `mounts: ${mounts.map((m) => m.target).join(', ') || '(none)'}`,
+);
+
+// Parameterized so rootless hosts can redirect it, with a default so rootful
+// Docker and Docker Desktop need nothing set. Hardcoding either path breaks
+// the other camp.
+const socketSource = socketMount?.source ?? '';
+const localEnvDefault = /^\$\{localEnv:[A-Za-z_][A-Za-z0-9_]*:(?<fallback>[^}]+)\}$/.exec(
+  socketSource,
+);
+check(
+  'its source is ${localEnv:...} with a default',
+  Boolean(localEnvDefault),
+  socketMount ? `got source=${socketSource || '(empty)'}` : 'no matching mount',
+);
+check(
+  'that default is /var/run/docker.sock',
+  localEnvDefault?.groups?.fallback === '/var/run/docker.sock',
+  localEnvDefault ? `got ${localEnvDefault.groups.fallback}` : 'no default to check',
+);
+
 for (const { label, ok, detail } of checks) {
   console.log(`${ok ? 'ok  ' : 'FAIL'}  ${label}${!ok && detail ? `  (${detail})` : ''}`);
 }
 
 if (failures.length > 0) {
   console.error(
-    `\n${failures.length} check(s) failed. Claude Code credentials will NOT persist across rebuilds.`,
+    `\n${failures.length} check(s) failed. Claude Code credentials will not persist across` +
+      ` rebuilds, and/or the container will not start on a rootless Docker or Podman host.`,
   );
   process.exit(1);
 }
