@@ -12,6 +12,79 @@ renderer code in _that_ interpreter; `bun run dev` merely spawns the electron
 binary. See the long comment in `devcontainer.json` for why this is not a
 preference that can be revisited.
 
+## Podman and rootless Docker hosts
+
+The dev container bind-mounts the host's container-runtime socket in
+(docker-outside-of-docker — see `devcontainer.json` for why it is not
+docker-in-docker). The feature hardcodes the **host** side of that mount to
+`/var/run/docker.sock`, which does not exist when the runtime is rootless:
+
+| Host runtime                   | Socket                                |
+| ------------------------------ | ------------------------------------- |
+| Docker Engine (rootful)        | `/var/run/docker.sock` — the default  |
+| Docker Desktop (incl. Windows) | `/var/run/docker.sock` via its shim   |
+| Podman (rootless, the default) | `$XDG_RUNTIME_DIR/podman/podman.sock` |
+| Docker rootless mode           | `$XDG_RUNTIME_DIR/docker.sock`        |
+
+`devcontainer.json` restates the mount so the host path can be redirected with
+`BOXWARDEN_DOCKER_SOCKET`. For rootless Podman on WSL or Linux:
+
+```bash
+systemctl --user enable --now podman.socket        # creates the socket
+ls -l "${XDG_RUNTIME_DIR}/podman/podman.sock"      # confirm it exists
+
+echo 'export BOXWARDEN_DOCKER_SOCKET="${XDG_RUNTIME_DIR}/podman/podman.sock"' >> ~/.bashrc
+```
+
+The variable is read from the environment of whatever launched the editor, not
+from inside the container, so it has to be exported **before** the editor's
+server starts. Reopening the window is usually enough; if the variable is still
+unset, the WSL server is holding the old environment — `wsl --shutdown` from
+Windows (or restarting VS Code entirely) picks it up. `env | grep BOXWARDEN` in
+a VS Code terminal on the host side is the quick way to tell.
+
+Unset it to go back to Docker; do not set it to the empty string. The CLI's
+default only applies when the variable is _absent_, and an empty value expands
+to an empty mount source.
+
+Podman also needs, in VS Code settings:
+
+```json
+"dev.containers.dockerPath": "podman",
+"dev.containers.dockerComposePath": "podman-compose"
+```
+
+`--userns=keep-id` and `--security-opt label=disable` are added by the Dev
+Containers extension itself when the runtime is Podman on Linux; they do not
+belong in this repo's config.
+
+**What the failure looks like if the socket is wrong.** The image builds fine
+and then the container exits during startup, so the error arrives at the very
+end of a run that looked healthy:
+
+```
+Error: Command failed: podman run ... --entrypoint /bin/sh <image> -c echo Container started
+Exit code 1
+```
+
+The feature's entrypoint (`/usr/local/share/docker-init.sh`) runs
+`stat -c '%g' /var/run/docker-host.sock` under `set -e` to find the socket's
+group, and nothing at that path kills the entrypoint before it ever reaches
+`exec "$@"` — which is why the message names the container command rather than
+the socket. Scroll **up** in the Dev Containers log for the real line: either a
+`stat` error, or a mount error from Podman about the missing source.
+
+Two related notes for Podman specifically. Under `--userns=keep-id` a
+newly-created named volume can come up root-owned, which is what the
+writability reclaim at the top of `post-create.sh` is for. And whichever socket
+gets mounted is the one the app itself talks to, so on a Podman host boxwarden
+is exercising Podman's Docker-compatible API — `endpoint.ts` already probes
+`$XDG_RUNTIME_DIR/podman/podman.sock`, so this is a supported configuration
+rather than a workaround.
+
+`bun run check:devcontainer` asserts the mount is still present and still
+parameterized.
+
 ## Commands
 
 ```bash
