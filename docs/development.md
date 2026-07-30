@@ -1,5 +1,9 @@
 # Development
 
+How the pieces fit and why they are the way they are. For getting the thing
+_running_ — opening the dev container from a terminal, developing on the host,
+building and installing it — see [running.md](./running.md).
+
 ## Prerequisites
 
 Node 22 and Bun. Both are provided by the dev container
@@ -98,7 +102,16 @@ bun run typecheck    # both halves — node and web configs
 bun run lint         # eslint, type-aware
 bun run format       # prettier --write
 bun run check        # typecheck + lint + format + test + devcontainer assertions
+
+bun run package      # build + electron-builder --dir: an unpacked app, no installer
+bun run dist         # build + installers for the host OS, into release/
+bun run dist:mac     # ...or :linux, or :win
+
+bun run devcontainer:open   # devcontainer up, then attach an editor to it
 ```
+
+The last four are covered in [running.md](./running.md); `electron-builder.yml`
+is where the packaging decisions live.
 
 `trustedDependencies` in `package.json` lists `electron` and `esbuild` because
 Bun blocks dependency lifecycle scripts by default, and Electron's postinstall

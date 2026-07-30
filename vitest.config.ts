@@ -21,7 +21,11 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   plugins: [react()],
   test: {
-    include: ['src/**/*.test.{ts,tsx}'],
+    // scripts/ is in scope for one reason: scripts/devcontainer-open.mjs
+    // duplicates the URI construction from src/main/editor/uri.ts because it
+    // runs unbuilt and cannot import TypeScript, and its test is what keeps the
+    // copy honest.
+    include: ['src/**/*.test.{ts,tsx}', 'scripts/**/*.test.mjs'],
     environment: 'node',
     // React Testing Library's auto-cleanup hook needs this.
     globals: true,
