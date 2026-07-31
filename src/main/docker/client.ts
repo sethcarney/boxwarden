@@ -72,7 +72,9 @@ async function withTimeout<T>(work: Promise<T>, ms: number, label: string): Prom
       work,
       new Promise<never>((_resolve, reject) => {
         timer = setTimeout(() => {
-          reject(Object.assign(new Error(`${label} timed out after ${ms}ms`), { code: 'ETIMEDOUT' }));
+          reject(
+            Object.assign(new Error(`${label} timed out after ${ms}ms`), { code: 'ETIMEDOUT' }),
+          );
         }, ms);
       }),
     ]);

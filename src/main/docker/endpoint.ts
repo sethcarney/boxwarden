@@ -1,5 +1,20 @@
 import { homedir, platform } from 'node:os';
-import { join } from 'node:path';
+import { posix } from 'node:path';
+
+/**
+ * `posix.join`, never the bare `join`.
+ *
+ * `node:path`'s default export switches separator on the HOST platform, but
+ * every path built below is a unix socket path on a TARGET platform that the
+ * caller passes in as an argument. Those are different questions, and `join`
+ * answers the wrong one: on a Windows host, `candidateEndpoints('darwin', ...)`
+ * produced `/Users/dev\.orbstack\run\docker.sock`.
+ *
+ * That only ever surfaced as two failing tests, because in production the host
+ * and target always agreed — but it makes the suite unrunnable on Windows,
+ * which is precisely where this app most needs to be developed.
+ */
+const join = posix.join;
 import type {
   ContainerRuntimeKind,
   DockerEndpoint,

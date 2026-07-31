@@ -184,7 +184,7 @@ const INSPECT_SCRIPT = [
   '    if socat -T1 - "UNIX-CONNECT:$p" </dev/null >/dev/null 2>&1; then sock="$p"; break; fi',
   '  done',
   'fi',
-  "printf '%s\\n%s\\n%s\\n%s\\n' \"$uid\" \"$sock\" \"$podman\" \"$socat\"",
+  'printf \'%s\\n%s\\n%s\\n%s\\n\' "$uid" "$sock" "$podman" "$socat"',
 ].join('\n');
 
 interface DistroInspection {

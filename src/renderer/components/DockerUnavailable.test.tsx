@@ -57,10 +57,7 @@ describe('DockerUnavailable', () => {
     };
     render(
       <DockerUnavailable
-        environment={environment([
-          failed('//./pipe/nope', 'not-present'),
-          podmanOnDockerPipe,
-        ])}
+        environment={environment([failed('//./pipe/nope', 'not-present'), podmanOnDockerPipe])}
       />,
     );
     expect(screen.getByText('ok — Podman 5.7.0')).toBeDefined();
@@ -70,7 +67,11 @@ describe('DockerUnavailable', () => {
     const inWsl: EndpointProbe = {
       ok: false,
       endpoint: {
-        transport: { transport: 'wsl', distro: 'dev', socketPath: '/run/user/1000/podman/podman.sock' },
+        transport: {
+          transport: 'wsl',
+          distro: 'dev',
+          socketPath: '/run/user/1000/podman/podman.sock',
+        },
         origin: { kind: 'wsl', distro: 'dev', runtime: 'podman' },
       },
       failure: { code: 'not-present', detail: 'ENOENT' },

@@ -60,11 +60,11 @@ imports nothing. Anything that touches the outside world lives in `src/main/`
 as a thin shell around a pure core:
 
 | Impure edge                    | Pure core it wraps                         |
-| ------------------------------- | ------------------------------------------ |
-| `docker/client.ts` (dockerode)  | `docker/mapping.ts`, `docker/host-path.ts` |
-| `docker/client.ts` (probing)    | `docker/endpoint.ts`                       |
-| `editor/launch.ts` (spawn)      | `editor/uri.ts`                            |
-| `editor/resolve.ts` (fs, exec)  | `editor/targets.ts` (data)                 |
+| ------------------------------ | ------------------------------------------ |
+| `docker/client.ts` (dockerode) | `docker/mapping.ts`, `docker/host-path.ts` |
+| `docker/client.ts` (probing)   | `docker/endpoint.ts`                       |
+| `editor/launch.ts` (spawn)     | `editor/uri.ts`                            |
+| `editor/resolve.ts` (fs, exec) | `editor/targets.ts` (data)                 |
 
 Preserve this split when adding features — it's why the suite tests without a
 Docker daemon or a display, and why the shells stay small.
@@ -90,7 +90,7 @@ As bare strings the two are interchangeable and a swap only misfires on
 someone else's OS; the branded types make it a compile error instead.
 
 **The raw label rule**: `devcontainer.local_folder` is parsed into a
-`MaybeHostPath` *for display only*. The editor URI is always built from the
+`MaybeHostPath` _for display only_. The editor URI is always built from the
 **raw label string, byte for byte** (`src/main/editor/uri.ts`) — the Dev
 Containers extension only reattaches if the URI decodes to the exact string it
 originally hex-encoded. Normalizing slashes, trimming, or case-folding a drive
@@ -154,7 +154,7 @@ main/preload have the reverse — one config can't express both:
 - `tsconfig.web.json` — `src/renderer`, plus shared code
 
 `exactOptionalPropertyTypes` is on: an absent optional field must be an
-*absent key*, not `undefined`. Use conditional spreads:
+_absent key_, not `undefined`. Use conditional spreads:
 `...(health === undefined ? {} : { health })`.
 
 ESLint (`eslint.config.js`) uses type-aware rules (`strictTypeChecked` +
@@ -176,7 +176,7 @@ fixtures deliberately construct malformed inputs.
   tests assert fixed values instead of freezing globals. Follow the same
   pattern for new code that needs the clock or platform.
 - Component tests opt into jsdom **per file** with `// @vitest-environment
-  jsdom` (not a glob) — jsdom costs ~1s of setup and a glob would triple
+jsdom` (not a glob) — jsdom costs ~1s of setup and a glob would triple
   suite time for non-component tests.
 - `src/renderer/test-fixtures.ts` builds `DevContainer` values directly rather
   than running `mapContainer` (which lives in `src/main`, outside the
