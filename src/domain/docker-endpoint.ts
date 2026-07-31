@@ -35,13 +35,32 @@ export type DockerTransport =
       readonly host: string;
       readonly port?: number;
       readonly user?: string;
+    }
+  /**
+   * A unix socket living INSIDE a WSL2 distribution, reached from Windows.
+   *
+   * This is its own arm rather than a `unix` socket with a funny path because
+   * Windows genuinely cannot open it: WSL2 projects a distro's filesystem over
+   * 9P, and 9P does not carry unix domain sockets. `\\wsl.localhost\dev\run\...`
+   * is a path Windows can *see* and can never *connect to*.
+   *
+   * Reaching it needs a relay process that lives on the Linux side of the
+   * boundary (see src/main/docker/wsl.ts). Modelling that as a distinct
+   * transport keeps the "how do I get a byte stream" decision in one switch
+   * instead of smeared through the client as special cases on the path string.
+   */
+  | {
+      readonly transport: 'wsl';
+      readonly distro: string;
+      readonly socketPath: string;
     };
 
 /** Where a candidate came from — drives probe order and the diagnostic text. */
 export type EndpointOrigin =
   | { readonly kind: 'manual'; readonly label?: string }
   | { readonly kind: 'env'; readonly variable: 'DOCKER_HOST'; readonly value: string }
-  | { readonly kind: 'well-known'; readonly runtime: ContainerRuntimeKind };
+  | { readonly kind: 'well-known'; readonly runtime: ContainerRuntimeKind }
+  | { readonly kind: 'wsl'; readonly distro: string; readonly runtime: ContainerRuntimeKind };
 
 export interface DockerEndpoint {
   readonly transport: DockerTransport;
@@ -68,6 +87,18 @@ export type EndpointProbe =
       readonly endpoint: DockerEndpoint;
       readonly serverVersion: string;
       readonly apiVersion: string;
+      /**
+       * What actually answered — read back from the daemon's own /version
+       * response, NOT inferred from which socket we happened to knock on.
+       *
+       * The two disagree more often than you would expect. Podman's
+       * docker-compatible pipe on Windows is literally named
+       * `\\.\pipe\docker_engine`, so guessing from the path reports "Docker
+       * Desktop 5.7.0" — a product that has never had a version 5.7.0, because
+       * 5.7.0 is Podman's. `endpoint.origin` keeps the guess, for the case
+       * where nothing connected and there is no server to ask.
+       */
+      readonly runtime: ContainerRuntimeKind;
     }
   | {
       readonly ok: false;
@@ -88,6 +119,17 @@ export type DockerCliProbe =
     };
 
 export interface DockerEnvironment {
+  /**
+   * The PRIMARY engine — the first candidate that answered, or the first
+   * failure when none did. It drives the headline chip and the error screen.
+   *
+   * "Primary" and not "the" because a machine can run more than one engine at
+   * once, and on Windows routinely does: a `podman machine` behind a named pipe
+   * plus a rootless podman inside each WSL distro. boxwarden connects to every
+   * one that answers and unions their container lists, so `api` being Podman
+   * 5.7.0 does not mean it is the only thing that was reachable — filter
+   * `attempts` on `ok` for the full set.
+   */
   readonly api: EndpointProbe;
   readonly cli: DockerCliProbe;
   /**

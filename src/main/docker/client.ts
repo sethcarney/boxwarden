@@ -1,8 +1,11 @@
 import { execFile } from 'node:child_process';
+import http from 'node:http';
+import { homedir, platform } from 'node:os';
 import { promisify } from 'node:util';
 import Docker from 'dockerode';
 import type {
   ContainerId,
+  ContainerRuntimeKind,
   DevContainer,
   DockerCliProbe,
   DockerEndpoint,
@@ -16,13 +19,23 @@ import {
   apiVersionAtLeast,
   candidateEndpoints,
   classifyError,
+  describeTransport,
 } from './endpoint.js';
 import { DEV_CONTAINER_LABEL, mapContainer, type InspectResponse } from './mapping.js';
+import { detectRuntime, type VersionResponse } from './runtime.js';
+import { createWslConnection, discoverWslSockets } from './wsl.js';
 
 const execFileAsync = promisify(execFile);
 
+/**
+ * docker-modem honours an `agent` option (modem.js sets `optionsf.agent` from
+ * it) but @types/dockerode does not declare one, so it is added here rather
+ * than reaching for `any` at the call site.
+ */
+type DockerOptions = Docker.DockerOptions & { agent?: http.Agent };
+
 /** dockerode options for a domain endpoint. */
-function optionsFor(endpoint: DockerEndpoint): Docker.DockerOptions {
+function optionsFor(endpoint: DockerEndpoint): DockerOptions {
   const { transport } = endpoint;
   switch (transport.transport) {
     case 'unix':
@@ -39,31 +52,93 @@ function optionsFor(endpoint: DockerEndpoint): Docker.DockerOptions {
         ...(transport.user === undefined ? {} : { username: transport.user }),
         timeout: PROBE_TIMEOUT_MS,
       };
+    case 'wsl': {
+      // host/port are placeholders that only shape the request line; the agent
+      // decides where the bytes actually go. No `timeout` — it would reach
+      // net.Socket methods the relay duplex does not implement, so the timeout
+      // for this transport is imposed by `withTimeout` below instead.
+      const agent = new http.Agent({ keepAlive: false });
+      agent.createConnection = () => createWslConnection(transport.distro, transport.socketPath);
+      return { protocol: 'http', host: 'localhost', port: 80, agent };
+    }
   }
+}
+
+/** Reject after `ms`, so a wedged relay cannot hang discovery forever. */
+async function withTimeout<T>(work: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          reject(Object.assign(new Error(`${label} timed out after ${ms}ms`), { code: 'ETIMEDOUT' }));
+        }, ms);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/** A candidate that answered, kept open for the operational calls. */
+interface Connection {
+  readonly endpoint: DockerEndpoint;
+  readonly docker: Docker;
+}
+
+interface Attempt {
+  readonly probe: EndpointProbe;
+  readonly connection: Connection | undefined;
 }
 
 /**
  * Try one endpoint. Resolves either way — the caller is building a diagnostic
  * list, so a rejection here would just have to be caught and converted back.
+ *
+ * The successful client is handed back rather than rebuilt from the endpoint,
+ * because for a WSL endpoint rebuilding means a second http.Agent and a second
+ * pool of relay processes for the same distro.
  */
-async function probeEndpoint(endpoint: DockerEndpoint): Promise<EndpointProbe> {
+async function probeEndpoint(endpoint: DockerEndpoint): Promise<Attempt> {
+  const guess =
+    endpoint.origin.kind === 'well-known' || endpoint.origin.kind === 'wsl'
+      ? endpoint.origin.runtime
+      : ('docker-engine' as ContainerRuntimeKind);
+
   try {
     const docker = new Docker(optionsFor(endpoint));
-    const version = (await docker.version()) as { ApiVersion?: string; Version?: string };
+    const version = await withTimeout(
+      docker.version() as Promise<VersionResponse>,
+      PROBE_TIMEOUT_MS * 2,
+      describeTransport(endpoint.transport),
+    );
     const apiVersion = version.ApiVersion ?? '0';
     const serverVersion = version.Version ?? 'unknown';
 
     if (!apiVersionAtLeast(apiVersion, MINIMUM_API_VERSION)) {
       return {
-        ok: false,
-        endpoint,
-        failure: { code: 'api-too-old', server: apiVersion, minimum: MINIMUM_API_VERSION },
+        probe: {
+          ok: false,
+          endpoint,
+          failure: { code: 'api-too-old', server: apiVersion, minimum: MINIMUM_API_VERSION },
+        },
+        connection: undefined,
       };
     }
 
-    return { ok: true, endpoint, serverVersion, apiVersion };
+    return {
+      probe: {
+        ok: true,
+        endpoint,
+        serverVersion,
+        apiVersion,
+        runtime: detectRuntime(version, guess),
+      },
+      connection: { endpoint, docker },
+    };
   } catch (error) {
-    return { ok: false, endpoint, failure: classifyError(error) };
+    return { probe: { ok: false, endpoint, failure: classifyError(error) }, connection: undefined };
   }
 }
 
@@ -99,33 +174,53 @@ async function probeCli(): Promise<DockerCliProbe> {
 
 export class DockerodeBackend implements DockerBackend {
   /**
-   * Cached so that list/start/stop do not re-probe every candidate on each
-   * call. Invalidated on any operational failure, so pulling the socket out
-   * from under a running app recovers on the next refresh rather than wedging
-   * on a dead handle.
+   * EVERY endpoint that answered, not just the first.
+   *
+   * This is the change that makes Windows work. A developer on Linux or macOS
+   * has one engine, so "probe candidates in order, keep the winner" is right.
+   * On Windows it routinely is not: a `podman machine` answers on
+   * `\\.\pipe\docker_engine` while the dev containers the user actually cares
+   * about live in a rootless podman inside a WSL distro. Stopping at the first
+   * success picks the pipe, finds nothing carrying the dev-container label, and
+   * reports an empty list on a machine with containers running — the failure
+   * that is hardest to debug, because nothing looks broken.
+   *
+   * Invalidated on any operational failure, so pulling a socket out from under
+   * a running app recovers on the next refresh rather than wedging.
    */
-  #connected: { docker: Docker; probe: EndpointProbe } | undefined;
+  #connections: readonly Connection[] | undefined;
+
+  /**
+   * Which engine each container came from, so start/stop go back to the daemon
+   * that owns the container instead of guessing. Populated by listDevContainers.
+   */
+  readonly #ownerById = new Map<ContainerId, Docker>();
 
   async probe(): Promise<DockerEnvironment> {
-    const attempts: EndpointProbe[] = [];
-    let connected: { docker: Docker; probe: EndpointProbe } | undefined;
+    // Off Windows this resolves to [] without spawning anything.
+    const wslSockets = await discoverWslSockets();
+    const candidates = candidateEndpoints(platform(), homedir(), process.env, wslSockets);
 
-    for (const endpoint of candidateEndpoints()) {
-      const probe = await probeEndpoint(endpoint);
-      attempts.push(probe);
-      if (probe.ok) {
-        connected = { docker: new Docker(optionsFor(endpoint)), probe };
-        break;
-      }
-    }
+    // Probed concurrently. Now that every candidate is tried rather than
+    // stopped at the first success, doing this in series would add each dead
+    // socket's timeout to every refresh.
+    const results = await Promise.all(candidates.map(probeEndpoint));
 
-    this.#connected = connected;
+    const attempts = results.map((result) => result.probe);
+    const connections = results
+      .map((result) => result.connection)
+      .filter((connection): connection is Connection => connection !== undefined);
+
+    this.#connections = connections;
+    this.#ownerById.clear();
+
     const cli = await probeCli();
 
-    // When nothing connected, report the FIRST failure as the headline. It is
-    // the highest-priority candidate — DOCKER_HOST when set, otherwise the
-    // platform's usual socket — so it is the one the user most likely meant.
-    const api: EndpointProbe = connected?.probe ??
+    // The headline. First success in candidate order when there is one;
+    // otherwise the FIRST failure, which is the highest-priority candidate —
+    // DOCKER_HOST when set, otherwise the platform's usual socket — and so the
+    // one the user most likely meant.
+    const api: EndpointProbe = attempts.find((attempt) => attempt.ok) ??
       attempts[0] ?? {
         ok: false,
         endpoint: {
@@ -138,66 +233,126 @@ export class DockerodeBackend implements DockerBackend {
     return { api, cli, attempts };
   }
 
-  async #docker(): Promise<Docker> {
-    const cached = this.#connected;
-    if (cached !== undefined) return cached.docker;
+  async #ensureConnections(): Promise<readonly Connection[]> {
+    const cached = this.#connections;
+    if (cached !== undefined && cached.length > 0) return cached;
 
     await this.probe();
 
-    // Re-read into a local rather than touching this.#connected directly:
-    // TypeScript's narrowing does not know that probe() reassigns the field,
-    // so the field still reads as `undefined` here from the check above.
-    const connected = this.#connected;
-    if (connected === undefined) {
+    // Re-read into a local rather than touching this.#connections directly:
+    // TypeScript's narrowing does not know that probe() reassigns the field.
+    const connections = this.#connections;
+    if (connections === undefined || connections.length === 0) {
       throw new Error('No reachable Docker daemon.');
     }
-    return connected.docker;
+    return connections;
   }
 
-  /** Any operational failure drops the cached handle so the next call re-probes. */
+  /** Any operational failure drops the cached handles so the next call re-probes. */
   #invalidate(): void {
-    this.#connected = undefined;
+    this.#connections = undefined;
+    this.#ownerById.clear();
+  }
+
+  async #listFrom(connection: Connection): Promise<readonly DevContainer[]> {
+    const { docker } = connection;
+
+    // Filter server-side on label EXISTENCE. A developer's daemon may hold
+    // hundreds of containers; inspecting all of them to find four dev
+    // containers would make refresh visibly slow for no benefit.
+    const summaries = await docker.listContainers({
+      all: true,
+      filters: { label: [DEV_CONTAINER_LABEL] },
+    });
+
+    // The summary from listContainers lacks StartedAt, ExitCode and Health,
+    // all of which the domain's runtime union requires. Inspecting each hit
+    // is the cost of not having to model those as optional everywhere.
+    const inspected = await Promise.all(
+      summaries.map(async (summary) => {
+        try {
+          return (await docker.getContainer(summary.Id).inspect()) as unknown as InspectResponse;
+        } catch {
+          // Raced with a `docker rm`. Dropping this one container is right;
+          // failing the whole refresh is not.
+          return undefined;
+        }
+      }),
+    );
+
+    const containers = inspected
+      .filter((value): value is InspectResponse => value !== undefined)
+      .map(mapContainer)
+      .filter((value): value is DevContainer => value !== undefined);
+
+    for (const container of containers) this.#ownerById.set(container.id, docker);
+    return containers;
   }
 
   async listDevContainers(): Promise<readonly DevContainer[]> {
-    const docker = await this.#docker();
-    try {
-      // Filter server-side on label EXISTENCE. A developer's daemon may hold
-      // hundreds of containers; inspecting all of them to find four dev
-      // containers would make refresh visibly slow for no benefit.
-      const summaries = await docker.listContainers({
-        all: true,
-        filters: { label: [DEV_CONTAINER_LABEL] },
-      });
+    const connections = await this.#ensureConnections();
+    const results = await Promise.allSettled(
+      connections.map((connection) => this.#listFrom(connection)),
+    );
 
-      // The summary from listContainers lacks StartedAt, ExitCode and Health,
-      // all of which the domain's runtime union requires. Inspecting each hit
-      // is the cost of not having to model those as optional everywhere.
-      const inspected = await Promise.all(
-        summaries.map(async (summary) => {
-          try {
-            return (await docker.getContainer(summary.Id).inspect()) as unknown as InspectResponse;
-          } catch {
-            // Raced with a `docker rm`. Dropping this one container is right;
-            // failing the whole refresh is not.
-            return undefined;
-          }
-        }),
-      );
+    const failures = results.filter((result) => result.status === 'rejected');
 
-      return inspected
-        .filter((value): value is InspectResponse => value !== undefined)
-        .map(mapContainer)
-        .filter((value): value is DevContainer => value !== undefined)
-        .sort(byRunningThenName);
-    } catch (error) {
+    // All of them failed: that is a connectivity problem, and it has to reach
+    // the UI as one. Returning [] here would render as "no dev containers" and
+    // send the user looking in entirely the wrong place.
+    if (failures.length === results.length && results.length > 0) {
       this.#invalidate();
-      throw error;
+      const first = failures[0];
+      throw first?.reason instanceof Error ? first.reason : new Error('Failed to list containers.');
     }
+
+    // Some failed. Report them and keep going — one flaky engine should not
+    // blank out the containers belonging to the others.
+    for (const [index, result] of results.entries()) {
+      if (result.status !== 'rejected') continue;
+      const endpoint = connections[index]?.endpoint;
+      const target = endpoint === undefined ? 'an endpoint' : describeTransport(endpoint.transport);
+      console.warn(`[boxwarden] Listing containers from ${target} failed:`, result.reason);
+    }
+
+    // Deduplicated by container id, because the same engine can legitimately be
+    // reachable twice — Podman on Windows answers on both `docker_engine` and
+    // `podman-machine-default`, and Docker Desktop on both `docker_engine` and
+    // `dockerDesktopLinuxEngine`. Ids are engine-unique, so this collapses the
+    // duplicates without having to identify the engine itself.
+    const byId = new Map<ContainerId, DevContainer>();
+    for (const result of results) {
+      if (result.status !== 'fulfilled') continue;
+      for (const container of result.value) {
+        if (!byId.has(container.id)) byId.set(container.id, container);
+      }
+    }
+
+    return [...byId.values()].sort(byRunningThenName);
+  }
+
+  /**
+   * The daemon holding a given container.
+   *
+   * A cache miss is not an error: the renderer can act on a container from a
+   * scan older than the last invalidation. Re-listing repopulates the map, and
+   * only then is an unknown id genuinely unknown.
+   */
+  async #ownerOf(id: ContainerId): Promise<Docker> {
+    const cached = this.#ownerById.get(id);
+    if (cached !== undefined) return cached;
+
+    await this.listDevContainers();
+
+    const refreshed = this.#ownerById.get(id);
+    if (refreshed === undefined) {
+      throw new Error('That container is no longer on any reachable daemon.');
+    }
+    return refreshed;
   }
 
   async start(id: ContainerId): Promise<void> {
-    const docker = await this.#docker();
+    const docker = await this.#ownerOf(id);
     try {
       await docker.getContainer(id).start();
     } catch (error) {
@@ -207,7 +362,7 @@ export class DockerodeBackend implements DockerBackend {
   }
 
   async stop(id: ContainerId): Promise<void> {
-    const docker = await this.#docker();
+    const docker = await this.#ownerOf(id);
     try {
       await docker.getContainer(id).stop();
     } catch (error) {

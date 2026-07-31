@@ -88,7 +88,21 @@ interface WellKnownSocket {
  */
 function wellKnownSockets(os: NodeJS.Platform, home: string, env: Env): readonly WellKnownSocket[] {
   if (os === 'win32') {
-    return [{ runtime: 'docker-desktop', path: '//./pipe/docker_engine' }];
+    // `docker_engine` is a contested name, not a Docker Desktop one. Podman's
+    // docker-compat service and Rancher Desktop in moby mode both claim it, so
+    // the `runtime` here is only a placeholder for the diagnostics line when
+    // nothing answers — `detectRuntime` overwrites it the moment one does.
+    return [
+      { runtime: 'docker-desktop', path: '//./pipe/docker_engine' },
+      // Docker Desktop's WSL2 backend also exposes this second, unshared pipe.
+      // Worth probing because a user can disable the generic `docker_engine`
+      // one ("Expose daemon on tcp://" / compat settings) and keep this.
+      { runtime: 'docker-desktop', path: '//./pipe/dockerDesktopLinuxEngine' },
+      // `podman machine` publishes its own pipe under the machine's name. The
+      // default machine covers the overwhelmingly common case; a user with a
+      // renamed machine still has DOCKER_HOST.
+      { runtime: 'podman', path: '//./pipe/podman-machine-default' },
+    ];
   }
 
   if (os === 'darwin') {
@@ -117,14 +131,65 @@ function wellKnownSockets(os: NodeJS.Platform, home: string, env: Env): readonly
 }
 
 /**
+ * WSL distributions that host an engine of their own but are already covered by
+ * a Windows named pipe, so relaying into them would only find the same
+ * containers a second time.
+ *
+ * `docker-desktop-data` is listed for a different reason: it is a storage
+ * volume with no daemon in it at all, and probing it can only ever waste a
+ * second on the way to failing.
+ */
+function isRedundantDistro(distro: string): boolean {
+  const name = distro.toLowerCase();
+  return (
+    name === 'docker-desktop' || name === 'docker-desktop-data' || name.startsWith('podman-machine')
+  );
+}
+
+/**
+ * Parse `wsl.exe --list --quiet --running` into distro names.
+ *
+ * `--quiet --running` and not `-l -v` on purpose. The verbose table is
+ * LOCALISED — on a German Windows the STATE column reads "Wird ausgeführt" —
+ * so any parser that greps for "Running" silently finds nothing for a large
+ * fraction of users, and reports "no WSL distros" on a machine full of them.
+ * The quiet list is names only, and names are not translated.
+ *
+ * The NUL stripping is not defensive padding: wsl.exe writes UTF-16LE, and when
+ * that is decoded as UTF-8 (or when only the BOM is trimmed) every character
+ * arrives interleaved with NUL bytes. Callers that decode properly lose
+ * nothing by this running anyway.
+ */
+export function parseWslDistroList(stdout: string): readonly string[] {
+  return stdout
+    .split(/\r?\n/)
+    .map((line) => line.replaceAll('\0', '').trim())
+    .filter((line) => line !== '')
+    .filter((line) => !isRedundantDistro(line));
+}
+
+/** A socket found (or started) inside a WSL distribution. */
+export interface WslSocket {
+  readonly distro: string;
+  readonly socketPath: string;
+  readonly runtime: ContainerRuntimeKind;
+}
+
+/**
  * Full ordered candidate list. DOCKER_HOST always wins when set and parseable:
  * a user who exported it meant it, and silently probing something else would
  * make the resulting error impossible to understand.
+ *
+ * WSL candidates come last, after the named pipes. Order matters much less than
+ * it used to — the client now connects to every candidate that answers rather
+ * than stopping at the first — but a pipe is an order of magnitude cheaper to
+ * probe than spawning `wsl.exe`, so the cheap ones go first.
  */
 export function candidateEndpoints(
   os: NodeJS.Platform = platform(),
   home: string = homedir(),
   env: Env = process.env,
+  wslSockets: readonly WslSocket[] = [],
 ): readonly DockerEndpoint[] {
   const candidates: DockerEndpoint[] = [];
 
@@ -147,6 +212,13 @@ export function candidateEndpoints(
     candidates.push({ transport, origin: { kind: 'well-known', runtime } });
   }
 
+  for (const { distro, socketPath, runtime } of wslSockets) {
+    candidates.push({
+      transport: { transport: 'wsl', distro, socketPath },
+      origin: { kind: 'wsl', distro, runtime },
+    });
+  }
+
   return candidates;
 }
 
@@ -163,6 +235,8 @@ export function describeTransport(transport: DockerTransport): string {
       return `ssh://${transport.user === undefined ? '' : `${transport.user}@`}${transport.host}${
         transport.port === undefined ? '' : `:${transport.port}`
       }`;
+    case 'wsl':
+      return `\\\\wsl.localhost\\${transport.distro}${transport.socketPath.replaceAll('/', '\\')}`;
   }
 }
 

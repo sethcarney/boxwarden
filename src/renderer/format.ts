@@ -1,4 +1,10 @@
-import type { DevContainerRuntime, EndpointFailure, MaybeHostPath } from '../domain/index.js';
+import type {
+  ContainerRuntimeKind,
+  DevContainerRuntime,
+  DockerTransport,
+  EndpointFailure,
+  MaybeHostPath,
+} from '../domain/index.js';
 
 /** Pure display helpers. Kept out of the components so they can be tested without a DOM. */
 
@@ -93,6 +99,51 @@ export function explainFailure(failure: EndpointFailure, target: string): string
       return `${target} speaks Docker API ${failure.server}, but boxwarden needs at least ${failure.minimum}.`;
     case 'unknown':
       return `${target} failed in a way boxwarden does not recognise: ${failure.detail}`;
+  }
+}
+
+/**
+ * The engine's name as its makers spell it.
+ *
+ * Worth a lookup table rather than a hardcoded "Docker" because the version
+ * string beside it belongs to whatever actually answered. "Docker 5.7.0" is not
+ * a cosmetic slip — Docker has no 5.7.0, so it sends a user debugging an empty
+ * container list searching for a release that does not exist, when what they
+ * are running is Podman.
+ */
+const RUNTIME_NAMES: Readonly<Record<ContainerRuntimeKind, string>> = {
+  'docker-desktop': 'Docker Desktop',
+  'docker-engine': 'Docker',
+  orbstack: 'OrbStack',
+  colima: 'Colima',
+  'rancher-desktop': 'Rancher Desktop',
+  podman: 'Podman',
+};
+
+export function runtimeLabel(runtime: ContainerRuntimeKind): string {
+  return RUNTIME_NAMES[runtime];
+}
+
+/**
+ * The connection target, for the diagnostics list.
+ *
+ * A WSL endpoint is rendered in the `\\wsl.localhost\...` form even though that
+ * path is precisely the thing Windows cannot open — it is the form the user can
+ * paste into Explorer to confirm the distro is the one they think it is, and
+ * the only spelling of "this socket, in that distro" they will recognise.
+ */
+export function describeTarget(transport: DockerTransport): string {
+  switch (transport.transport) {
+    case 'unix':
+      return transport.socketPath;
+    case 'npipe':
+      return transport.pipeName;
+    case 'tcp':
+      return `tcp://${transport.host}:${transport.port}`;
+    case 'ssh':
+      return `ssh://${transport.host}`;
+    case 'wsl':
+      return `\\\\wsl.localhost\\${transport.distro}${transport.socketPath.replaceAll('/', '\\')}`;
   }
 }
 

@@ -4,6 +4,7 @@ import { registerIpcHandlers } from './ipc.js';
 import type { DockerBackend } from './docker/backend.js';
 import { DockerodeBackend } from './docker/client.js';
 import { FakeDockerBackend } from './docker/fake.js';
+import { shutdownWslServices } from './docker/wsl.js';
 
 /**
  * Main process entry.
@@ -248,6 +249,14 @@ app.on('window-all-closed', () => {
   // macOS convention is for the app to stay resident; everywhere else,
   // closing the last window means quit.
   if (process.platform !== 'darwin') app.quit();
+});
+
+// Reaching an engine inside a WSL distro can require boxwarden to start a
+// `podman system service` in it. That process outlives this one unless it is
+// killed, and an orphan holds the whole distro awake — WSL will not idle-shut a
+// distro with a running process in it.
+app.on('will-quit', () => {
+  shutdownWslServices();
 });
 
 // Item 4 again, belt and braces: a renderer that somehow gets a preload with

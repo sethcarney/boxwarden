@@ -3,7 +3,9 @@ import {
   apiVersionAtLeast,
   candidateEndpoints,
   classifyError,
+  describeTransport,
   parseDockerHost,
+  parseWslDistroList,
 } from './endpoint.js';
 
 describe('parseDockerHost', () => {
@@ -96,6 +98,82 @@ describe('candidateEndpoints', () => {
     }).map((c) => (c.transport.transport === 'unix' ? c.transport.socketPath : ''));
     expect(paths).toContain('/run/user/1000/docker.sock');
     expect(paths).toContain('/run/user/1000/podman/podman.sock');
+  });
+
+  /**
+   * `podman machine` publishes its own pipe. Probing only `docker_engine` meant
+   * a Windows machine running podman was reachable purely by accident — through
+   * podman's docker-compat pipe — and not at all if the user had turned that
+   * compatibility off.
+   */
+  it('probes the podman machine pipe on Windows, not just docker_engine', () => {
+    const pipes = candidateEndpoints('win32', 'C:\\Users\\dev', {}).map((c) =>
+      c.transport.transport === 'npipe' ? c.transport.pipeName : '',
+    );
+    expect(pipes).toContain('//./pipe/docker_engine');
+    expect(pipes).toContain('//./pipe/podman-machine-default');
+  });
+
+  it('appends a candidate per WSL socket, after the named pipes', () => {
+    const candidates = candidateEndpoints('win32', 'C:\\Users\\dev', {}, [
+      { distro: 'dev', socketPath: '/run/user/1000/podman/podman.sock', runtime: 'podman' },
+    ]);
+
+    const last = candidates.at(-1);
+    expect(last?.transport).toEqual({
+      transport: 'wsl',
+      distro: 'dev',
+      socketPath: '/run/user/1000/podman/podman.sock',
+    });
+    expect(last?.origin).toEqual({ kind: 'wsl', distro: 'dev', runtime: 'podman' });
+  });
+
+  it('adds no WSL candidates when none were discovered', () => {
+    const candidates = candidateEndpoints('win32', 'C:\\Users\\dev', {});
+    expect(candidates.every((c) => c.transport.transport === 'npipe')).toBe(true);
+  });
+});
+
+describe('parseWslDistroList', () => {
+  it('reads the quiet distro list', () => {
+    expect(parseWslDistroList('dev\r\nUbuntu-22.04\r\n')).toEqual(['dev', 'Ubuntu-22.04']);
+  });
+
+  /**
+   * wsl.exe writes UTF-16LE. Decoded as UTF-8 — or with only the BOM stripped —
+   * every character arrives with a NUL beside it, and a naive parser then
+   * reports no distros on a machine full of them.
+   */
+  it('survives UTF-16 output that was decoded as bytes', () => {
+    expect(parseWslDistroList('\ufeffd\0e\0v\0\r\0\n\0')).toEqual(['dev']);
+  });
+
+  /**
+   * These already have a Windows named pipe of their own, so relaying into them
+   * would only rediscover the same containers. docker-desktop-data has no
+   * daemon in it at all.
+   */
+  it('skips distros that are already covered by a named pipe', () => {
+    expect(
+      parseWslDistroList('dev\ndocker-desktop\ndocker-desktop-data\npodman-machine-default\n'),
+    ).toEqual(['dev']);
+  });
+
+  it('returns nothing when no distro is running', () => {
+    expect(parseWslDistroList('')).toEqual([]);
+    expect(parseWslDistroList('\r\n\r\n')).toEqual([]);
+  });
+});
+
+describe('describeTransport', () => {
+  it('renders a WSL socket as a path the user can recognise', () => {
+    expect(
+      describeTransport({
+        transport: 'wsl',
+        distro: 'dev',
+        socketPath: '/run/user/1000/podman/podman.sock',
+      }),
+    ).toBe('\\\\wsl.localhost\\dev\\run\\user\\1000\\podman\\podman.sock');
   });
 });
 

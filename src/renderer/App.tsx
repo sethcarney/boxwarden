@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ContainerId, DevContainer, EditorId } from '../domain/index.js';
 import type { DiscoverySnapshot, EditorOption } from '../shared/ipc.js';
 import { getApi } from './api.js';
-import { canStart, canStop, relativeTime } from './format.js';
+import { canStart, canStop, describeTarget, relativeTime, runtimeLabel } from './format.js';
 import { groupContainers } from './grouping.js';
 import { ContainerCard } from './components/ContainerCard.js';
 import { ComposeGroup } from './components/ComposeGroup.js';
@@ -264,16 +264,31 @@ export function App() {
   const groups = groupContainers(containers);
   const dockerOk = snapshot?.environment.api.ok ?? false;
 
+  // More than one engine can answer at once — a podman machine behind a named
+  // pipe plus a rootless podman inside a WSL distro is an ordinary Windows
+  // setup. The chip names the primary and counts the rest, so a user seeing
+  // containers from somewhere unexpected can tell that is what happened.
+  const connected = (snapshot?.environment.attempts ?? []).filter((attempt) => attempt.ok);
+  const engineCount = connected.length;
+  const engineTitle = connected
+    .map(
+      (attempt) =>
+        `${runtimeLabel(attempt.runtime)} ${attempt.serverVersion} — ${describeTarget(attempt.endpoint.transport)}`,
+    )
+    .join('\n');
+
   return (
     <main className="app">
       <header className="app-head">
         <h1>boxwarden</h1>
         <div className="head-right">
           {snapshot !== undefined && (
-            <span className={`chip ${dockerOk ? 'chip-ok' : 'chip-fail'}`}>
+            <span className={`chip ${dockerOk ? 'chip-ok' : 'chip-fail'}`} title={engineTitle}>
               {snapshot.environment.api.ok
-                ? `Docker ${snapshot.environment.api.serverVersion}`
-                : 'Docker unreachable'}
+                ? `${runtimeLabel(snapshot.environment.api.runtime)} ${snapshot.environment.api.serverVersion}${
+                    engineCount > 1 ? ` +${String(engineCount - 1)}` : ''
+                  }`
+                : 'No container engine'}
             </span>
           )}
           <button type="button" onClick={() => void refresh()}>

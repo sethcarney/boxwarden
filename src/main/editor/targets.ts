@@ -9,6 +9,12 @@ import type { EditorDiscovery, EditorTarget, KnownEditorId } from '../../domain/
  * comes next because "Shell Command: Install 'code' command in PATH" is a
  * manual step a large fraction of macOS users have never run — treating a
  * missing `code` as "VS Code is not installed" would be wrong for most of them.
+ *
+ * The Windows entries point at the GUI `.exe` and NOT at the `bin\code` /
+ * `bin\code.cmd` shims sitting next to it on PATH, because neither shim can be
+ * spawned without a shell — one is a bash script, the other a batch file Node
+ * refuses to run directly. `Code.exe` accepts the same `--folder-uri` flag. See
+ * the note on WINDOWS_SPAWNABLE_EXTENSIONS in resolve.ts.
  */
 
 function vsCodeBundle(bundleId: string): EditorDiscovery {
@@ -35,6 +41,8 @@ const TARGETS: Record<KnownEditorId, EditorTarget> = {
           '/usr/local/bin/code',
           '/snap/bin/code',
           '/var/lib/flatpak/exports/bin/com.visualstudio.code',
+          '%LOCALAPPDATA%\\Programs\\Microsoft VS Code\\Code.exe',
+          '%ProgramFiles%\\Microsoft VS Code\\Code.exe',
         ],
       },
     ],
@@ -54,6 +62,8 @@ const TARGETS: Record<KnownEditorId, EditorTarget> = {
           '/Applications/Visual Studio Code - Insiders.app/Contents/Resources/app/bin/code-insiders',
           '/usr/bin/code-insiders',
           '/snap/bin/code-insiders',
+          '%LOCALAPPDATA%\\Programs\\Microsoft VS Code Insiders\\Code - Insiders.exe',
+          '%ProgramFiles%\\Microsoft VS Code Insiders\\Code - Insiders.exe',
         ],
       },
     ],
@@ -73,6 +83,7 @@ const TARGETS: Record<KnownEditorId, EditorTarget> = {
           '/Applications/Cursor.app/Contents/Resources/app/bin/cursor',
           '/usr/bin/cursor',
           '/usr/local/bin/cursor',
+          '%LOCALAPPDATA%\\Programs\\cursor\\Cursor.exe',
         ],
       },
     ],
@@ -95,6 +106,7 @@ const TARGETS: Record<KnownEditorId, EditorTarget> = {
           '/Applications/Windsurf.app/Contents/Resources/app/bin/windsurf',
           '/usr/bin/windsurf',
           '/usr/local/bin/windsurf',
+          '%LOCALAPPDATA%\\Programs\\Windsurf\\Windsurf.exe',
         ],
       },
     ],

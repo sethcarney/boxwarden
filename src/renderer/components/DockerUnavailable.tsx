@@ -1,5 +1,5 @@
 import type { DockerEnvironment } from '../../domain/index.js';
-import { explainFailure } from '../format.js';
+import { describeTarget, explainFailure, runtimeLabel } from '../format.js';
 
 /**
  * The screen shown when Docker could not be reached.
@@ -32,7 +32,9 @@ export function DockerUnavailable({ environment }: { readonly environment: Docke
               <code>{describeEndpoint(attempt.endpoint)}</code>
               <span className="origin">{describeOrigin(attempt.endpoint.origin)}</span>
               <span className={attempt.ok ? 'ok' : 'fail'}>
-                {attempt.ok ? `ok — Docker ${attempt.serverVersion}` : attempt.failure.code}
+                {attempt.ok
+                  ? `ok — ${runtimeLabel(attempt.runtime)} ${attempt.serverVersion}`
+                  : attempt.failure.code}
               </span>
             </li>
           ))}
@@ -55,17 +57,7 @@ export function DockerUnavailable({ environment }: { readonly environment: Docke
 }
 
 function describeEndpoint(endpoint: DockerEnvironment['api']['endpoint']): string {
-  const { transport } = endpoint;
-  switch (transport.transport) {
-    case 'unix':
-      return transport.socketPath;
-    case 'npipe':
-      return transport.pipeName;
-    case 'tcp':
-      return `tcp://${transport.host}:${transport.port}`;
-    case 'ssh':
-      return `ssh://${transport.host}`;
-  }
+  return describeTarget(endpoint.transport);
 }
 
 function describeOrigin(origin: DockerEnvironment['api']['endpoint']['origin']): string {
@@ -74,6 +66,8 @@ function describeOrigin(origin: DockerEnvironment['api']['endpoint']['origin']):
       return `from ${origin.variable}`;
     case 'well-known':
       return origin.runtime;
+    case 'wsl':
+      return `WSL: ${origin.distro}`;
     case 'manual':
       return origin.label ?? 'manual';
   }

@@ -163,10 +163,18 @@ export class FakeDockerBackend implements DockerBackend {
       origin: { kind: 'manual', label: 'BOXWARDEN_FAKE_DOCKER' },
     } as const;
 
+    const probe = {
+      ok: true,
+      endpoint,
+      serverVersion: '29.3.1 (fake)',
+      apiVersion: '1.51',
+      runtime: 'docker-engine',
+    } as const;
+
     return Promise.resolve({
-      api: { ok: true, endpoint, serverVersion: '29.3.1 (fake)', apiVersion: '1.51' },
+      api: probe,
       cli: { ok: true, binaryPath: '/usr/bin/docker (fake)', version: '29.3.1' },
-      attempts: [{ ok: true, endpoint, serverVersion: '29.3.1 (fake)', apiVersion: '1.51' }],
+      attempts: [probe],
     });
   }
 

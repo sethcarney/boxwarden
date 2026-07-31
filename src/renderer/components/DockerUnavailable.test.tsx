@@ -32,9 +32,54 @@ describe('DockerUnavailable', () => {
       endpoint: unixEndpoint('/var/run/docker.sock'),
       serverVersion: '29.3.1',
       apiVersion: '1.51',
+      runtime: 'docker-engine',
     };
     const { container } = render(<DockerUnavailable environment={environment([ok])} />);
     expect(container.firstChild).toBeNull();
+  });
+
+  /**
+   * The diagnostics line names the engine that answered, not the one the socket
+   * path suggested. Podman on Windows serves `\\.\pipe\docker_engine`, so a
+   * path-derived label reads "Docker Desktop 5.7.0" — a version Docker has
+   * never shipped.
+   */
+  it('names the engine that answered, not the socket it was found on', () => {
+    const podmanOnDockerPipe: EndpointProbe = {
+      ok: true,
+      endpoint: {
+        transport: { transport: 'npipe', pipeName: '//./pipe/docker_engine' },
+        origin: { kind: 'well-known', runtime: 'docker-desktop' },
+      },
+      serverVersion: '5.7.0',
+      apiVersion: '1.41',
+      runtime: 'podman',
+    };
+    render(
+      <DockerUnavailable
+        environment={environment([
+          failed('//./pipe/nope', 'not-present'),
+          podmanOnDockerPipe,
+        ])}
+      />,
+    );
+    expect(screen.getByText('ok — Podman 5.7.0')).toBeDefined();
+  });
+
+  it('identifies a WSL endpoint by its distribution', () => {
+    const inWsl: EndpointProbe = {
+      ok: false,
+      endpoint: {
+        transport: { transport: 'wsl', distro: 'dev', socketPath: '/run/user/1000/podman/podman.sock' },
+        origin: { kind: 'wsl', distro: 'dev', runtime: 'podman' },
+      },
+      failure: { code: 'not-present', detail: 'ENOENT' },
+    };
+    render(<DockerUnavailable environment={environment([inWsl])} />);
+    expect(screen.getByText('WSL: dev')).toBeDefined();
+    expect(
+      screen.getByText('\\\\wsl.localhost\\dev\\run\\user\\1000\\podman\\podman.sock'),
+    ).toBeDefined();
   });
 
   /**
