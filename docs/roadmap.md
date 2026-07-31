@@ -22,9 +22,12 @@ unblocks the most.
 ## Verified and unverified
 
 Verified here: build, ESLint + Prettier, typecheck across both TS projects,
-112 unit and component tests, and a headless launch under `xvfb` against
+132 unit and component tests, and a headless launch under `xvfb` against
 `BOXWARDEN_FAKE_DOCKER=1` — 7 cards in 1 compose group, group actions correct
 for the members' states, WSL path resolved from mounts, ports and footer right.
+That launch has since been repeated against a **packaged** Linux build, which
+exercises the parts development mode does not: the asar archive, the sandboxed
+preload loaded from inside it, and production CSP.
 
 **Not verified**, because the environment this was built in has no Docker
 socket and no editor installed:
@@ -94,11 +97,33 @@ exactly why `DockerEnvironment` probes the API and the CLI **separately** —
 `api.ok` gates today's features, `cli.ok` gates these. The diagnostics panel
 already reports CLI absence.
 
-## 6. Packaging
+## 6. Packaging — signing, notarisation, updates
 
-`electron-builder` is not wired up; there is no distributable. Needs ASAR
-integrity, code signing and notarisation on macOS, and an auto-update story or
-an explicit decision not to have one.
+`electron-builder` is wired up (`electron-builder.yml`, `bun run dist`) and the
+packaged Linux build has been verified to run: 7 fixture cards rendered out of
+an asar with the sandboxed preload and IPC intact. dmg, AppImage, deb and NSIS
+targets are configured, and the app has an icon.
+
+What is still missing is everything about _trusting_ the result:
+
+- **macOS signing and notarisation.** Signing is left to electron-builder's
+  keychain discovery, so a machine with a Developer ID produces a signed build
+  and every other machine produces an unsigned one. Notarisation is not
+  configured at all, so Gatekeeper blocks the dmg until the user strips the
+  quarantine attribute by hand — documented in `running.md`, which is not the
+  same as fixed.
+- **Windows signing.** Unsigned, so SmartScreen interposes.
+- **ASAR integrity.** `asar: true` is on; the integrity fuse that would detect
+  a tampered archive is not.
+- **Auto-update.** None. `latest-linux.yml` and friends get emitted as a side
+  effect, but nothing publishes or consumes them, and an installed build stays
+  where it is until someone replaces it. Either wire up `electron-updater`
+  against GitHub releases or say in the README that updates are manual — the
+  current state is neither.
+
+None of it is blocking for a tool you build yourself, and all of it is blocking
+for one you hand to somebody else. Note too that "it packages" is currently a
+claim about one Linux machine on one day — see the CI item below.
 
 ## 7. Smaller things
 
@@ -127,6 +152,12 @@ an explicit decision not to have one.
 
 Items completed since the first MVP pass, kept for the record:
 
+- ~~Packaging~~ — electron-builder, four targets, an icon, and a verified
+  packaged build. What remains of that item is signing, notarisation and
+  updates, which is why it still has a section above.
+- ~~A guide to running it~~ — `running.md`, covering the dev container driven
+  from the CLI (`bun run devcontainer:open`), development on the host, and
+  installing a built app on each OS.
 - ~~Renderer tests~~ — jsdom + Testing Library, covering the degraded row, the
   disabled Open button and its reason, the diagnostics panel, and compose groups.
 - ~~Lint and format~~ — ESLint flat config with type-aware rules, Prettier, both

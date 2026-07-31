@@ -36,14 +36,37 @@ No Docker, or Docker is broken? Run against fixtures:
 bun run dev:fake
 ```
 
+## Install it
+
+```bash
+bun run dist          # installers for the host OS, into release/
+```
+
+macOS gets a dmg, Linux an AppImage and a deb, Windows an NSIS installer. The
+builds are unsigned, so each platform will interpose on first launch —
+[the running guide](docs/running.md#3-installing-it-on-your-computer) walks
+through that, and through uninstalling again.
+
+## Work on it in its own dev container
+
+```bash
+bun run devcontainer:open
+```
+
+`devcontainer up` to build and start it, then `code --folder-uri` to attach —
+the same `vscode-remote://` URI the app's own Open button builds. Add
+`-- --editor cursor` for a fork, or `-- --print` to see the URI instead of
+launching. [Details](docs/running.md#1-the-dev-container-from-the-command-line).
+
 ## Docs
 
-|                                                |                                                               |
-| ---------------------------------------------- | ------------------------------------------------------------- |
-| [Architecture](docs/architecture.md)           | Process model, the two path spaces, why the raw label matters |
-| [Electron security](docs/electron-security.md) | The upstream checklist and where each item lands here         |
-| [Development](docs/development.md)             | Commands, fixtures, the two TS projects, testing              |
-| [Roadmap](docs/roadmap.md)                     | What is unproven, and what to build next                      |
+|                                                |                                                                     |
+| ---------------------------------------------- | ------------------------------------------------------------------- |
+| [Running](docs/running.md)                     | The dev container from the CLI, development on the host, installing |
+| [Architecture](docs/architecture.md)           | Process model, the two path spaces, why the raw label matters       |
+| [Electron security](docs/electron-security.md) | The upstream checklist and where each item lands here               |
+| [Development](docs/development.md)             | Commands, fixtures, the two TS projects, testing                    |
+| [Roadmap](docs/roadmap.md)                     | What is unproven, and what to build next                            |
 
 ## Licence
 

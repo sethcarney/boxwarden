@@ -1,0 +1,94 @@
+# electron-builder — turns the electron-vite output in out/ into something a
+# person can install.
+#
+# The division of labour: `bun run build` (electron-vite) produces out/main,
+# out/preload and out/renderer; electron-builder takes those, adds the Electron
+# runtime and the production dependencies from node_modules, and emits
+# installers into release/. It does NOT compile anything, which is why `dist`
+# runs the build first.
+#
+# See docs/running.md for what to do with the artefacts, and docs/roadmap.md
+# for what is still missing (signing, notarisation, auto-update).
+
+appId: com.boxwarden.app
+productName: boxwarden
+copyright: Copyright © 2026 Seth Carney
+
+directories:
+  output: release
+  # NOT the default `build/`, which .gitignore excludes — icons dropped in
+  # there would be ignored locally and then missing from every clean checkout,
+  # and the only symptom is a build that quietly falls back to the stock
+  # Electron icon. That fallback is worse than it sounds: the app appears in
+  # the dock and the launcher as Electron's own logo, so it looks like a
+  # framework got installed rather than a program.
+  buildResources: resources
+
+# One 1024px PNG for all three platforms; electron-builder derives the .icns
+# and .ico from it at build time.
+icon: resources/icon.png
+
+# Include-style rather than the exclusion list electron-vite's template ships
+# with: the app is exactly the electron-vite output plus its manifest, and
+# listing that is shorter than enumerating everything it is not. Production
+# dependencies from node_modules are added by electron-builder itself and do
+# not need a pattern here — dev dependencies are never copied.
+files:
+  - out/**
+  - package.json
+
+# Default, stated because it is load-bearing: main/index.ts resolves the
+# preload with `join(__dirname, '../preload/index.cjs')`, and Electron reads
+# both out of the archive transparently. Nothing in this app shells out to a
+# file inside the bundle, which is the usual reason to unpack.
+asar: true
+
+# dockerode's only native dependency is cpu-features, an OPTIONAL dependency of
+# ssh2 that ssh2 falls back off when it is absent — and it is absent, because
+# Bun blocks lifecycle scripts unless a package is in trustedDependencies. With
+# no native module to rebuild, the rebuild step is pure cost, and it is the step
+# most likely to break under a package manager electron-builder does not know.
+# Turn this back on the day a genuine native dependency is added.
+npmRebuild: false
+
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+  # Signing is deliberately left to electron-builder's automatic discovery: on
+  # a machine with a Developer ID in the keychain it signs, and on one without
+  # it emits an unsigned build with a warning. Notarisation is NOT configured —
+  # see docs/running.md for what that means when you open the result.
+
+win:
+  target:
+    - target: nsis
+      arch: [x64, arm64]
+
+nsis:
+  # A per-user install with a real installer UI, rather than electron-builder's
+  # default one-click. This is a developer tool that talks to a container
+  # runtime; asking for elevation to install it is not a trade worth making,
+  # and people who install developer tools expect to choose the directory.
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+
+linux:
+  category: Development
+  # Without this the window's WM_CLASS does not match the installed .desktop
+  # entry, so GNOME and KDE show a running boxwarden as an unnamed generic
+  # window instead of linking it to its launcher icon.
+  syncDesktopName: true
+  # The GitHub noreply address, which is also what the commits in this repo are
+  # authored with. deb refuses to build without a maintainer.
+  maintainer: Seth Carney <48496865+sethcarney@users.noreply.github.com>
+  synopsis: Local dev container management
+  target:
+    - target: AppImage
+      arch: [x64, arm64]
+    - target: deb
+      arch: [x64, arm64]
