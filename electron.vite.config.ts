@@ -1,6 +1,35 @@
 import { resolve } from 'node:path';
 import { defineConfig } from 'electron-vite';
 import react from '@vitejs/plugin-react';
+import type { Plugin } from 'vite';
+
+/**
+ * Relaxes the renderer's <meta> CSP to match the dev-only header policy.
+ *
+ * Two policies apply to the renderer and a browser enforces the INTERSECTION,
+ * so relaxing only one of them changes nothing:
+ *
+ *   - the response header, set in src/main/index.ts (authoritative)
+ *   - the <meta> tag in src/renderer/index.html (the fallback for opening the
+ *     renderer outside Electron)
+ *
+ * The header already branches on dev, but the meta tag is static markup shipped
+ * to production, so the branch has to happen here. `apply: 'serve'` is what
+ * makes that safe: this never runs during `electron-vite build`, so the built
+ * index.html keeps a bare `script-src 'self'`.
+ *
+ * See the CSP comment in src/main/index.ts for what needs the allowance and why
+ * a hash was not used instead.
+ */
+function devMetaCsp(): Plugin {
+  return {
+    name: 'boxwarden:dev-meta-csp',
+    apply: 'serve',
+    transformIndexHtml(html) {
+      return html.replace(/script-src 'self'/, "script-src 'self' 'unsafe-inline'");
+    },
+  };
+}
 
 /**
  * Three separate builds, because they run in three different places:
@@ -60,7 +89,7 @@ export default defineConfig({
 
   renderer: {
     root: resolve(__dirname, 'src/renderer'),
-    plugins: [react()],
+    plugins: [react(), devMetaCsp()],
     build: {
       rollupOptions: {
         input: { index: resolve(__dirname, 'src/renderer/index.html') },

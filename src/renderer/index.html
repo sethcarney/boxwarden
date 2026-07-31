@@ -7,6 +7,11 @@
       a header cannot be stripped by injected markup, a meta tag can. This tag
       is the belt to that braces, and it is what applies if the renderer is
       ever opened outside Electron (for example in a browser during UI work).
+
+      This is the PRODUCTION policy. In dev, the boxwarden:dev-meta-csp plugin
+      in electron.vite.config.ts rewrites script-src here to admit Vite's inline
+      react-refresh preamble; edit script-src with that in mind, since the two
+      policies have to stay relaxed together or the renderer will not mount.
     -->
     <meta
       http-equiv="Content-Security-Policy"

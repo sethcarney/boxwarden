@@ -27,6 +27,29 @@ const IS_DEV = RENDERER_URL !== undefined;
 
 let mainWindow: BrowserWindow | undefined;
 
+/**
+ * Software rendering, for displays that have no GPU behind them.
+ *
+ * Set by .devcontainer/devcontainer.json, because this is a property of the
+ * environment and not of the app: desktop-lite's Xvfb is a virtual framebuffer
+ * with no GL driver under it, so Chromium's GPU process fails to create a
+ * surface ("No suitable EGL configs found") and then exits. Whether that is
+ * survivable is a race — it usually degrades to software rendering, but it can
+ * also escalate to `GPU process isn't usable. Goodbye.` and take the app down
+ * before the window ever appears.
+ *
+ * An env var rather than an OS probe: on a real desktop — including a Linux
+ * host running this same source over the same X server — hardware acceleration
+ * works and should stay on. Only the container knows it is the container.
+ *
+ * MUST run before app.whenReady(); Chromium reads this during startup and
+ * ignores it afterwards, which is why it is at module scope and not inside the
+ * ready handler.
+ */
+if (process.env['BOXWARDEN_SOFTWARE_RENDER'] === '1') {
+  app.disableHardwareAcceleration();
+}
+
 function backendFromEnv(): DockerBackend {
   if (process.env['BOXWARDEN_FAKE_DOCKER'] === '1') {
     // Logged loudly: a fake container list that the user believes is real is
@@ -41,16 +64,29 @@ function backendFromEnv(): DockerBackend {
  * Item 7: define a Content-Security-Policy.
  *
  * Applied as a response header rather than only a <meta> tag, because a header
- * cannot be removed by injected markup. 'unsafe-inline' for styles is the one
+ * cannot be removed by injected markup. 'unsafe-inline' for styles is one
  * concession — the renderer ships a plain stylesheet, but Vite injects styles
  * inline during development. `connect-src` allows the dev server's websocket
  * for HMR and nothing at all in production: this app has no business making
  * network requests from the renderer.
+ *
+ * The second concession is 'unsafe-inline' for scripts, and it is DEV ONLY.
+ * @vitejs/plugin-react serves an inline <script type="module"> preamble that
+ * installs the react-refresh hooks; every module it then transforms references
+ * the globals that preamble defines. Blocking it does not degrade gracefully —
+ * main.tsx throws "@vitejs/plugin-react can't detect preamble", React never
+ * mounts, and the window paints `backgroundColor` and nothing else. A blank
+ * window with no visible error is a bad enough symptom to be worth naming here.
+ *
+ * A hash for that one script would be tighter than 'unsafe-inline' and was
+ * rejected: the preamble's contents change with the plugin version, so a
+ * routine dependency bump would silently reproduce the blank window. The
+ * production policy — the one that ships — keeps a bare `script-src 'self'`.
  */
 function contentSecurityPolicy(): string {
   const directives = [
     "default-src 'none'",
-    "script-src 'self'",
+    IS_DEV ? "script-src 'self' 'unsafe-inline'" : "script-src 'self'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data:",
     "font-src 'self'",

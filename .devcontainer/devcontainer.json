@@ -88,8 +88,64 @@
     // DISABLE_AUTOUPDATER — more machinery than a fast-moving dev tool is
     // worth here, but that is the route if reproducibility ever demands it.
     // ---------------------------------------------------------------------
-    "ghcr.io/anthropics/devcontainer-features/claude-code:1.0.5": {}
+    "ghcr.io/anthropics/devcontainer-features/claude-code:1.0.5": {},
+
+    // ---------------------------------------------------------------------
+    // A display for Electron to draw into.
+    //
+    // Electron needs a window server, and a headless container has none. This
+    // feature supplies the minimum that satisfies it: Xvfb (a virtual
+    // framebuffer), fluxbox (a window manager, so windows get decorations and
+    // focus), x11vnc, and noVNC to reach it from a browser.
+    //
+    // Chosen over forwarding the host's X11 socket because that is only clean
+    // on Linux — macOS needs XQuartz and WSL's WSLg socket does not forward
+    // into a container reliably. noVNC behaves identically on all three, which
+    // is the portability this project wants. On a Linux host you can still
+    // bind-mount /tmp/.X11-unix and set DISPLAY for a lower-latency window;
+    // this feature does not prevent that, it just is not the default.
+    //
+    // Open http://localhost:6080 (password below) after the container starts.
+    // The password guards a VNC server bound inside the container, not
+    // anything reachable from the network, so it is deliberately not a secret.
+    //
+    // 1.2.8 is the MINIMUM usable version on this base image, and the reason is
+    // the same Debian 13 packaging churn that forced "moby": false above.
+    // Through 1.2.7 the feature's package list included `eterm`, a terminal
+    // emulator dropped from the archive in trixie, so the install aborts with
+    //   E: Package 'eterm' has no installation candidate
+    // and takes the whole image build down with it (exit 100). 1.2.8 removed
+    // eterm and also switched libasound2 -> libasound2-dev on trixie. Pinned to
+    // 1.2.10 (current latest) rather than the 1.2.8 floor to pick up the ALSA
+    // and desktop-init fixes that landed after it.
+    // ---------------------------------------------------------------------
+    "ghcr.io/devcontainers/features/desktop-lite:1.2.10": {
+      "password": "vscode",
+      "webPort": "6080",
+      "vncPort": "5901"
+    }
   },
+
+  "forwardPorts": [6080],
+
+  "portsAttributes": {
+    "6080": {
+      "label": "Electron desktop (noVNC)",
+      "onAutoForward": "silent"
+    }
+  },
+
+  // ---------------------------------------------------------------------
+  // Chromium allocates its renderer shared memory out of /dev/shm, and
+  // Docker's default is 64MB — enough to start, not enough to render, so it
+  // dies partway through loading with an opaque renderer crash.
+  //
+  // Raising it here rather than launching Electron with
+  // --disable-dev-shm-usage: that flag pushes the same allocations onto disk
+  // and is an app-level workaround for what is really a container sizing
+  // problem. Fixing the container leaves the app code untouched.
+  // ---------------------------------------------------------------------
+  "runArgs": ["--shm-size=1g"],
 
   // ---------------------------------------------------------------------
   // Credential persistence across rebuilds.
@@ -175,7 +231,40 @@
   ],
 
   "containerEnv": {
-    "CLAUDE_CONFIG_DIR": "/home/node/.claude"
+    "CLAUDE_CONFIG_DIR": "/home/node/.claude",
+
+    // ---------------------------------------------------------------------
+    // Chromium's sandbox cannot work in this container, so it is turned off
+    // rather than left to fail at launch. Both of its strategies are blocked
+    // here, for reasons outside the app's reach:
+    //
+    //   setuid    node_modules lives on the bind-mounted workspace, and that
+    //             mount carries `nosuid` (it is the developer's home, which on
+    //             this machine is ecryptfs). The setuid bit on chrome-sandbox
+    //             is therefore inert and the helper runs unprivileged:
+    //               "The setuid sandbox is not running as root"
+    //   namespace Docker's default seccomp profile denies the unshare:
+    //               "Failed to move to new namespace: ... Operation not
+    //                permitted"
+    //
+    // With neither available the zygote host aborts the process outright
+    // (FATAL zygote_host_impl_linux.cc — Check failed). Note this is NOT the
+    // app's own `sandbox: true` webPreference, which stays on: that isolates
+    // the renderer from Node and is unaffected by this.
+    //
+    // Scope: development in this container only. A packaged build on a real
+    // host keeps the OS sandbox, and nothing in src/ reads this.
+    // ---------------------------------------------------------------------
+    "ELECTRON_DISABLE_SANDBOX": "1",
+
+    // ---------------------------------------------------------------------
+    // Xvfb is a framebuffer in memory with no GL driver under it, so
+    // Chromium's GPU process cannot create a surface and exits. Sometimes that
+    // degrades to software rendering; sometimes it escalates to "GPU process
+    // isn't usable. Goodbye." and kills the app during startup. This makes the
+    // safe path deterministic. Read in src/main/index.ts.
+    // ---------------------------------------------------------------------
+    "BOXWARDEN_SOFTWARE_RENDER": "1"
   },
 
   "customizations": {
@@ -208,7 +297,15 @@
 
   "remoteUser": "node"
 
-  // Deliberately NOT configured: X11/Wayland forwarding. The Electron GUI is
-  // expected to run on the host. This container is for main-process code,
-  // tests, and linting.
+
+
+  // This container previously did NOT configure a display, and expected the
+  // Electron GUI to be run on the host — the container was for main-process
+  // code, tests, and linting only. That is no longer true: desktop-lite above
+  // provides a display, so the full app runs here.
+  //
+  // Running it on the host still works and is still the lowest-latency option
+  // if you have the runtime libraries there. What changed is that it is no
+  // longer the *only* option, which matters for contributors on a machine
+  // where installing Chromium's dependencies system-wide is inconvenient.
 }
