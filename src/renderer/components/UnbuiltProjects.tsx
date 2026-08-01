@@ -1,7 +1,9 @@
-import { useCallback, useMemo, useState } from 'react';
-import type { DevContainer, DevContainerProject, ProjectScan } from '../../models/index.js';
-import { partitionProjects } from '../../models/index.js';
+import { useState } from 'react';
+import type { DevContainerProject, ProjectScan } from '../../models/index.js';
 import { devcontainerUpCommand, hostPathLabel, relativeTime } from '../format.js';
+import { scanRootHint } from '../presenters.js';
+import type { ProjectsViewModel } from '../viewmodels/index.js';
+import { useCopyToClipboard } from '../viewmodels/useCopyToClipboard.js';
 
 /**
  * The projects that are on disk and not in Docker.
@@ -19,69 +21,47 @@ import { devcontainerUpCommand, hostPathLabel, relativeTime } from '../format.js
  * action, because the editor's own "Reopen in Container" prompt is the
  * supported path and the user stays in control of it. Building from here is
  * not, and the copy button exists instead — see `devcontainerUpCommand`.
+ *
+ * A View: it binds to `ProjectsViewModel` and computes nothing. The partition,
+ * the summary sentence and the scan state all arrive already derived.
  */
 
 const COLLAPSED_LIMIT = 6;
 
 interface Props {
-  /** Undefined until the first scan returns. */
-  readonly scan: ProjectScan | undefined;
-  /** The live list, used to hide projects that are already built. */
-  readonly containers: readonly DevContainer[];
+  readonly projects: ProjectsViewModel;
   readonly editorName: string;
   readonly editorAvailable: boolean;
-  readonly scanning: boolean;
   readonly now: number;
-  readonly onOpen: (project: DevContainerProject) => void;
-  readonly onRescan: () => void;
-  readonly onAddRoot: () => void;
-  readonly onRemoveRoot: (root: string) => void;
 }
 
-export function UnbuiltProjects({
-  scan,
-  containers,
-  editorName,
-  editorAvailable,
-  scanning,
-  now,
-  onOpen,
-  onRescan,
-  onAddRoot,
-  onRemoveRoot,
-}: Props) {
+export function UnbuiltProjects({ projects, editorName, editorAvailable, now }: Props) {
   const [expanded, setExpanded] = useState(false);
-
-  /**
-   * Partitioning is a pure domain function given the two lists, and both change
-   * on every poll — `containers` is refreshed every five seconds. Memoising
-   * keeps the fold off the render path for the 99% of polls where neither list
-   * actually changed.
-   */
-  const { unbuilt, built } = useMemo(
-    () => partitionProjects(scan?.projects ?? [], containers),
-    [scan, containers],
-  );
 
   // Nothing has been scanned yet and nothing is in flight: stay out of the way
   // rather than rendering an empty frame that explains nothing.
-  if (scan === undefined && !scanning) return null;
+  if (projects.idle) return null;
 
-  const visible = expanded ? unbuilt : unbuilt.slice(0, COLLAPSED_LIMIT);
-  const hidden = unbuilt.length - visible.length;
+  const visible = expanded ? projects.unbuilt : projects.unbuilt.slice(0, COLLAPSED_LIMIT);
+  const hidden = projects.unbuilt.length - visible.length;
 
   return (
     <section className="panel projects" aria-label="Dev container projects not built yet">
       <header className="projects-head">
         <h2>Not built yet</h2>
-        <button type="button" className="link" disabled={scanning} onClick={onRescan}>
-          {scanning ? 'Scanning…' : 'Rescan'}
+        <button
+          type="button"
+          className="link"
+          disabled={projects.scanning}
+          onClick={projects.rescan}
+        >
+          {projects.scanning ? 'Scanning…' : 'Rescan'}
         </button>
       </header>
 
-      <p className="lede">{summarise(unbuilt.length, built.length, scanning)}</p>
+      <p className="lede">{projects.summary}</p>
 
-      {scan?.truncated === true && (
+      {projects.truncated && (
         <p className="note">
           The scan stopped early, so this list may be short. Narrow it by adding the folder your
           projects are actually in — a specific root is scanned far faster than a whole home
@@ -97,7 +77,7 @@ export function UnbuiltProjects({
               project={project}
               editorName={editorName}
               editorAvailable={editorAvailable}
-              onOpen={onOpen}
+              onOpen={projects.openProject}
             />
           ))}
         </ul>
@@ -115,31 +95,14 @@ export function UnbuiltProjects({
         </button>
       )}
 
-      <ScanRoots scan={scan} now={now} onAddRoot={onAddRoot} onRemoveRoot={onRemoveRoot} />
+      <ScanRoots
+        scan={projects.scan}
+        now={now}
+        onAddRoot={projects.addRoot}
+        onRemoveRoot={projects.removeRoot}
+      />
     </section>
   );
-}
-
-/**
- * The one-line summary above the list.
- *
- * The "all built" case gets its own sentence rather than falling through to an
- * empty list, because the two are indistinguishable on screen and mean opposite
- * things: one says boxwarden looked and found nothing to do, the other says it
- * has not looked anywhere useful.
- */
-function summarise(unbuilt: number, built: number, scanning: boolean): string {
-  if (unbuilt === 0 && built === 0) {
-    return scanning
-      ? 'Looking for devcontainer.json files on this machine…'
-      : 'No devcontainer.json files were found in the folders below.';
-  }
-  if (unbuilt === 0) {
-    return `Every dev container project found on disk (${built}) has been built — they are in the list above.`;
-  }
-  const suffix =
-    built === 0 ? '' : ` A further ${built} ${built === 1 ? 'is' : 'are'} already built.`;
-  return `${unbuilt} folder${unbuilt === 1 ? '' : 's'} on this machine ${unbuilt === 1 ? 'has' : 'have'} a devcontainer.json and no container yet.${suffix}`;
 }
 
 function ProjectRow({
@@ -153,18 +116,8 @@ function ProjectRow({
   readonly editorAvailable: boolean;
   readonly onOpen: (project: DevContainerProject) => void;
 }) {
-  const [copied, setCopied] = useState(false);
+  const clipboard = useCopyToClipboard();
   const command = devcontainerUpCommand(project);
-
-  const copy = useCallback(() => {
-    void navigator.clipboard.writeText(command).then(
-      () => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1_500);
-      },
-      () => setCopied(false),
-    );
-  }, [command]);
 
   return (
     <li className="project">
@@ -194,8 +147,15 @@ function ProjectRow({
         >
           Open in {editorName}
         </button>
-        <button type="button" className="link" title={command} onClick={copy}>
-          {copied ? 'Copied' : 'Copy devcontainer up'}
+        <button
+          type="button"
+          className="link"
+          title={command}
+          onClick={() => {
+            clipboard.copy(command);
+          }}
+        >
+          {clipboard.copied ? 'Copied' : 'Copy devcontainer up'}
         </button>
       </div>
     </li>
@@ -230,13 +190,7 @@ function ScanRoots({
         {(scan?.roots ?? []).map((root) => (
           <li key={root.path} className={root.failure === undefined ? undefined : 'unresolved'}>
             <code title={root.path}>{root.path}</code>
-            <span className="hint">
-              {root.failure === 'missing'
-                ? ' — no such folder'
-                : root.failure === 'unreadable'
-                  ? ` — unreadable${root.detail === undefined ? '' : `: ${root.detail}`}`
-                  : ` — ${root.found} found`}
-            </span>
+            <span className="hint"> — {scanRootHint(root.failure, root.found, root.detail)}</span>
             <button
               type="button"
               className="link"

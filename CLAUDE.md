@@ -41,36 +41,79 @@ Run a single test file: `bunx vitest run src/main/docker/mapping.test.ts`.
 
 ## Architecture
 
-Three Electron processes, plus two dependency-free layers shared across them:
+**The app is MVVM.** Three Electron processes carry the three roles, and no
+layer reaches past the one below it:
 
 ```
-renderer (Chromium, sandboxed, no Node)   src/renderer/  — React UI, reaches only window.boxwarden
-        │ contextBridge, structured clone
-preload (no logic)                        src/preload/   — ipcRenderer.invoke wrappers only
+VIEW        src/renderer/views/        layout only — no state, no logic
+            src/renderer/components/   leaf presentational components
+        │ binds to
+VIEWMODEL   src/renderer/viewmodels/   state, commands, derived values (React hooks)
+            src/renderer/presenters.ts pure derivations the ViewModels hand down
+        │ window.boxwarden
+            src/preload/               ipcRenderer.invoke wrappers only, no logic
+            src/shared/ipc.ts          the IPC contract
         │ ipcMain.handle
-main (Node)                               src/main/
-  docker/    endpoint discovery, dockerode, inspect→domain
-  editor/    binary resolution, URI building, spawn
-  projects/  filesystem walk for unbuilt dev containers
-
-src/domain/   pure types, no I/O — shared by all three
-src/shared/   the IPC contract (src/shared/ipc.ts) — shared by all three
+MODEL       src/models/                pure types and functions, imports nothing
+            src/main/                  the impure shells that fill them
+              docker/    endpoint discovery, dockerode, inspect→model
+              editor/    binary resolution, URI building, spawn
+              projects/  filesystem walk for unbuilt dev containers
 ```
 
-**The layering rule**: `src/domain/` holds only types and pure functions and
-imports nothing. Anything that touches the outside world lives in `src/main/`
-as a thin shell around a pure core:
+**The layering rule** has three parts, and all three are load-bearing:
 
-| Impure edge                    | Pure core it wraps                         |
-| ------------------------------ | ------------------------------------------ |
-| `docker/client.ts` (dockerode) | `docker/mapping.ts`, `docker/host-path.ts` |
-| `docker/client.ts` (probing)   | `docker/endpoint.ts`                       |
-| `editor/launch.ts` (spawn)     | `editor/uri.ts`                            |
-| `editor/resolve.ts` (fs, exec) | `editor/targets.ts` (data)                 |
-| `projects/scan.ts` (fs walk)   | `domain/project.ts`                        |
+1. **`src/models/` holds only types and pure functions and imports nothing.**
+   Anything that touches the outside world lives in `src/main/` as a thin shell
+   around a pure core:
+
+   | Impure edge                    | Pure core it wraps                         |
+   | ------------------------------ | ------------------------------------------ |
+   | `docker/client.ts` (dockerode) | `docker/mapping.ts`, `docker/host-path.ts` |
+   | `docker/client.ts` (probing)   | `docker/endpoint.ts`                       |
+   | `editor/launch.ts` (spawn)     | `editor/uri.ts`                            |
+   | `editor/resolve.ts` (fs, exec) | `editor/targets.ts` (data)                 |
+   | `projects/scan.ts` (fs walk)   | `models/project.ts`                        |
+
+2. **A ViewModel renders nothing.** No module in `src/renderer/viewmodels/`
+   imports `react-dom` or returns JSX. That is what lets the whole layer be
+   tested with `renderHook` against a fake `BoxwardenApi` — no Electron, no
+   daemon, no markup.
+
+3. **A View decides nothing.** If a string needs an `if`, it belongs in
+   `presenters.ts` and reaches the View through a ViewModel field. `App.tsx` is
+   the composition root and is deliberately two lines.
 
 Preserve this split when adding features — it's why the suite tests without a
 Docker daemon or a display, and why the shells stay small.
+
+### The ViewModel layer
+
+`useAppViewModel()` composes five, kept separate because their lifetimes
+genuinely differ:
+
+| Hook           | Owns                                               | Cadence           |
+| -------------- | -------------------------------------------------- | ----------------- |
+| `useDiscovery` | snapshot, busy set, start/stop/open, engine choice | polled every 5s   |
+| `useProjects`  | scan, roots, unbuilt/built partition               | on open, on ask   |
+| `useEditors`   | installed editors, the chosen one                  | read once         |
+| `useNotices`   | the message bar and the copyable failed URI        | event-driven      |
+| `useTheme`     | layout + theme, persisted to localStorage          | never touches IPC |
+
+Four conventions hold this together:
+
+- **Every hook is called unconditionally** and guards on `api` internally. A
+  preload that failed to load must not change how many hooks run.
+- **`useDiscovery` and `useProjects` destructure the stable callbacks off
+  `notices`** rather than depending on the object. `useNotices` returns a fresh
+  object literal each render, and depending on it would re-run the poll effect
+  on every notice.
+- **Actions live next to the state they change.** Start/stop/open sit in
+  `useDiscovery` because each ends by re-reading — the poll, the busy set and
+  the lifecycle verbs are one state machine, and splitting them lets a stop land
+  on top of a refresh and get overwritten with pre-stop state.
+- **Failures report through `useNotices`**, never through a second message
+  channel, so a later failure cannot hide behind an earlier one.
 
 **The IPC surface is ten narrow verbs** — see `src/shared/ipc.ts` — all
 declared as a `BoxwardenApi` interface consumed by the renderer without
@@ -95,7 +138,7 @@ folder picker, and cannot say which folder the answer is.
 
 ### Two path spaces — the most error-prone part of this app
 
-- **Host paths** — what the developer's OS sees. `HostPath` in the domain,
+- **Host paths** — what the developer's OS sees. `HostPath` in the models layer,
   with `posix` / `windows` / `wsl` arms.
 - **Container paths** — what's inside the container. `ContainerPath`, a
   branded string.
@@ -133,7 +176,7 @@ border, with the raw label and the reason — never silently dropped.
 
 Every engine that answers is connected to and their container lists are
 unioned (deduplicated by container id). `EngineSelection` in
-`src/domain/engine.ts` narrows that to one engine; the picker appears in the
+`src/models/engine.ts` narrows that to one engine; the picker appears in the
 header once two are reachable.
 
 - `EngineId` is **derived from the transport** (`unix:/var/run/docker.sock`,
@@ -150,7 +193,7 @@ Persisted by `src/main/preferences.ts` and applied before the window opens.
 
 ### Setup advice
 
-`src/domain/advice.ts` is a pure function from `DockerEnvironment` to
+`src/models/advice.ts` is a pure function from `DockerEnvironment` to
 `Advice[]` (title, body, copyable commands, doc links), computed in the main
 process at discover time and shipped in the snapshot. It covers missing WSL, a
 WSL distro without socat, nothing installed (per-platform install menu),
@@ -178,7 +221,7 @@ shows even when another engine is working.
 
 ### Unbuilt projects
 
-`src/domain/project.ts` (pure) plus `src/main/projects/scan.ts` (the walk) find
+`src/models/project.ts` (pure) plus `src/main/projects/scan.ts` (the walk) find
 `devcontainer.json` files on disk, so "no dev containers found" is not the end
 of the story on a machine where nothing has been built yet.
 
@@ -206,7 +249,9 @@ of the story on a machine where nothing has been built yet.
 
 `src/renderer/grouping.ts` folds the flat container list into `ContainerGroup`
 (`single` | `compose`) so a workspace + its database render as one framed
-group. Known gap: grouping only sees containers carrying
+group. It is a pure function, called by `useDiscovery` and exposed as
+`groups` — the `ContainerList` view receives the folded list and never sees the
+flat one. Known gap: grouping only sees containers carrying
 `devcontainer.local_folder`, so an unlabeled compose sibling is invisible to
 "Stop all" (see `docs/roadmap.md`).
 
@@ -223,8 +268,11 @@ Three layouts (`grid` — the default, `list`, `rows`) and three themes (`dark`,
   lives in the preferences file because the main process must apply it before
   the window opens; a view preference is read only by the renderer, so putting
   it there would buy a seventh IPC verb nothing.
-- `auto` is resolved in the renderer (`resolveTheme`) so the light palette is
-  written once and `data-theme` always names a concrete theme.
+- `auto` is resolved in `useTheme` (via the pure `resolveTheme`) so the light
+  palette is written once and `data-theme` always names a concrete theme. The
+  attribute is written in a `useLayoutEffect`, not a `useEffect`: the passive
+  one runs after the first paint, so a light-theme user would see one frame of
+  the dark palette on every launch.
 - **Colours go through variables, including the incidental ones.** The rules
   that broke first when a light theme arrived were the inline
   `rgba(255,255,255,…)` glazes — a white wash is invisible on a white surface.
@@ -257,7 +305,7 @@ Two separate `tsconfig`s because the renderer has DOM and no Node, and
 main/preload have the reverse — one config can't express both:
 
 - `tsconfig.base.json` — shared strictness
-- `tsconfig.node.json` — `src/main`, `src/preload`, `src/domain`, `src/shared`
+- `tsconfig.node.json` — `src/main`, `src/preload`, `src/models`, `src/shared`
 - `tsconfig.web.json` — `src/renderer`, plus shared code
 
 `exactOptionalPropertyTypes` is on: an absent optional field must be an
@@ -291,6 +339,26 @@ jsdom` (not a glob) — jsdom costs ~1s of setup and a glob would triple
 - `src/renderer/test-fixtures.ts` builds `DevContainer` values directly rather
   than running `mapContainer` (which lives in `src/main`, outside the
   renderer's tsconfig) — don't reach across that boundary in renderer tests.
+
+**Test each layer at its own level, and only there.** The MVVM split exists so
+that a behaviour has exactly one natural home:
+
+| Layer     | Tested with                         | Fixtures                                  |
+| --------- | ----------------------------------- | ----------------------------------------- |
+| Model     | plain `vitest`, no DOM              | inline                                    |
+| Presenter | plain `vitest`, no DOM              | `viewmodels/test-api.ts`                  |
+| ViewModel | `renderHook` + jsdom, a fake bridge | `test-api.ts`, `test-notices.ts`          |
+| View      | `render` + jsdom, a hand-built VM   | a literal `ProjectsViewModel` and friends |
+
+Two rules that follow from it:
+
+- **A View test asserts only on what is rendered.** When partitioning moved into
+  `useProjects`, its test moved too — asserting the same fold through a DOM in
+  `UnbuiltProjects.test.tsx` would have been testing it twice, slower.
+- **Build the stub ViewModel outside the render callback.** `renderHook(() =>
+useDiscovery(api, stubNotices(), …))` makes a new object every render, which
+  gives every callback a new identity and re-runs the poll effect — the test
+  then sees four `discover` calls where the app makes one.
 
 ## Working without Docker
 

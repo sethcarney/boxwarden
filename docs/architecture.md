@@ -4,9 +4,21 @@ boxwarden is an Electron desktop app that lists the dev containers running on
 your machine, reattaches an editor to them, and finds the ones on disk that
 have never been built.
 
+The app follows **MVVM**, and Electron's process boundaries line up with it:
+the View and ViewModel are the renderer, the Model is the main process plus the
+pure types both sides share.
+
 ```
-┌── renderer (Chromium, sandboxed, no Node) ────────────────┐
-│  React UI — src/renderer/                                  │
+┌── VIEW — renderer (Chromium, sandboxed, no Node) ──────────┐
+│  src/renderer/views/       layout only, no state, no logic │
+│  src/renderer/components/  leaf presentational components  │
+│  src/renderer/App.tsx      composition root, two lines     │
+└───────────────────────┬────────────────────────────────────┘
+                        │ props and callbacks
+┌── VIEWMODEL ──────────┴────────────────────────────────────┐
+│  src/renderer/viewmodels/   state, commands, derivations   │
+│  src/renderer/presenters.ts pure string/flag derivations   │
+│  src/renderer/grouping.ts   pure compose folding           │
 │  reaches exactly ten functions on window.boxwarden         │
 └───────────────────────┬────────────────────────────────────┘
                         │ contextBridge, structured clone
@@ -15,21 +27,23 @@ have never been built.
 │  no logic, only ipcRenderer.invoke wrappers                │
 └───────────────────────┬────────────────────────────────────┘
                         │ ipcMain.handle
-┌───────────────────────┴────────────────────────────────────┐
-│  main (Node) — src/main/                                   │
-│    docker/    endpoint discovery, dockerode, inspect→domain│
+┌── MODEL — main (Node) ─┴───────────────────────────────────┐
+│  src/main/                                                 │
+│    docker/    endpoint discovery, dockerode, inspect→model │
 │    editor/    binary resolution, URI building, spawn       │
 │    projects/  the filesystem walk for unbuilt projects     │
 │    ipc.ts     the ten handlers, sender-validated           │
 └────────────────────────────────────────────────────────────┘
 
-  src/domain/   pure types, no I/O — shared by all three
+  src/models/   pure types, no I/O — shared by all three
   src/shared/   the IPC contract — shared by all three
 ```
 
 ## The layering rule
 
-`src/domain/` holds types and pure functions and imports nothing. Everything
+### 1. The Model is pure at its core
+
+`src/models/` holds types and pure functions and imports nothing. Everything
 that touches the outside world lives in `src/main/` and is written as a thin
 shell around a pure function:
 
@@ -39,7 +53,7 @@ shell around a pure function:
 | `docker/client.ts` (probing)   | `docker/endpoint.ts`                       |
 | `editor/launch.ts` (spawn)     | `editor/uri.ts`                            |
 | `editor/resolve.ts` (fs, exec) | `editor/targets.ts` (data)                 |
-| `projects/scan.ts` (fs walk)   | `domain/project.ts`                        |
+| `projects/scan.ts` (fs walk)   | `models/project.ts`                        |
 
 That split is why the test suite needs no Docker daemon and no display: the
 cores are covered by unit tests, and the shells are small enough to read.
@@ -49,12 +63,57 @@ directory. The rule the suite keeps is "no daemon and no display", not "no
 filesystem", and a directory walk's bugs — a depth limit off by one, a
 `.devcontainer` variant silently dropped — do not appear anywhere else.
 
+### 2. A ViewModel renders nothing
+
+No module in `src/renderer/viewmodels/` imports `react-dom` or returns JSX.
+They are React hooks — the idiomatic ViewModel in a function-component
+codebase — and they hold every piece of state the UI has, every command it can
+issue, and every value derived from the two.
+
+`useAppViewModel()` composes five, kept apart because their lifetimes differ:
+
+| Hook           | Owns                                               | Cadence           |
+| -------------- | -------------------------------------------------- | ----------------- |
+| `useDiscovery` | snapshot, busy set, start/stop/open, engine choice | polled every 5s   |
+| `useProjects`  | scan, roots, unbuilt/built partition               | on open, on ask   |
+| `useEditors`   | installed editors, the chosen one                  | read once         |
+| `useNotices`   | the message bar and the copyable failed URI        | event-driven      |
+| `useTheme`     | layout + theme, persisted to localStorage          | never touches IPC |
+
+Plus two small ones — `useClock` (one timer for every relative timestamp on
+screen) and `useCopyToClipboard` (a write that can be refused, and a timer that
+must be cancelled on unmount).
+
+The payoff is that the layer is testable with `renderHook` and a fake
+`BoxwardenApi`: `viewmodels/useDiscovery.test.ts` asserts that a start marks its
+container busy, that `startAll` uses `allSettled` and reports the failures
+together, and that an engine change re-reads immediately — none of which
+required a browser, a daemon, or a rendered card.
+
+### 3. A View decides nothing
+
+If a string needs an `if`, it belongs in `presenters.ts` and reaches the View
+through a ViewModel field. `presenters.ts` is where the header chip's "+1", the
+empty-list sentence, the "not built yet" summary and the disabled-button reason
+are computed — all pure, all tested without a DOM.
+
+The rule is easiest to see in what left the components:
+
+| Was                                           | Is now                               |
+| --------------------------------------------- | ------------------------------------ |
+| `engineTitle`/`engineCount` inline in JSX     | `presenters.engineChip`              |
+| `summarise()` inside `UnbuiltProjects`        | `presenters.summariseProjects`       |
+| `openBlockedReason` inside `ContainerCard`    | `presenters.openBlockedReason`       |
+| `partitionProjects` memo in `UnbuiltProjects` | `useProjects.unbuilt` / `.built`     |
+| clipboard handler inline in `App.tsx`         | `useNotices.copyFailedUri`           |
+| 674-line `App.tsx`                            | `App.tsx` (2 lines) + `views/` + VMs |
+
 ## Two path spaces
 
 The single most error-prone thing this app does is handle paths, because there
 are two filesystems in play and they look alike:
 
-- **Host paths** — what the developer's OS sees. `HostPath` in the domain,
+- **Host paths** — what the developer's OS sees. `HostPath` in the models layer,
   with `posix` / `windows` / `wsl` arms.
 - **Container paths** — what's inside the container. `ContainerPath`, a
   branded string.
@@ -94,7 +153,7 @@ about correctness depends on it.
 3. `listContainers` filtered server-side on the existence of the
    `devcontainer.local_folder` label.
 4. `inspect` each hit — the list summary lacks `StartedAt`, `ExitCode` and
-   `Health`, which the domain's runtime union requires.
+   `Health`, which the model's runtime union requires.
 5. Map to `DevContainer` via the pure `mapContainer`.
 
 Step 2 keeps every attempt because `DockerEnvironment.attempts` **is** the
@@ -111,7 +170,7 @@ user thinks of those as "my dev containers", not as two inventories. Duplicates
 are collapsed by container id, which is engine-unique.
 
 It is wrong often enough to need an override, so `EngineSelection`
-(`domain/engine.ts`) is either `all` or one `EngineId`:
+(`models/engine.ts`) is either `all` or one `EngineId`:
 
 - **`EngineId` is derived from the transport**, not assigned — `unix:/var/run/docker.sock`,
   `wsl:dev:/run/user/1000/podman/podman.sock`. There is nowhere to persist an
@@ -134,7 +193,7 @@ before the window exists so the first scan honours it.
 
 ## Setup advice
 
-`domain/advice.ts` turns a `DockerEnvironment` into a list of `Advice` — title,
+`models/advice.ts` turns a `DockerEnvironment` into a list of `Advice` — title,
 body, copyable commands, documentation links. It is pure, and the main process
 computes it at discover time and ships it in the snapshot.
 
@@ -242,7 +301,7 @@ nothing built, where the honest report is "no dev containers found".
 
 So there is a second, slower source of truth — the filesystem.
 
-- **`src/domain/project.ts`** is pure: what a project is, which directories are
+- **`src/models/project.ts`** is pure: what a project is, which directories are
   never worth entering, how to read a `name` out of JSONC, and how to decide
   whether a folder already has a container.
 - **`src/main/projects/scan.ts`** does the walk, bounded three ways — depth

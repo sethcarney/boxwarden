@@ -158,7 +158,7 @@ The renderer has DOM and no Node; main and preload have the reverse. One config
 cannot express that, so:
 
 - `tsconfig.base.json` — strictness settings, shared
-- `tsconfig.node.json` — `src/main`, `src/preload`, `src/domain`, `src/shared`
+- `tsconfig.node.json` — `src/main`, `src/preload`, `src/models`, `src/shared`
 - `tsconfig.web.json` — `src/renderer`, plus the shared code
 - `tsconfig.json` — solution file, references both
 
@@ -196,6 +196,13 @@ Component tests opt into jsdom per file with a docblock:
 
 Per-file rather than a glob because jsdom costs about a second of setup, and
 paying it on every mapping test would triple the suite's runtime for nothing.
+
+ViewModel tests get two fixtures of their own: `viewmodels/test-api.ts` (a
+`BoxwardenApi` whose every method is a `vi.fn`, plus snapshot and scan builders)
+and `viewmodels/test-notices.ts` (a recording `NoticesViewModel`). Build the
+stub **outside** the `renderHook` callback — a new object per render gives every
+callback a new identity and re-runs the poll effect, so the test sees four
+`discover` calls where the app makes one.
 
 `src/renderer/test-fixtures.ts` builds `DevContainer` values directly rather
 than running `mapContainer` over inspect JSON. That is deliberate: the mapper

@@ -95,7 +95,7 @@ URI to whatever is registered for the scheme. It is used only for the
 allow-listed documentation origins.
 
 That allow-list is a **closed set** and has to stay one. The setup advice
-(`src/domain/advice.ts`) links to install instructions for every engine
+(`src/models/advice.ts`) links to install instructions for every engine
 boxwarden supports, so each new vendor is one more origin in
 `ALLOWED_EXTERNAL_ORIGINS` — and the temptation on adding the next is to relax
 the check to "any https URL". Don't. Advisory text is built from probe results
