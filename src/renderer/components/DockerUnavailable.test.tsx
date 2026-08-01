@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { DockerUnavailable } from './DockerUnavailable.js';
-import type { DockerEndpoint, DockerEnvironment, EndpointProbe } from '../../domain/index.js';
+import type { DockerEndpoint, DockerEnvironment, EndpointProbe } from '../../models/index.js';
 
 function unixEndpoint(socketPath: string): DockerEndpoint {
   return {
@@ -22,7 +22,12 @@ function failed(socketPath: string, code: 'not-present' | 'connection-refused'):
 function environment(attempts: readonly EndpointProbe[]): DockerEnvironment {
   const first = attempts[0];
   if (first === undefined) throw new Error('need at least one attempt');
-  return { api: first, cli: { ok: true, binaryPath: 'docker', version: '29.3.1' }, attempts };
+  return {
+    api: first,
+    cli: { ok: true, binaryPath: 'docker', version: '29.3.1' },
+    attempts,
+    wsl: { kind: 'not-applicable' },
+  };
 }
 
 describe('DockerUnavailable', () => {

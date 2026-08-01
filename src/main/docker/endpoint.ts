@@ -20,7 +20,7 @@ import type {
   DockerEndpoint,
   DockerTransport,
   EndpointFailure,
-} from '../../domain/index.js';
+} from '../../models/index.js';
 
 /**
  * Where to look for a Docker daemon, and in what order.
@@ -146,18 +146,22 @@ function wellKnownSockets(os: NodeJS.Platform, home: string, env: Env): readonly
 }
 
 /**
- * WSL distributions that host an engine of their own but are already covered by
+ * Whether it is worth building a relay into this distribution.
+ *
+ * False for distros that host an engine of their own but are already covered by
  * a Windows named pipe, so relaying into them would only find the same
  * containers a second time.
  *
- * `docker-desktop-data` is listed for a different reason: it is a storage
+ * `docker-desktop-data` is excluded for a different reason: it is a storage
  * volume with no daemon in it at all, and probing it can only ever waste a
  * second on the way to failing.
  */
-function isRedundantDistro(distro: string): boolean {
+export function isRelayCandidate(distro: string): boolean {
   const name = distro.toLowerCase();
-  return (
-    name === 'docker-desktop' || name === 'docker-desktop-data' || name.startsWith('podman-machine')
+  return !(
+    name === 'docker-desktop' ||
+    name === 'docker-desktop-data' ||
+    name.startsWith('podman-machine')
   );
 }
 
@@ -174,13 +178,17 @@ function isRedundantDistro(distro: string): boolean {
  * that is decoded as UTF-8 (or when only the BOM is trimmed) every character
  * arrives interleaved with NUL bytes. Callers that decode properly lose
  * nothing by this running anyway.
+ *
+ * Returns EVERY name, including the ones no relay will ever be built for.
+ * Filtering belongs to the caller: discovery wants `isRelayCandidate` applied,
+ * but the diagnostics want the honest list — telling a user "no distributions"
+ * when `wsl -l` plainly shows two is worse than showing two they cannot use.
  */
 export function parseWslDistroList(stdout: string): readonly string[] {
   return stdout
     .split(/\r?\n/)
     .map((line) => line.replaceAll('\0', '').trim())
-    .filter((line) => line !== '')
-    .filter((line) => !isRedundantDistro(line));
+    .filter((line) => line !== '');
 }
 
 /** A socket found (or started) inside a WSL distribution. */

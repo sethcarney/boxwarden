@@ -1,4 +1,4 @@
-import type { MaybeHostPath } from '../../domain/index.js';
+import type { MaybeHostPath } from '../../models/index.js';
 
 /**
  * Parse the `devcontainer.local_folder` label into a typed host path.

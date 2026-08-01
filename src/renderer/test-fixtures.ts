@@ -1,5 +1,5 @@
-import type { DevContainer, DevContainerRuntime, MaybeHostPath } from '../domain/index.js';
-import { asContainerId, asContainerPath } from '../domain/index.js';
+import type { DevContainer, DevContainerRuntime, MaybeHostPath } from '../models/index.js';
+import { asContainerId, asContainerPath } from '../models/index.js';
 
 /**
  * Fixture builders for the component tests.

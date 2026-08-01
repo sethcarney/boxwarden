@@ -1,5 +1,5 @@
-import type { DevContainerRuntime } from '../../domain/index.js';
-import { displayStatus } from '../../domain/index.js';
+import type { DevContainerRuntime } from '../../models/index.js';
+import { displayStatus } from '../../models/index.js';
 
 /**
  * The coloured dot. Colour comes from the domain's three-way `displayStatus`

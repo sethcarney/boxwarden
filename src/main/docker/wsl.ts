@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { Duplex } from 'node:stream';
-import type { ContainerRuntimeKind } from '../../domain/index.js';
-import { parseWslDistroList, type WslSocket } from './endpoint.js';
+import type { ContainerRuntimeKind, WslDistroReport, WslStatus } from '../../models/index.js';
+import { isRelayCandidate, parseWslDistroList, type WslSocket } from './endpoint.js';
 
 /**
  * Reaching a container engine that lives inside a WSL2 distribution.
@@ -62,6 +62,16 @@ interface WslExecResult {
   readonly code: number | null;
   readonly stdout: string;
   readonly stderr: string;
+  /**
+   * wsl.exe could not be started at all — almost always ENOENT, meaning the
+   * WSL optional component was never enabled on this machine.
+   *
+   * Distinct from `code: null` (which also covers a timeout) because the two
+   * lead to completely different advice: "run wsl --install" versus "your
+   * distro is wedged". Collapsing them is how a missing feature gets reported
+   * as a hang.
+   */
+  readonly spawnFailed: boolean;
 }
 
 /**
@@ -81,7 +91,7 @@ function runWsl(
     const err: Buffer[] = [];
     let settled = false;
 
-    const finish = (code: number | null): void => {
+    const finish = (code: number | null, spawnFailed = false): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -89,6 +99,7 @@ function runWsl(
         code,
         stdout: Buffer.concat(out).toString(encoding),
         stderr: Buffer.concat(err).toString(encoding),
+        spawnFailed,
       });
     };
 
@@ -99,7 +110,7 @@ function runWsl(
 
     child.stdout.on('data', (chunk: Buffer) => out.push(chunk));
     child.stderr.on('data', (chunk: Buffer) => err.push(chunk));
-    child.on('error', () => finish(null));
+    child.on('error', () => finish(null, true));
     child.on('close', (code) => finish(code));
   });
 }
@@ -109,6 +120,30 @@ async function listRunningDistros(): Promise<readonly string[]> {
   const { code, stdout } = await runWsl(['--list', '--quiet', '--running'], 'utf16le');
   if (code !== 0) return [];
   return parseWslDistroList(stdout);
+}
+
+/** Every distro installed, running or not. Empty is a real answer here, not a failure. */
+async function listInstalledDistros(): Promise<readonly string[]> {
+  const { code, stdout } = await runWsl(['--list', '--quiet'], 'utf16le');
+  // A nonzero exit here means "no distributions installed" as often as it means
+  // an error — wsl.exe returns -1 for both — so an empty list is the honest
+  // reading either way.
+  if (code !== 0) return [];
+  return parseWslDistroList(stdout);
+}
+
+/**
+ * Whether WSL is usable at all.
+ *
+ * `wsl.exe --status` rather than `--list`, because the two failures need
+ * separating: Windows 10/11 ship a wsl.exe STUB even when the optional
+ * component is off, so the binary existing proves nothing. The stub exits
+ * nonzero from --status; a real installation exits 0 whether or not any distro
+ * exists. That is the cleanest signal available without reading the registry.
+ */
+async function wslIsInstalled(): Promise<boolean> {
+  const { code, spawnFailed } = await runWsl(['--status'], 'utf16le');
+  return !spawnFailed && code === 0;
 }
 
 /**
@@ -135,7 +170,7 @@ function runWslScript(
     const err: Buffer[] = [];
     let settled = false;
 
-    const finish = (code: number | null): void => {
+    const finish = (code: number | null, spawnFailed = false): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -143,6 +178,7 @@ function runWslScript(
         code,
         stdout: Buffer.concat(out).toString('utf8'),
         stderr: Buffer.concat(err).toString('utf8'),
+        spawnFailed,
       });
     };
 
@@ -153,7 +189,7 @@ function runWslScript(
 
     child.stdout.on('data', (chunk: Buffer) => out.push(chunk));
     child.stderr.on('data', (chunk: Buffer) => err.push(chunk));
-    child.on('error', () => finish(null));
+    child.on('error', () => finish(null, true));
     child.on('close', (code) => finish(code));
     child.stdin.end(script, 'utf8');
   });
@@ -278,51 +314,88 @@ function runtimeFromSocketPath(socketPath: string): ContainerRuntimeKind {
   return socketPath.includes('podman') ? 'podman' : 'docker-engine';
 }
 
+/** What discovery learned about WSL: the sockets it can use, and why it has no more. */
+export interface WslDiscovery {
+  readonly status: WslStatus;
+  readonly sockets: readonly WslSocket[];
+}
+
+const NOT_APPLICABLE: WslDiscovery = { status: { kind: 'not-applicable' }, sockets: [] };
+
 /**
- * Every running WSL distro that has, or can be given, a reachable engine socket.
+ * Every running WSL distro that has, or can be given, a reachable engine socket
+ * — plus enough about the ones that do not for the UI to explain itself.
+ *
+ * The status half is not a by-product. On Windows, "no container engine found"
+ * and "WSL is not installed" are the same finding, and only this function is in
+ * a position to tell them apart; returning only the sockets is what forced the
+ * UI to say "couldn't connect" and stop there.
  *
  * Distros are inspected concurrently: this runs on every refresh, and a machine
  * with three distros should not pay three round trips in series for it.
  */
-export async function discoverWslSockets(): Promise<readonly WslSocket[]> {
-  if (process.platform !== 'win32') return [];
+export async function discoverWsl(): Promise<WslDiscovery> {
+  if (process.platform !== 'win32') return NOT_APPLICABLE;
 
-  const distros = await listRunningDistros();
-  if (distros.length === 0) return [];
+  if (!(await wslIsInstalled())) {
+    return { status: { kind: 'not-installed' }, sockets: [] };
+  }
 
-  const found = await Promise.all(
-    distros.map(async (distro): Promise<WslSocket | undefined> => {
+  const installed = await listInstalledDistros();
+  if (installed.length === 0) {
+    return { status: { kind: 'no-distros' }, sockets: [] };
+  }
+
+  const running = await listRunningDistros();
+  if (running.length === 0) {
+    return { status: { kind: 'none-running', installed }, sockets: [] };
+  }
+
+  // Only distros worth relaying into are inspected — docker-desktop and
+  // podman-machine-* already answer on a named pipe. They stay out of the
+  // report too: listing them as "missing socat" would send the user installing
+  // a package into a distro whose containers are already in the list.
+  const candidates = running.filter(isRelayCandidate);
+
+  const reports = await Promise.all(
+    candidates.map(async (distro): Promise<WslDistroReport> => {
       const inspection = await inspectDistro(distro);
-      if (inspection === undefined) return undefined;
+      if (inspection === undefined) {
+        return { distro, hasSocat: false, hasPodman: false };
+      }
+
+      const base = { distro, hasSocat: inspection.hasSocat, hasPodman: inspection.hasPodman };
 
       // socat is the relay. Without it the socket is reachable in principle and
-      // not in practice, so there is no point reporting it as a candidate.
-      if (!inspection.hasSocat) {
-        console.warn(
-          `[boxwarden] WSL distro "${distro}" has a container engine but no socat, ` +
-            'so boxwarden cannot reach it. Install it with: ' +
-            `wsl -d ${distro} -- sudo apt-get install -y socat`,
-        );
-        return undefined;
-      }
+      // not in practice — but it is still reported, because "there is an engine
+      // in here that I cannot reach" is the single most useful thing boxwarden
+      // can say on a Windows machine, and it used to go only to the console.
+      if (!inspection.hasSocat) return base;
 
       if (inspection.socketPath !== undefined) {
-        return {
-          distro,
-          socketPath: inspection.socketPath,
-          runtime: runtimeFromSocketPath(inspection.socketPath),
-        };
+        return { ...base, socketPath: inspection.socketPath };
       }
 
-      if (!inspection.hasPodman) return undefined;
+      if (!inspection.hasPodman) return base;
 
       const started = await startPodmanService(distro, inspection.uid);
-      if (started === undefined) return undefined;
-      return { distro, socketPath: started, runtime: 'podman' };
+      return started === undefined ? base : { ...base, socketPath: started };
     }),
   );
 
-  return found.filter((entry): entry is WslSocket => entry !== undefined);
+  const sockets = reports.flatMap((report): WslSocket[] =>
+    report.socketPath === undefined
+      ? []
+      : [
+          {
+            distro: report.distro,
+            socketPath: report.socketPath,
+            runtime: runtimeFromSocketPath(report.socketPath),
+          },
+        ],
+  );
+
+  return { status: { kind: 'ready', distros: reports }, sockets };
 }
 
 /**

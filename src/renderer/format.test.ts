@@ -1,4 +1,44 @@
 import { describe, expect, it } from 'vitest';
+import type { DevContainerProject, HostPath } from '../models/index.js';
+import { asProjectId } from '../models/index.js';
+import { devcontainerUpCommand } from './format.js';
+
+function projectAt(folder: HostPath): DevContainerProject {
+  return {
+    id: asProjectId('x'),
+    name: 'api',
+    folder,
+    configPath: 'x',
+    configLabel: '.devcontainer/devcontainer.json',
+    root: '/home/dev',
+  };
+}
+
+describe('devcontainerUpCommand', () => {
+  it('names the workspace folder', () => {
+    expect(devcontainerUpCommand(projectAt({ kind: 'posix', path: '/home/dev/api' }))).toBe(
+      'devcontainer up --workspace-folder /home/dev/api',
+    );
+  });
+
+  it('quotes a path with a space in it', () => {
+    expect(devcontainerUpCommand(projectAt({ kind: 'posix', path: '/home/dev/my api' }))).toBe(
+      'devcontainer up --workspace-folder "/home/dev/my api"',
+    );
+  });
+
+  /**
+   * Run from Windows against \\wsl.localhost\..., the bind mount is a 9P share
+   * and the container gets the wrong filesystem. The CLI has to run inside the
+   * distro.
+   */
+  it('runs inside the distro for a WSL project', () => {
+    expect(
+      devcontainerUpCommand(projectAt({ kind: 'wsl', distro: 'Ubuntu', path: '/home/dev/api' })),
+    ).toBe('wsl -d Ubuntu devcontainer up --workspace-folder /home/dev/api');
+  });
+});
+
 import { canStart, canStop, explainFailure, relativeTime, statusLabel } from './format.js';
 
 const NOW = new Date('2026-07-27T12:00:00Z').getTime();

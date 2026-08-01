@@ -1,4 +1,4 @@
-import type { ContainerPath, DevContainerAuthority } from '../../domain/index.js';
+import type { ContainerPath, DevContainerAuthority, HostPath } from '../../models/index.js';
 
 /**
  * Build the `vscode-remote://` URI that reattaches an editor to a running dev
@@ -77,4 +77,76 @@ export function devContainerUri(
   const path = encodeContainerPath(workspaceFolder);
   const absolute = path.startsWith('/') ? path : `/${path}`;
   return `vscode-remote://${authority}${absolute}`;
+}
+
+/**
+ * Percent-encode a host path's segments, leaving a Windows drive letter alone.
+ *
+ * `encodeURIComponent` would turn `c:` into `c%3A`, which VS Code does decode
+ * correctly — but a URI a user may end up reading in an error message or
+ * pasting into a shell should look like a path, and there is no ambiguity to
+ * resolve: a colon in the first segment of a `file:` path is a drive letter.
+ */
+function encodeHostSegments(path: string): string {
+  return path
+    .split('/')
+    .map((segment, index) =>
+      index === 1 && /^[a-z]:$/i.test(segment) ? segment : encodeURIComponent(segment),
+    )
+    .join('/');
+}
+
+/**
+ * The URI that opens a folder on this machine — the "not built yet" case.
+ *
+ * This is NOT `devContainerUri`, and the difference is the whole point. There
+ * is no container to reattach to yet, so there is no `devcontainer.local_folder`
+ * label and no hex authority to build from one. What we can do is open the
+ * folder locally, at which point the Dev Containers extension notices the
+ * `.devcontainer/` and offers "Reopen in Container" — which is the step that
+ * creates the container and the label, after which the folder appears in the
+ * ordinary list and every other verb in this app works on it.
+ *
+ * So the flavours diverge:
+ *
+ *   - `posix`   → `file:///home/me/proj`
+ *   - `windows` → `file:///c:/Users/me/proj`, or `file://server/share/proj`
+ *                 for a UNC path, where the host really is the authority.
+ *   - `wsl`     → `vscode-remote://wsl+Ubuntu/home/me/proj`. A `file:` URI is
+ *                 wrong here: `\\wsl.localhost\Ubuntu\...` opens the folder
+ *                 over 9P as a Windows share, and a repo opened that way is
+ *                 slow, has the wrong file modes, and cannot see the Linux
+ *                 toolchain the dev container expects.
+ *
+ * Unlike the reattach URI this one is built from a PARSED path, and safely so:
+ * nothing is being matched against a string another program wrote. It only has
+ * to name a folder that exists.
+ */
+export function folderUri(folder: HostPath): string {
+  switch (folder.kind) {
+    case 'posix': {
+      const path = folder.path.startsWith('/') ? folder.path : `/${folder.path}`;
+      return `file://${encodeHostSegments(path)}`;
+    }
+
+    case 'wsl': {
+      const path = folder.path.startsWith('/') ? folder.path : `/${folder.path}`;
+      return `vscode-remote://wsl+${encodeURIComponent(folder.distro)}${encodeHostSegments(path)}`;
+    }
+
+    case 'windows': {
+      const slashed = folder.path.replace(/\\/g, '/');
+      if (slashed.startsWith('//')) {
+        // //server/share/dir — the server is the URI's authority, not part of
+        // its path, which is the one case where `file:` uses a real host.
+        const rest = slashed.slice(2);
+        const cut = rest.indexOf('/');
+        const host = cut === -1 ? rest : rest.slice(0, cut);
+        const path = cut === -1 ? '' : rest.slice(cut);
+        return `file://${encodeURIComponent(host)}${encodeHostSegments(path)}`;
+      }
+      const absolute = slashed.startsWith('/') ? slashed : `/${slashed}`;
+      return `file://${encodeHostSegments(absolute)}`;
+    }
+  }
 }

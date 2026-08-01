@@ -1,5 +1,5 @@
-import type { DevContainer, EditorId } from '../../domain/index.js';
-import { projectName } from '../../domain/index.js';
+import type { DevContainer, EditorId } from '../../models/index.js';
+import { projectName } from '../../models/index.js';
 import { canStart, canStop, hostPathLabel, statusLabel } from '../format.js';
 import { StatusDot } from './StatusDot.js';
 
@@ -10,6 +10,12 @@ interface Props {
   readonly editorAvailable: boolean;
   readonly busy: boolean;
   readonly now: number;
+  /**
+   * Rows layout: one line per container. Trims the labels that do not fit on
+   * one — the image, and the editor's name inside the primary button. Nothing
+   * is dropped without a `title` keeping it reachable.
+   */
+  readonly dense?: boolean;
   readonly onStart: (container: DevContainer) => void;
   readonly onStop: (container: DevContainer) => void;
   readonly onOpen: (container: DevContainer) => void;
@@ -26,6 +32,7 @@ export function ContainerCard({
   editorAvailable,
   busy,
   now,
+  dense = false,
   onStart,
   onStop,
   onOpen,
@@ -63,9 +70,9 @@ export function ContainerCard({
       </header>
 
       <dl className="card-meta">
-        <dt>Folder</dt>
+        <dt className="meta-folder">Folder</dt>
         <dd
-          className={unresolved ? 'unresolved' : undefined}
+          className={`meta-folder${unresolved ? ' unresolved' : ''}`}
           title={hostPathLabel(container.localFolder)}
         >
           {hostPathLabel(container.localFolder)}
@@ -76,13 +83,16 @@ export function ContainerCard({
           )}
         </dd>
 
-        <dt>Image</dt>
-        <dd title={container.image}>{container.image}</dd>
+        {/* Hidden by the stylesheet in rows layout — see `.meta-image`. */}
+        <dt className="meta-image">Image</dt>
+        <dd className="meta-image" title={container.image}>
+          {container.image}
+        </dd>
 
         {ports.length > 0 && (
           <>
-            <dt>Ports</dt>
-            <dd className="ports">
+            <dt className="meta-ports">Ports</dt>
+            <dd className="meta-ports ports">
               {ports.map((port) => (
                 <span
                   key={`${port.containerPort}/${port.protocol}/${port.hostPort ?? 'none'}`}
@@ -108,10 +118,10 @@ export function ContainerCard({
           type="button"
           className="primary"
           disabled={busy || openBlockedReason !== undefined}
-          title={openBlockedReason}
+          title={openBlockedReason ?? `Open in ${editorName}`}
           onClick={() => onOpen(container)}
         >
-          Open in {editorName}
+          {dense ? 'Open' : `Open in ${editorName}`}
         </button>
 
         {canStop(container.runtime) && (

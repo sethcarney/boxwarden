@@ -1,4 +1,4 @@
-import type { EditorDiscovery, EditorTarget, KnownEditorId } from '../../domain/index.js';
+import type { EditorDiscovery, EditorTarget, KnownEditorId } from '../../models/index.js';
 
 /**
  * Editor definitions as DATA, per the domain's design: adding a VS Code fork

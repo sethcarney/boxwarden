@@ -1,4 +1,9 @@
-import type { ContainerId, DevContainer, DockerEnvironment } from '../../domain/index.js';
+import type {
+  ContainerId,
+  DevContainer,
+  DockerEnvironment,
+  EngineSelection,
+} from '../../models/index.js';
 
 /**
  * Everything the app needs from a container runtime, and nothing more.
@@ -15,4 +20,15 @@ export interface DockerBackend {
   listDevContainers(): Promise<readonly DevContainer[]>;
   start(id: ContainerId): Promise<void>;
   stop(id: ContainerId): Promise<void>;
+
+  /**
+   * Which engine to use when several answer.
+   *
+   * Set on the backend rather than passed to `listDevContainers`, because
+   * `start` and `stop` have to agree with the list the user is looking at — a
+   * selection that applied only to listing would leave the buttons acting on an
+   * engine the UI is not showing.
+   */
+  selection(): EngineSelection;
+  select(selection: EngineSelection): void;
 }

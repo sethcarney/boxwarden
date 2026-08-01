@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import type { EditorTarget } from '../../domain/index.js';
+import type { EditorTarget } from '../../models/index.js';
 
 /**
  * Launch an editor at a `vscode-remote://` URI.

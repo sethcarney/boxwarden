@@ -1,4 +1,4 @@
-import type { DevContainer } from '../domain/index.js';
+import type { DevContainer } from '../models/index.js';
 
 /**
  * Group the flat container list for rendering.

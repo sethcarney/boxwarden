@@ -4,8 +4,8 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ContainerCard } from './ContainerCard.js';
 import { devContainer, unresolvedContainer } from '../test-fixtures.js';
-import type { DevContainer } from '../../domain/index.js';
-import { asContainerPath } from '../../domain/index.js';
+import type { DevContainer } from '../../models/index.js';
+import { asContainerPath } from '../../models/index.js';
 
 const NOW = new Date('2026-07-27T12:00:00Z').getTime();
 
@@ -98,6 +98,18 @@ describe('ContainerCard', () => {
       const button = screen.getByRole('button', { name: 'Open in Cursor' });
       expect(button.hasAttribute('disabled')).toBe(true);
       expect(button.getAttribute('title')).toMatch(/Cursor was not found/i);
+    });
+
+    /**
+     * Rows layout gives a container one line, and "Open in VS Code Insiders"
+     * does not fit beside a name, a status and two more buttons. The editor's
+     * name moves into the tooltip rather than being lost — a user with four
+     * editors installed still has to be able to tell which one this opens.
+     */
+    it('drops the editor name from the label, not from the card, when dense', () => {
+      renderCard(devContainer(), { dense: true, editorName: 'VS Code Insiders' });
+      const button = screen.getByRole('button', { name: 'Open' });
+      expect(button.getAttribute('title')).toBe('Open in VS Code Insiders');
     });
   });
 

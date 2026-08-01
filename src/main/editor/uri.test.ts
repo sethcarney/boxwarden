@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { asContainerPath } from '../../domain/index.js';
-import { authorityFor, decodeAuthority, devContainerUri } from './uri.js';
+import { asContainerPath } from '../../models/index.js';
+import { authorityFor, decodeAuthority, devContainerUri, folderUri } from './uri.js';
 
 describe('authorityFor', () => {
   it('hex-encodes the host path exactly as VS Code does', () => {
@@ -62,6 +62,48 @@ describe('devContainerUri', () => {
   it('returns undefined for an empty host path rather than an authority-less URI', () => {
     expect(devContainerUri('', asContainerPath('/workspaces/app'))).toBeUndefined();
     expect(devContainerUri('   ', asContainerPath('/workspaces/app'))).toBeUndefined();
+  });
+});
+
+describe('folderUri', () => {
+  it('builds a file: URI for a POSIX folder', () => {
+    expect(folderUri({ kind: 'posix', path: '/home/dev/code/api' })).toBe(
+      'file:///home/dev/code/api',
+    );
+  });
+
+  it('keeps a Windows drive letter readable instead of percent-encoding the colon', () => {
+    expect(folderUri({ kind: 'windows', path: 'C:\\Users\\dev\\api' })).toBe(
+      'file:///C:/Users/dev/api',
+    );
+  });
+
+  /** For a UNC path the server really is the URI authority, not part of the path. */
+  it('puts the server of a UNC path in the authority', () => {
+    expect(folderUri({ kind: 'windows', path: '\\\\build01\\share\\api' })).toBe(
+      'file://build01/share/api',
+    );
+  });
+
+  /**
+   * The case a file: URI gets wrong. `\\wsl.localhost\Ubuntu\home\dev\api`
+   * opens over 9P as a Windows share — wrong file modes, no Linux toolchain,
+   * and a dev container built from it is not the one the user wanted.
+   */
+  it('opens a WSL folder through the wsl remote authority, not as a share', () => {
+    expect(folderUri({ kind: 'wsl', distro: 'Ubuntu-22.04', path: '/home/dev/api' })).toBe(
+      'vscode-remote://wsl+Ubuntu-22.04/home/dev/api',
+    );
+  });
+
+  it('percent-encodes segments without eating the separators', () => {
+    expect(folderUri({ kind: 'posix', path: '/home/dev/my project' })).toBe(
+      'file:///home/dev/my%20project',
+    );
+  });
+
+  it('adds a leading slash to a path that somehow lacks one', () => {
+    expect(folderUri({ kind: 'posix', path: 'home/dev' })).toBe('file:///home/dev');
   });
 });
 

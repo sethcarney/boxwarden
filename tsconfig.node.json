@@ -10,7 +10,7 @@
   "include": [
     "src/main/**/*.ts",
     "src/preload/**/*.ts",
-    "src/domain/**/*.ts",
+    "src/models/**/*.ts",
     "src/shared/**/*.ts",
     "electron.vite.config.ts",
     "vitest.config.ts"

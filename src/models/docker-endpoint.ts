@@ -12,6 +12,8 @@
  * report ready and fail later at the CLI call site.
  */
 
+import type { WslStatus } from './wsl.js';
+
 export type ContainerRuntimeKind =
   'docker-desktop' | 'orbstack' | 'colima' | 'rancher-desktop' | 'podman' | 'docker-engine';
 
@@ -119,6 +121,15 @@ export type DockerCliProbe =
     };
 
 export interface DockerEnvironment {
+  /**
+   * What WSL looks like, on Windows. `not-applicable` everywhere else.
+   *
+   * Part of the environment rather than a separate probe result because on
+   * Windows it IS the environment: every mainstream engine runs inside WSL2, so
+   * "no socket answered" and "WSL is not installed" are the same finding at two
+   * levels of detail, and the UI needs both to say anything useful.
+   */
+  readonly wsl: WslStatus;
   /**
    * The PRIMARY engine — the first candidate that answered, or the first
    * failure when none did. It drives the headline chip and the error screen.

@@ -11,7 +11,9 @@ import type {
   DockerEndpoint,
   DockerEnvironment,
   EndpointProbe,
-} from '../../domain/index.js';
+  EngineSelection,
+} from '../../models/index.js';
+import { ALL_ENGINES, selectionIncludes } from '../../models/index.js';
 import type { DockerBackend } from './backend.js';
 import {
   MINIMUM_API_VERSION,
@@ -23,7 +25,7 @@ import {
 } from './endpoint.js';
 import { DEV_CONTAINER_LABEL, mapContainer, type InspectResponse } from './mapping.js';
 import { detectRuntime, type VersionResponse } from './runtime.js';
-import { createWslConnection, discoverWslSockets } from './wsl.js';
+import { createWslConnection, discoverWsl } from './wsl.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -198,14 +200,30 @@ export class DockerodeBackend implements DockerBackend {
    */
   readonly #ownerById = new Map<ContainerId, Docker>();
 
-  async probe(): Promise<DockerEnvironment> {
-    // Off Windows this resolves to [] without spawning anything.
-    const wslSockets = await discoverWslSockets();
-    const candidates = candidateEndpoints(platform(), homedir(), process.env, wslSockets);
+  /** Defaults to the union of every reachable engine; see src/domain/engine.ts. */
+  #selection: EngineSelection = ALL_ENGINES;
 
-    // Probed concurrently. Now that every candidate is tried rather than
-    // stopped at the first success, doing this in series would add each dead
-    // socket's timeout to every refresh.
+  selection(): EngineSelection {
+    return this.#selection;
+  }
+
+  select(selection: EngineSelection): void {
+    this.#selection = selection;
+    // The container-to-daemon map was built under the old selection, and
+    // start/stop read it. Dropping it forces the next action to re-derive the
+    // owner from a list the user could actually see.
+    this.#invalidate();
+  }
+
+  async probe(): Promise<DockerEnvironment> {
+    // Off Windows this resolves to not-applicable without spawning anything.
+    const wsl = await discoverWsl();
+    const candidates = candidateEndpoints(platform(), homedir(), process.env, wsl.sockets);
+
+    // EVERY candidate is probed, including ones the current selection excludes.
+    // That is the point: the picker can only offer engines that were tried, so
+    // narrowing the probe to the selected engine would make the selection
+    // impossible to change once made.
     const results = await Promise.all(candidates.map(probeEndpoint));
 
     const attempts = results.map((result) => result.probe);
@@ -218,11 +236,16 @@ export class DockerodeBackend implements DockerBackend {
 
     const cli = await probeCli();
 
-    // The headline. First success in candidate order when there is one;
-    // otherwise the FIRST failure, which is the highest-priority candidate —
-    // DOCKER_HOST when set, otherwise the platform's usual socket — and so the
-    // one the user most likely meant.
-    const api: EndpointProbe = attempts.find((attempt) => attempt.ok) ??
+    // The headline. The SELECTED engine when it answered, so the header chip
+    // agrees with the list below it; otherwise the first success in candidate
+    // order; otherwise the FIRST failure, which is the highest-priority
+    // candidate — DOCKER_HOST when set, else the platform's usual socket — and
+    // so the one the user most likely meant.
+    const selected = attempts.find(
+      (attempt) => attempt.ok && selectionIncludes(this.#selection, attempt.endpoint.transport),
+    );
+    const api: EndpointProbe = selected ??
+      attempts.find((attempt) => attempt.ok) ??
       attempts[0] ?? {
         ok: false,
         endpoint: {
@@ -232,12 +255,21 @@ export class DockerodeBackend implements DockerBackend {
         failure: { code: 'not-present', detail: 'No candidate endpoints for this platform.' },
       };
 
-    return { api, cli, attempts };
+    return { api, cli, attempts, wsl: wsl.status };
   }
 
+  /**
+   * The connections in scope for the current selection.
+   *
+   * A selection naming an engine that did not answer yields an EMPTY list, and
+   * that resolves to "no dev containers" rather than an error. That is the
+   * honest reading — the user asked for one engine and it has nothing to show —
+   * and the `selected-engine-unreachable` advisory is what explains it. Falling
+   * back to the other engines here would silently ignore the setting.
+   */
   async #ensureConnections(): Promise<readonly Connection[]> {
     const cached = this.#connections;
-    if (cached !== undefined && cached.length > 0) return cached;
+    if (cached !== undefined && cached.length > 0) return this.#inScope(cached);
 
     await this.probe();
 
@@ -247,7 +279,13 @@ export class DockerodeBackend implements DockerBackend {
     if (connections === undefined || connections.length === 0) {
       throw new Error('No reachable Docker daemon.');
     }
-    return connections;
+    return this.#inScope(connections);
+  }
+
+  #inScope(connections: readonly Connection[]): readonly Connection[] {
+    return connections.filter((connection) =>
+      selectionIncludes(this.#selection, connection.endpoint.transport),
+    );
   }
 
   /** Any operational failure drops the cached handles so the next call re-probes. */

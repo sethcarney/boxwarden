@@ -20,6 +20,11 @@ your machine and reattaches your editor to them.
 - Starts and stops them, individually or per project.
 - Opens them in VS Code, VS Code Insiders, Cursor, or Windsurf — with a
   copyable URI fallback when launching fails.
+- **Finds the ones you have not built yet.** A container only exists after
+  someone builds it, so a machine full of freshly cloned repos looks empty.
+  boxwarden also scans your folders for `devcontainer.json`, lists the projects
+  no container claims, and opens the folder so your editor can offer "Reopen in
+  Container". Where it looks is up to you — add a folder from the panel.
 - When Docker cannot be reached, names every socket it tried and why each one
   failed — rather than a bare "couldn't connect".
 

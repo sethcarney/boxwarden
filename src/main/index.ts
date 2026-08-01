@@ -1,10 +1,13 @@
+import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { BrowserWindow, app, session, shell, type WebContents } from 'electron';
+import { BrowserWindow, app, dialog, session, shell, type WebContents } from 'electron';
+import { defaultProjectRoots, resolveProjectRoots } from '../models/index.js';
 import { registerIpcHandlers } from './ipc.js';
 import type { DockerBackend } from './docker/backend.js';
 import { DockerodeBackend } from './docker/client.js';
 import { FakeDockerBackend } from './docker/fake.js';
 import { shutdownWslServices } from './docker/wsl.js';
+import { loadPreferences, savePreferences } from './preferences.js';
 
 /**
  * Main process entry.
@@ -27,6 +30,16 @@ const RENDERER_URL = process.env['ELECTRON_RENDERER_URL'];
 const IS_DEV = RENDERER_URL !== undefined;
 
 let mainWindow: BrowserWindow | undefined;
+
+/**
+ * Where unbuilt dev container projects are looked for when the user has not
+ * said otherwise.
+ *
+ * Computed once at module scope: `homedir()` cannot change while the app runs,
+ * and recomputing it per scan would make the defaults look mutable when they
+ * are not.
+ */
+const PLATFORM_DEFAULT_ROOTS = defaultProjectRoots(process.platform, homedir());
 
 /**
  * Software rendering, for displays that have no GPU behind them.
@@ -140,11 +153,32 @@ function applySessionHardening(): void {
  * the system browser through `shell.openExternal`, and only for the exact
  * https origins listed, never for a URL the renderer chose.
  */
+/**
+ * A CLOSED set, and it has to stay closed.
+ *
+ * The setup advice in src/domain/advice.ts links to install instructions for
+ * every engine boxwarden supports, and each vendor is one more origin here.
+ * The temptation on adding the next one is to relax this to "any https URL" —
+ * don't. The advisories are built from container labels and probe results, both
+ * of which are attacker-influenced by anyone who can create a container on the
+ * daemon, and an open allow-list turns a crafted label into a link the user is
+ * being invited to click.
+ *
+ * A link added to advice.ts without its origin added here renders and does
+ * nothing. Check both files together.
+ */
 const ALLOWED_EXTERNAL_ORIGINS = new Set([
   'https://code.visualstudio.com',
   'https://containers.dev',
   'https://docs.docker.com',
   'https://www.electronjs.org',
+  // Container engine install instructions, reachable from the setup advice.
+  'https://learn.microsoft.com',
+  'https://podman.io',
+  'https://podman-desktop.io',
+  'https://orbstack.dev',
+  'https://rancherdesktop.io',
+  'https://github.com',
 ]);
 
 function applyNavigationHardening(contents: WebContents): void {
@@ -224,17 +258,69 @@ function createWindow(): BrowserWindow {
   return window;
 }
 
-void app.whenReady().then(() => {
+void app.whenReady().then(async () => {
   applySessionHardening();
+
+  const preferencesPath = join(app.getPath('userData'), 'preferences.json');
+
+  /**
+   * Held in a mutable local rather than re-read per change, because two
+   * independent settings now live in this file. Writing `{ engineSelection }`
+   * on an engine switch would drop the user's scan roots, and writing
+   * `{ projectRoots }` on a root change would drop their engine — a bug that
+   * only shows up on the next launch, which is the worst time to find it.
+   */
+  let preferences = await loadPreferences(preferencesPath);
+  const persist = (next: typeof preferences): void => {
+    preferences = next;
+    void savePreferences(preferencesPath, next);
+  };
+
+  const backend = backendFromEnv();
+  // Applied BEFORE the window exists, so the very first discover() honours the
+  // saved choice. Restoring it after the first scan would open the app showing
+  // every engine and then visibly correct itself.
+  backend.select(preferences.engineSelection);
 
   mainWindow = createWindow();
 
   registerIpcHandlers({
-    backend: backendFromEnv(),
+    backend,
     // Identity by object, not by URL. A URL comparison invites a
     // near-miss — a frame that merely *claims* the right origin — whereas
     // this is the actual WebContents we created, and nothing else can be it.
     isTrustedSender: (contents) => contents === mainWindow?.webContents,
+    onSelectionChanged: (engineSelection) => {
+      persist({ ...preferences, engineSelection });
+    },
+    projects: {
+      platform: process.platform,
+      roots: () => resolveProjectRoots(preferences.projectRoots, PLATFORM_DEFAULT_ROOTS),
+      setRoots: (projectRoots) => {
+        persist({ ...preferences, projectRoots });
+      },
+      chooseFolder: async () => {
+        // Parented to our window, so it is a sheet on macOS and modal
+        // everywhere else — an unparented picker can end up behind the app,
+        // which reads as the button having done nothing.
+        //
+        // `dontAddToRecent` because this is a settings change, not a document
+        // the user opened, and it has no business in the OS recent-files list.
+        const options = {
+          title: 'Choose a folder to scan for dev containers',
+          properties: ['openDirectory', 'dontAddToRecent'] as const,
+          buttonLabel: 'Scan this folder',
+        };
+        const result =
+          mainWindow === undefined
+            ? await dialog.showOpenDialog({ ...options, properties: [...options.properties] })
+            : await dialog.showOpenDialog(mainWindow, {
+                ...options,
+                properties: [...options.properties],
+              });
+        return result.canceled ? undefined : result.filePaths[0];
+      },
+    },
   });
 
   app.on('activate', () => {

@@ -7,8 +7,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 boxwarden is an Electron desktop app (early MVP) that lists dev containers on
 the local machine — filtered to those carrying the `devcontainer.local_folder`
 label — and reattaches an editor (VS Code, Insiders, Cursor, Windsurf) to
-them. It also groups Docker Compose projects and starts/stops containers
-individually or per project.
+them. It also groups Docker Compose projects, starts/stops containers
+individually or per project, and scans the filesystem for dev container
+projects that have never been built.
 
 Bun is the package manager and script runner **only**, never the runtime —
 Electron ships its own Node and executes main/renderer code there. `bun run
@@ -48,8 +49,9 @@ renderer (Chromium, sandboxed, no Node)   src/renderer/  — React UI, reaches o
 preload (no logic)                        src/preload/   — ipcRenderer.invoke wrappers only
         │ ipcMain.handle
 main (Node)                               src/main/
-  docker/   endpoint discovery, dockerode, inspect→domain
-  editor/   binary resolution, URI building, spawn
+  docker/    endpoint discovery, dockerode, inspect→domain
+  editor/    binary resolution, URI building, spawn
+  projects/  filesystem walk for unbuilt dev containers
 
 src/domain/   pure types, no I/O — shared by all three
 src/shared/   the IPC contract (src/shared/ipc.ts) — shared by all three
@@ -65,18 +67,31 @@ as a thin shell around a pure core:
 | `docker/client.ts` (probing)   | `docker/endpoint.ts`                       |
 | `editor/launch.ts` (spawn)     | `editor/uri.ts`                            |
 | `editor/resolve.ts` (fs, exec) | `editor/targets.ts` (data)                 |
+| `projects/scan.ts` (fs walk)   | `domain/project.ts`                        |
 
 Preserve this split when adding features — it's why the suite tests without a
 Docker daemon or a display, and why the shells stay small.
 
-**The IPC surface is five narrow verbs** (`discover`, `start`, `stop`,
-`listEditors`, `openInEditor` — see `src/shared/ipc.ts`), all declared as a
-`BoxwardenApi` interface consumed by the renderer without importing Electron.
-Prefer looping over the existing verbs (e.g. `Promise.allSettled` for a
-compose group's "Start all") over adding new channels. Lifecycle actions
-return failure as `{ ok: false, message }` data rather than throwing — a
-thrown main-process error crosses IPC as an opaque string with the real
-message buried.
+**The IPC surface is ten narrow verbs** — see `src/shared/ipc.ts` — all
+declared as a `BoxwardenApi` interface consumed by the renderer without
+importing Electron. They fall into two groups by cadence:
+
+- **Docker, polled every 5s**: `discover`, `start`, `stop`, `listEditors`,
+  `openInEditor`, `selectEngine`.
+- **Filesystem, on demand only**: `scanProjects`, `openProject`,
+  `addProjectRoot`, `removeProjectRoot`.
+
+Prefer looping over the existing verbs (e.g. `Promise.allSettled` for a compose
+group's "Start all") over adding new channels. The two exceptions so far both
+earned it: `selectEngine` changes main-process state that outlives the call, and
+the project verbs are a _different cadence_ — folding `scanProjects` into
+`DiscoverySnapshot` would make the 5s poll pay for a filesystem walk sixty times
+an hour. Lifecycle actions return failure as `{ ok: false, message }` data
+rather than throwing — a thrown main-process error crosses IPC as an opaque
+string with the real message buried.
+
+`addProjectRoot` takes **no argument** on purpose: the renderer can ask for the
+folder picker, and cannot say which folder the answer is.
 
 ### Two path spaces — the most error-prone part of this app
 
@@ -114,6 +129,79 @@ exist, so VS Code offers to build a new one instead of reattaching. The
 A container whose label can't be parsed is still shown — greyed, dashed
 border, with the raw label and the reason — never silently dropped.
 
+### Engine selection
+
+Every engine that answers is connected to and their container lists are
+unioned (deduplicated by container id). `EngineSelection` in
+`src/domain/engine.ts` narrows that to one engine; the picker appears in the
+header once two are reachable.
+
+- `EngineId` is **derived from the transport** (`unix:/var/run/docker.sock`,
+  `wsl:dev:/run/podman.sock`), kept separate from the prose
+  `describeTransport` because it is written to the preferences file — a
+  reworded UI must not reset everyone's choice.
+- The selection lives on the **backend**, so start/stop agree with the list.
+- `probe()` still tries **every** candidate whatever the selection: the picker
+  can only offer engines that were tried.
+- A selection whose engine has gone away yields an **empty list**, never a
+  silent fall back — `adviseEnvironment` emits `selected-engine-unreachable`.
+
+Persisted by `src/main/preferences.ts` and applied before the window opens.
+
+### Setup advice
+
+`src/domain/advice.ts` is a pure function from `DockerEnvironment` to
+`Advice[]` (title, body, copyable commands, doc links), computed in the main
+process at discover time and shipped in the snapshot. It covers missing WSL, a
+WSL distro without socat, nothing installed (per-platform install menu),
+`EACCES` on a socket, a socket that refuses, and an engine too old.
+
+Two rules when adding to it:
+
+- **Every advisory names what is wrong AND what to type.** One that only
+  describes the problem belongs in the diagnostics list instead.
+- **A link's origin must also be added to `ALLOWED_EXTERNAL_ORIGINS`** in
+  `src/main/index.ts`, which is a closed set on purpose. A link added without
+  it renders and silently does nothing.
+
+Commands are shown, never run — they reboot machines and use `sudo`.
+
+### WSL on Windows
+
+`DockerEnvironment.wsl` carries a `WslStatus` (`not-installed` → `no-distros`
+→ `none-running` → `ready`, plus per-distro socat/podman/socket facts) because
+on Windows WSL _is_ the setup: Linux containers need a Linux kernel and every
+mainstream engine runs inside WSL2. The nastiest case it exists for is a distro
+with an engine and no socat — 9P cannot carry unix sockets, so those containers
+are invisible and the list looks complete while being short. That advisory
+shows even when another engine is working.
+
+### Unbuilt projects
+
+`src/domain/project.ts` (pure) plus `src/main/projects/scan.ts` (the walk) find
+`devcontainer.json` files on disk, so "no dev containers found" is not the end
+of the story on a machine where nothing has been built yet.
+
+- **A project's id is its config path, not its folder.**
+  `.devcontainer/<variant>/devcontainer.json` is the spec's way of shipping more
+  than one dev container per repo; keying on the folder drops all but the first.
+- **`devcontainer.json` is JSONC.** `stripJsonc` is a character scan, not a
+  regex, because every image reference with a registry host in it contains `//`
+  inside a string. Don't "simplify" it.
+- **The walk is bounded three ways** — depth 3, 10s, 250 results — and a scan
+  that hit a limit sets `truncated`, which the UI shows. Never report a short
+  list as a complete one.
+- **`comparableFolder` normalises paths; `authorityFor` must not.** Matching a
+  project against a container's label folds case and separators on Windows. That
+  is safe only because nothing is launched from the result — see the raw label
+  rule above.
+- **Roots** default to `$HOME` (+ `/workspaces` on Linux) and are persisted in
+  `preferences.json`. `undefined` means "use the defaults"; `[]` means "the user
+  removed them all" — `parseProjectRoots` keeps those distinct on purpose.
+- **`devcontainer up` is copied, never run** — same rule as the setup advice, and
+  a stronger case: it pulls images and executes `postCreateCommand` from the
+  repo.
+
 ### Compose grouping
 
 `src/renderer/grouping.ts` folds the flat container list into `ContainerGroup`
@@ -121,6 +209,25 @@ border, with the raw label and the reason — never silently dropped.
 group. Known gap: grouping only sees containers carrying
 `devcontainer.local_folder`, so an unlabeled compose sibling is invisible to
 "Stop all" (see `docs/roadmap.md`).
+
+### Layout and theme
+
+Three layouts (`grid` — the default, `list`, `rows`) and three themes (`dark`,
+`light`, `auto`), typed and parsed in `src/renderer/view.ts`.
+
+- **The layout is an attribute, not a component fork**: `data-layout` on the
+  list element selects grid tracks in `styles.css`; the cards are the same
+  markup in all three. `ContainerCard`'s `dense` prop is the only exception,
+  and it only ever shortens a label — the full text stays in the `title`.
+- **Persisted in `localStorage`, not `preferences.ts`.** The engine selection
+  lives in the preferences file because the main process must apply it before
+  the window opens; a view preference is read only by the renderer, so putting
+  it there would buy a seventh IPC verb nothing.
+- `auto` is resolved in the renderer (`resolveTheme`) so the light palette is
+  written once and `data-theme` always names a concrete theme.
+- **Colours go through variables, including the incidental ones.** The rules
+  that broke first when a light theme arrived were the inline
+  `rgba(255,255,255,…)` glazes — a white wash is invisible on a white surface.
 
 ### Electron security posture
 
@@ -167,9 +274,12 @@ fixtures deliberately construct malformed inputs.
 
 ## Testing conventions
 
-- `vitest run` covers only the pure layer (label parsing, inspect mapping,
-  URI construction, endpoint ordering, display formatting) — no daemon, no
-  display, runs anywhere.
+- `vitest run` covers the pure layer (label parsing, inspect mapping, URI
+  construction, endpoint ordering, display formatting) — no daemon, no display,
+  runs anywhere. The one impure exception is `projects/scan.test.ts`, which
+  builds a tree under `mkdtemp` and tears it down: the rule is "no daemon and no
+  display", not "no filesystem", and a directory walk's bugs show up nowhere
+  else.
 - Functions that would read the clock take `now` as a parameter
   (`relativeTime`, `statusLabel`); platform-dependent functions take
   `platform`/`homedir` as parameters (`candidateEndpoints`) — this is how

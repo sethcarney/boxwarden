@@ -138,6 +138,17 @@ badly:
 | `legacy-thing`   | Unparseable label → degraded row, exit code 137                        |
 | `infra-scripts`  | Paused, WSL UNC path                                                   |
 
+The fake also reports **three** reachable engines (a Docker socket, a podman
+machine pipe, and a podman inside a WSL distro) and a WSL status with one distro
+missing socat. The fixtures round-robin across those engines, so the engine
+picker visibly filters the list rather than being a setting with no observable
+effect.
+
+That is deliberately the awkward arrangement rather than the tidy one: the
+engine picker and every WSL advisory were otherwise unreachable without owning a
+Windows machine in a particular state of disrepair, and those are exactly the
+screens that have to be right for a user whose setup does not work.
+
 The main process logs a loud warning when this is on. A fake container list the
 user believes is real is the worst possible failure for this app.
 
@@ -161,9 +172,16 @@ _absent key_, not `undefined`. Hence the conditional spreads throughout
 
 ## Testing
 
-`vitest run`. The suite covers the pure layer only — label parsing, inspect
+`vitest run`. The suite covers the pure layer — label parsing, inspect
 mapping, URI construction, endpoint ordering, display formatting — so it needs
 neither a daemon nor a display and runs anywhere.
+
+The one impure exception is `src/main/projects/scan.test.ts`, which builds a
+tree of `.devcontainer` directories under `mkdtemp` and removes it afterwards.
+The rule the suite keeps is "no daemon and no display", not "no filesystem",
+and a directory walk is precisely the code whose bugs — a depth limit off by
+one, a `.devcontainer/<variant>/` silently dropped, `node_modules` walked into
+— appear nowhere but against a real filesystem.
 
 Functions that would otherwise read the clock take `now` as a parameter
 (`relativeTime`, `statusLabel`), and platform-dependent functions take
