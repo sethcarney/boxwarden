@@ -19,6 +19,11 @@
       "version": "1.10.0",
       "resolved": "ghcr.io/devcontainers/features/docker-outside-of-docker@sha256:c2c2cf829505ead8e4892c88c31b6594ae94a2bbb209e16e1fac456c1a3a624e",
       "integrity": "sha256:c2c2cf829505ead8e4892c88c31b6594ae94a2bbb209e16e1fac456c1a3a624e"
+    },
+    "ghcr.io/sethcarney/mdm/mdm:1.0.0": {
+      "version": "1.0.0",
+      "resolved": "ghcr.io/sethcarney/mdm/mdm@sha256:319352df13825c335d024858ce9309c5f32f7638bc851d2a434cc6227bf29005",
+      "integrity": "sha256:319352df13825c335d024858ce9309c5f32f7638bc851d2a434cc6227bf29005"
     }
   }
 }
