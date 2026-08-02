@@ -24,6 +24,9 @@ export type {
   EndpointProbe,
 } from './docker-endpoint.js';
 
+export type { SshAgentState } from './ssh-agent.js';
+export { SSH_AUTH_SOCK, containersMissingAgentSocket, sshAgentState } from './ssh-agent.js';
+
 export type { WslDistroReport, WslStatus } from './wsl.js';
 export { distrosMissingSocat, reachableDistros } from './wsl.js';
 

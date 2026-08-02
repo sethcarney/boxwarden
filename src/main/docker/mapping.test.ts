@@ -267,3 +267,74 @@ describe('mapContainer + WSL mounts', () => {
     expect(mapContainer(wsl)?.labels.localFolderRaw).toBe('/home/dev/infra');
   });
 });
+
+describe('mapContainer and the SSH agent', () => {
+  it('reports a forwarded socket when a mount lands on it', () => {
+    const forwarded: InspectResponse = {
+      ...BASE,
+      Config: { ...BASE.Config, Env: ['SSH_AUTH_SOCK=/run/host-services/ssh-auth.sock'] },
+      Mounts: [{ Destination: '/run/host-services/ssh-auth.sock' }],
+    };
+    expect(mapContainer(forwarded)?.sshAgent).toEqual({
+      kind: 'forwarded',
+      socket: '/run/host-services/ssh-auth.sock',
+    });
+  });
+
+  it('reports declared-unmounted when the variable is set and nothing is mounted there', () => {
+    const broken: InspectResponse = {
+      ...BASE,
+      Config: { ...BASE.Config, Env: ['SSH_AUTH_SOCK=/ssh-agent'] },
+      Mounts: [{ Source: '/home/dev/code/webapp', Destination: '/workspaces/webapp' }],
+    };
+    expect(mapContainer(broken)?.sshAgent).toEqual({
+      kind: 'declared-unmounted',
+      socket: '/ssh-agent',
+    });
+  });
+
+  /** A required field with an `absent` arm — there is no "we did not look". */
+  it('reports absent for a container with no environment block', () => {
+    expect(mapContainer(BASE)?.sshAgent).toEqual({ kind: 'absent' });
+  });
+
+  /**
+   * THE SECURITY TEST.
+   *
+   * A container's environment holds registry credentials, database passwords
+   * and API tokens. Exactly one variable is read out of it; everything else
+   * must be gone by the time `mapContainer` returns, because what it returns
+   * crosses IPC into a Chromium renderer and is held in a snapshot there.
+   *
+   * Asserted over the serialised object rather than field by field, so a
+   * future field that copies `Config.Env` somewhere new fails here too — the
+   * point is that no path exists, not that the paths we thought of are closed.
+   */
+  it('does not carry any environment variable other than SSH_AUTH_SOCK', () => {
+    const secrets: InspectResponse = {
+      ...BASE,
+      Config: {
+        ...BASE.Config,
+        Env: [
+          'AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+          'POSTGRES_PASSWORD=hunter2',
+          'GITHUB_TOKEN=ghp_000000000000000000000000000000000000',
+          'SSH_AUTH_SOCK=/ssh-agent',
+          'NPM_CONFIG_//registry.npmjs.org/:_authToken=npm_0000000000',
+        ],
+      },
+      Mounts: [{ Destination: '/ssh-agent' }],
+    };
+
+    const mapped = mapContainer(secrets);
+    expect(mapped?.sshAgent).toEqual({ kind: 'forwarded', socket: '/ssh-agent' });
+
+    const serialised = JSON.stringify(mapped);
+    for (const secret of ['wJalrXUtnFEMI', 'hunter2', 'ghp_0000', 'npm_0000', 'AWS_SECRET']) {
+      expect(serialised).not.toContain(secret);
+    }
+    // The one value that is allowed through, so the assertions above cannot
+    // pass by the object being empty.
+    expect(serialised).toContain('/ssh-agent');
+  });
+});

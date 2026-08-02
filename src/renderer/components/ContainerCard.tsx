@@ -1,6 +1,12 @@
 import type { DevContainer, EditorId } from '../../models/index.js';
 import { canStart, canStop, hostPathLabel, statusLabel } from '../format.js';
-import { cardTitle, openBlockedReason, portLabel, visiblePorts } from '../presenters.js';
+import {
+  cardTitle,
+  openBlockedReason,
+  portLabel,
+  sshAgentBadge,
+  visiblePorts,
+} from '../presenters.js';
 import { StatusDot } from './StatusDot.js';
 
 interface Props {
@@ -43,6 +49,7 @@ export function ContainerCard({
   const unresolved = container.localFolder.kind === 'unresolved';
   const ports = visiblePorts(container);
   const blocked = openBlockedReason(container, editorAvailable, editorName);
+  const agent = sshAgentBadge(container.sshAgent);
 
   return (
     <article className={`card${unresolved ? ' card-degraded' : ''}`}>
@@ -50,6 +57,15 @@ export function ContainerCard({
         <div className="card-title">
           <StatusDot runtime={container.runtime} />
           <h2>{cardTitle(container)}</h2>
+          {/* Nothing at all for `absent` — see the note on sshAgentBadge. */}
+          {agent !== undefined && (
+            <span
+              className={`agent-badge${agent.warning ? ' agent-badge-warning' : ''}`}
+              title={agent.title}
+            >
+              {dense ? agent.short : agent.text}
+            </span>
+          )}
         </div>
         <span className="card-status">{statusLabel(container.runtime, now)}</span>
       </header>

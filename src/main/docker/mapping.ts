@@ -7,7 +7,7 @@ import type {
   MaybeHostPath,
   PortBinding,
 } from '../../models/index.js';
-import { asContainerId, asContainerPath } from '../../models/index.js';
+import { asContainerId, asContainerPath, sshAgentState } from '../../models/index.js';
 import { parseLocalFolder, withWslDistro, wslDistroFromMountSources } from './host-path.js';
 
 /**
@@ -34,13 +34,22 @@ export interface InspectPortBinding {
 }
 
 /**
- * Only `Source` is read, and only to recover a WSL distro name — see
- * `wslDistroFromMountSources`. The rest of the mount record is deliberately
- * not modelled: nothing in the app needs it, and listing fields implies a
- * dependency that does not exist.
+ * Two fields, each read for exactly one thing.
+ *
+ * `Source` recovers a WSL distro name — see `wslDistroFromMountSources`.
+ * `Destination` answers whether the SSH agent socket a container claims to
+ * have is actually mounted there — see `sshAgentState`.
+ *
+ * The rest of the mount record stays unmodelled, and the reason is unchanged
+ * from when this listed only `Source`: nothing in the app needs it, and a
+ * field named here implies a dependency that does not exist. `Type` is the one
+ * most obviously missing, and deliberately so — a socket arriving as a bind, a
+ * volume, or anything else is forwarded just the same, so branching on it
+ * would only add a way to be wrong.
  */
 export interface InspectMount {
   readonly Source?: string;
+  readonly Destination?: string;
 }
 
 export interface InspectResponse {
@@ -52,6 +61,19 @@ export interface InspectResponse {
     readonly Image?: string;
     readonly WorkingDir?: string;
     readonly Labels?: Readonly<Record<string, string>>;
+    /**
+     * `KEY=VALUE` strings — and the most sensitive thing this app ever holds.
+     *
+     * A container's environment routinely carries registry credentials,
+     * database passwords, and API tokens that were never meant to leave the
+     * daemon. Exactly ONE variable is read from it (`SSH_AUTH_SOCK`, in
+     * `mapContainer` below) and the array is then dropped; it must never reach
+     * `DevContainer`, cross IPC to the renderer, be written to a snapshot, or
+     * appear in a log line. `mapContainer does not carry any environment
+     * variable other than SSH_AUTH_SOCK` in mapping.test.ts is what keeps that
+     * true.
+     */
+    readonly Env?: readonly string[];
   };
   readonly NetworkSettings?: {
     readonly Ports?: Readonly<Record<string, readonly InspectPortBinding[] | null>>;
@@ -243,15 +265,33 @@ export function mapContainer(inspect: InspectResponse): DevContainer | undefined
   const localFolderRaw = labels[DEV_CONTAINER_LABEL];
   if (localFolderRaw === undefined) return undefined;
 
+  const mounts = inspect.Mounts ?? [];
+
   // A bare POSIX label is ambiguous between a native Linux path and a path
   // inside a WSL distro; the mounts can settle it. A no-op on every other
   // platform and whenever the mounts say nothing.
-  const mountSources = (inspect.Mounts ?? [])
+  const mountSources = mounts
     .map((mount) => mount.Source)
     .filter((source): source is string => source !== undefined);
   const localFolder = withWslDistro(
     parseLocalFolder(localFolderRaw),
     wslDistroFromMountSources(mountSources),
+  );
+
+  /*
+   * The one line where the environment block is allowed to exist.
+   *
+   * `sshAgentState` reads SSH_AUTH_SOCK and returns a three-arm value; the
+   * array itself is never bound to a name that outlives this call, so there is
+   * no variable holding a container's tokens for a later edit to accidentally
+   * spread into the returned object. See the note on `Config.Env` above — this
+   * is the rule that note describes, in code.
+   */
+  const sshAgent = sshAgentState(
+    inspect.Config?.Env,
+    mounts
+      .map((mount) => mount.Destination)
+      .filter((destination): destination is string => destination !== undefined),
   );
 
   const runtime = mapRuntime(inspect.State);
@@ -282,6 +322,7 @@ export function mapContainer(inspect: InspectResponse): DevContainer | undefined
     localFolder,
     ...(workspaceFolder === undefined ? {} : { workspaceFolder }),
     ...(configFile === undefined || configFile.kind === 'unresolved' ? {} : { configFile }),
+    sshAgent,
     labels: devContainerLabels,
     // `ports` only exists on the running/paused arms, so it is attached after
     // the fact rather than threaded through mapRuntime, which would have to

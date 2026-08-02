@@ -34,6 +34,7 @@ function container(localFolder: MaybeHostPath): DevContainer {
     createdAt: new Date('2026-07-20T10:00:00Z'),
     localFolder,
     labels: { localFolderRaw: localFolder.kind === 'unresolved' ? localFolder.raw : '' },
+    sshAgent: { kind: 'absent' },
     runtime: { state: 'running', startedAt: new Date('2026-07-27T09:00:00Z'), ports: [] },
   };
 }

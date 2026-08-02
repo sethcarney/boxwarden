@@ -49,7 +49,24 @@ function fixtures(now: number): InspectResponse[] {
           'devcontainer.local_folder': '/home/dev/code/webapp',
           'devcontainer.config_file': '/home/dev/code/webapp/.devcontainer/devcontainer.json',
         },
+        // A working agent, the Docker Desktop way. The decoy variables beside
+        // it are the point of the fixture as much as the socket is: this is
+        // the shape of a real environment block, and only SSH_AUTH_SOCK may
+        // survive `mapContainer`.
+        Env: [
+          'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+          'NODE_ENV=development',
+          'DATABASE_URL=postgres://app:not-a-real-password@db:5432/app',
+          'SSH_AUTH_SOCK=/run/host-services/ssh-auth.sock',
+        ],
       },
+      Mounts: [
+        { Source: '/home/dev/code/webapp', Destination: '/workspaces/webapp' },
+        {
+          Source: '/run/host-services/ssh-auth.sock',
+          Destination: '/run/host-services/ssh-auth.sock',
+        },
+      ],
       NetworkSettings: {
         Ports: {
           '5173/tcp': [{ HostIp: '0.0.0.0', HostPort: '5173' }],
@@ -87,7 +104,14 @@ function fixtures(now: number): InspectResponse[] {
           'devcontainer.local_folder': '/home/dev/code/platform',
           'com.docker.compose.project': 'platform_devcontainer',
         },
+        // The silent failure, and the reason this feature exists: the compose
+        // file exports SSH_AUTH_SOCK and forgets the matching volume, so the
+        // container looks configured to every check a user knows how to make
+        // and `git push` fails. Left in the compose group on purpose — that is
+        // where the mistake is easiest to make and hardest to spot.
+        Env: ['SSH_AUTH_SOCK=/ssh-agent', 'POSTGRES_HOST=db'],
       },
+      Mounts: [{ Source: '/home/dev/code/platform', Destination: '/workspaces/platform' }],
       NetworkSettings: { Ports: { '8080/tcp': [{ HostIp: '127.0.0.1', HostPort: '18080' }] } },
     },
     {

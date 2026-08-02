@@ -206,4 +206,91 @@ describe('ContainerCard', () => {
     expect(screen.getByRole('heading', { name: 'platform_devcontainer-db-1' })).toBeDefined();
     expect(screen.queryByRole('heading', { name: 'platform' })).toBeNull();
   });
+  describe('the SSH agent indicator', () => {
+    it('renders nothing at all for a container that declares no agent', () => {
+      const { container: dom } = render(
+        <ContainerCard
+          container={devContainer({ sshAgent: { kind: 'absent' } })}
+          editorId="vscode"
+          editorName="VS Code"
+          editorAvailable
+          busy={false}
+          now={NOW}
+          onStart={vi.fn()}
+          onStop={vi.fn()}
+          onOpen={vi.fn()}
+        />,
+      );
+      expect(dom.querySelector('.agent-badge')).toBeNull();
+    });
+
+    it('confirms a forwarded agent without marking it a problem', () => {
+      const { container: dom } = render(
+        <ContainerCard
+          container={devContainer({
+            sshAgent: { kind: 'forwarded', socket: '/run/host-services/ssh-auth.sock' },
+          })}
+          editorId="vscode"
+          editorName="VS Code"
+          editorAvailable
+          busy={false}
+          now={NOW}
+          onStart={vi.fn()}
+          onStop={vi.fn()}
+          onOpen={vi.fn()}
+        />,
+      );
+      expect(dom.querySelector('.agent-badge')).not.toBeNull();
+      expect(dom.querySelector('.agent-badge-warning')).toBeNull();
+    });
+
+    /**
+     * The case the feature exists for. It has to look different from the
+     * healthy badge, and the tooltip has to name the failure — the container
+     * itself gives the user no other clue.
+     */
+    it('styles declared-unmounted as a warning and explains it in the title', () => {
+      const { container: dom } = render(
+        <ContainerCard
+          container={devContainer({
+            sshAgent: { kind: 'declared-unmounted', socket: '/ssh-agent' },
+          })}
+          editorId="vscode"
+          editorName="VS Code"
+          editorAvailable
+          busy={false}
+          now={NOW}
+          onStart={vi.fn()}
+          onStop={vi.fn()}
+          onOpen={vi.fn()}
+        />,
+      );
+      const badge = dom.querySelector('.agent-badge-warning');
+      expect(badge).not.toBeNull();
+      expect(badge?.getAttribute('title')).toContain('SSH_AUTH_SOCK=/ssh-agent');
+    });
+
+    /** Dense shortens the label and keeps the full text reachable. */
+    it('shortens under dense, keeping the explanation in the title', () => {
+      const { container: dom } = render(
+        <ContainerCard
+          container={devContainer({
+            sshAgent: { kind: 'declared-unmounted', socket: '/ssh-agent' },
+          })}
+          editorId="vscode"
+          editorName="VS Code"
+          editorAvailable
+          busy={false}
+          now={NOW}
+          dense
+          onStart={vi.fn()}
+          onStop={vi.fn()}
+          onOpen={vi.fn()}
+        />,
+      );
+      const badge = dom.querySelector('.agent-badge');
+      expect(badge?.textContent).toBe('SSH!');
+      expect(badge?.getAttribute('title')).toContain('nothing is mounted there');
+    });
+  });
 });

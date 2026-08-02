@@ -338,6 +338,31 @@ button.link {
   padding: 1px 5px;
 }
 
+/*
+ * SSH agent forwarding, per container.
+ *
+ * The healthy state is deliberately quiet — dim text on the card's own border,
+ * the same weight as any other label — because it is only ever confirmation.
+ * The warning is the one worth colour: it marks a container that looks
+ * configured and will fail at the first `git push`.
+ */
+.agent-badge {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 5px;
+  white-space: nowrap;
+  cursor: help;
+}
+
+.agent-badge-warning {
+  color: var(--transitional);
+  border-color: color-mix(in srgb, var(--transitional) 45%, transparent);
+  background: color-mix(in srgb, var(--transitional) 12%, transparent);
+}
+
 .dot {
   width: 8px;
   height: 8px;
