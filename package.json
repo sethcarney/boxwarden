@@ -31,7 +31,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check": "bun run typecheck && bun run lint && bun run format:check && bun run test && bun run check:devcontainer",
-    "check:devcontainer": "node scripts/check-devcontainer.mjs"
+    "check:devcontainer": "node scripts/check-devcontainer.mjs",
+    "check:release-version": "node scripts/check-release-version.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

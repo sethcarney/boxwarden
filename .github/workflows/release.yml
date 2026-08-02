@@ -1,0 +1,211 @@
+name: release
+
+# Turns a tag into installers for all three platforms, attached to a draft
+# GitHub release.
+#
+# The shape it has, and why:
+#
+#   - **The tag is the trigger, package.json is the version.** electron-builder
+#     reads the version from package.json and nothing else, so the tag has to
+#     agree with it or the release is named after one thing and contains
+#     another. `verify` fails the run in seconds rather than after three
+#     ten-minute builds — see scripts/check-release-version.mjs.
+#
+#   - **One job per OS, because cross-building mostly does not work.** A dmg
+#     needs macOS, an NSIS installer needs Windows (or Wine), Linux targets
+#     need Linux. This is the same constraint docs/running.md states for
+#     building by hand; CI is how the repo stops paying it.
+#
+#   - **The jobs do NOT publish; a fourth job does.** electron-builder can push
+#     to GitHub itself, but three jobs each creating "the" draft release race
+#     each other and the loser silently makes a second one. Building to
+#     workflow artefacts and collecting them in one place makes the release a
+#     single atomic step with every platform's output already in hand.
+#
+#   - **Draft, never published automatically.** The last step of a release is a
+#     human reading the notes and pressing a button. Everything up to that is
+#     mechanical; that part is not.
+#
+# What this does NOT do: sign, notarise, or auto-update. The macOS and Windows
+# builds are unsigned, which is a property of the artefacts and not of this
+# workflow — docs/releasing.md says what that means for whoever downloads
+# them, and docs/roadmap.md#6-packaging--signing-notarisation-updates tracks
+# closing it.
+
+on:
+  push:
+    tags:
+      # v-prefixed semver only. `verify` re-checks the exact spelling; this
+      # pattern's job is to keep unrelated tags from starting a build at all.
+      - 'v*'
+  # The dry run. Builds all three platforms and uploads the artefacts without
+  # creating a release, so the pipeline can be exercised — and the installers
+  # can be opened on a real machine — before a tag exists to be lived with.
+  workflow_dispatch:
+
+# A release is not cancellable-in-progress the way a PR check is: a half-run
+# matrix leaves a draft with two platforms in it. Queue instead.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Everything that can fail cheaply, before anything expensive starts.
+  # ---------------------------------------------------------------------------
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+
+      # A tag can point at any commit, including one that never went through a
+      # pull request. check.yml gates main; it does not gate this. Re-running
+      # the same script is a minute against a release nobody can un-publish.
+      - name: Check
+        run: bun run check
+
+      - name: Verify the version
+        run: bun run check:release-version
+
+  # ---------------------------------------------------------------------------
+  # The builds. `dist:<os>` is the same script a developer runs locally, so CI
+  # and a hand-built installer cannot drift apart; `--publish never` is
+  # appended because electron-builder's default policy would otherwise try to
+  # upload on a tag build.
+  # ---------------------------------------------------------------------------
+  build:
+    needs: verify
+    strategy:
+      # One platform failing should not hide whether the other two are fine —
+      # on a release, knowing "only Windows is broken" is the difference
+      # between a fix and an investigation.
+      fail-fast: false
+      matrix:
+        include:
+          # macOS on the arm64 runner, building both arches: electron-builder
+          # downloads the x64 Electron distribution and packages it, which is
+          # the one cross-build in this matrix that genuinely works.
+          - os: macos-latest
+            script: dist:mac
+          - os: ubuntu-latest
+            script: dist:linux
+          - os: windows-latest
+            script: dist:win
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # No ELECTRON_SKIP_BINARY_DOWNLOAD here, unlike check.yml: packaging is
+      # precisely the job that needs the binary.
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # bash on all three, including the Windows runner, so `-- --publish
+      # never` reaches electron-builder identically everywhere rather than
+      # depending on how PowerShell forwards `--` to a native command.
+      - name: Build installers
+        shell: bash
+        run: bun run ${{ matrix.script }} -- --publish never
+        env:
+          # Nothing signs these builds. Without this, electron-builder searches
+          # the runner's keychain, finds nothing, and reports it as a warning
+          # buried in an otherwise green log — so an unsigned release looks
+          # exactly like a signed one from the outside. Say it deliberately
+          # instead, and let docs/releasing.md be the place it is admitted.
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      # Explicit patterns rather than `release/`: electron-builder also leaves
+      # the unpacked app directories (mac/, linux-unpacked/, win-unpacked/) and
+      # its own debug config in there. Uploading those would multiply the
+      # artefact size for output nobody installs.
+      #
+      # latest*.yml is included even though nothing consumes it yet — it is the
+      # update manifest, it costs a kilobyte, and a release missing it cannot
+      # be retrofitted as an auto-update source later.
+      - name: Upload artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: boxwarden-${{ matrix.os }}
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/*.AppImage
+            release/*.deb
+            release/*.exe
+            release/*.blockmap
+            release/latest*.yml
+
+  # ---------------------------------------------------------------------------
+  # The one place a release is created, and the only job that can write.
+  # ---------------------------------------------------------------------------
+  publish:
+    needs: build
+    # Dry runs stop at the artefacts. Only a tag produces a release.
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # --generate-notes diffs against the previous tag, which is not in a
+          # shallow clone. Without this the first release is fine and every
+          # later one silently gets notes covering the whole history.
+          fetch-depth: 0
+
+      # No dependency install: this job reads package.json with the runner's
+      # own node and shells out to gh. Nothing here builds.
+      - name: Download artefacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: boxwarden-*
+          merge-multiple: true
+          path: artefacts
+
+      - name: List what is about to be released
+        run: ls -lh artefacts
+
+      # `1.0.0-rc.1` is marked as a prerelease so it does not become the
+      # "latest release" the README's download link resolves to. The rule lives
+      # in the same module the version check uses, rather than being
+      # re-derived here as a grep for a hyphen.
+      - name: Decide prerelease
+        id: kind
+        run: |
+          version=$(node -p "require('./package.json').version")
+          prerelease=$(node -e "import('./scripts/check-release-version.mjs').then(m => process.stdout.write(String(m.isPrerelease('$version'))))")
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+
+      # --draft: the notes get read and edited before anyone can download this.
+      # --verify-tag: refuses if the tag has disappeared from the remote since
+      # the run started, which is the one way an artefact set can outlive the
+      # commit it claims to be built from.
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --draft \
+            --verify-tag \
+            --generate-notes \
+            --title "$GITHUB_REF_NAME" \
+            ${{ steps.kind.outputs.prerelease == 'true' && '--prerelease' || '' }} \
+            artefacts/*

@@ -139,26 +139,38 @@ packaged Linux build has been verified to run: 7 fixture cards rendered out of
 an asar with the sandboxed preload and IPC intact. dmg, AppImage, deb and NSIS
 targets are configured, and the app has an icon.
 
+Since then the **release process** is wired up too:
+`.github/workflows/release.yml` turns a `v*` tag into all three platforms'
+installers attached to a draft GitHub release, each built on the OS it targets
+— see [releasing.md](./releasing.md). That closes the distribution half of
+this item, and the "one Linux machine on one day" caveat below with it. What it
+does not close is anything about _trusting_ the result.
+
 What is still missing is everything about _trusting_ the result:
 
-- **macOS signing and notarisation.** Signing is left to electron-builder's
-  keychain discovery, so a machine with a Developer ID produces a signed build
-  and every other machine produces an unsigned one. Notarisation is not
-  configured at all, so Gatekeeper blocks the dmg until the user strips the
-  quarantine attribute by hand — documented in `running.md`, which is not the
-  same as fixed.
+- **macOS signing and notarisation.** Locally, signing is left to
+  electron-builder's keychain discovery, so a machine with a Developer ID
+  produces a signed build and every other machine produces an unsigned one. In
+  CI it is turned off explicitly (`CSC_IDENTITY_AUTO_DISCOVERY: false`), because
+  a failed keychain search is a warning inside a green log and an unsigned
+  release would look exactly like a signed one. Notarisation is not configured
+  at all, so Gatekeeper blocks the dmg until the user strips the quarantine
+  attribute by hand — documented in `running.md` and in the release notes
+  boilerplate in `releasing.md`, which is not the same as fixed.
 - **Windows signing.** Unsigned, so SmartScreen interposes.
 - **ASAR integrity.** `asar: true` is on; the integrity fuse that would detect
   a tampered archive is not.
-- **Auto-update.** None. `latest-linux.yml` and friends get emitted as a side
-  effect, but nothing publishes or consumes them, and an installed build stays
-  where it is until someone replaces it. Either wire up `electron-updater`
-  against GitHub releases or say in the README that updates are manual — the
-  current state is neither.
+- **Auto-update.** None. `latest-linux.yml` and friends are now emitted _and
+  attached to the release_ — that part is done, and it had to be done first,
+  because the build that would need to find them is the one already installed.
+  Nothing consumes them: `electron-updater` is not wired up, and an installed
+  build stays where it is until someone replaces it. Until it is, "updates are
+  manual" is stated in the README, the running guide and the release notes.
+- **arm64 anything.** Every target builds both architectures and only the x64
+  Linux build has ever been launched.
 
 None of it is blocking for a tool you build yourself, and all of it is blocking
-for one you hand to somebody else. Note too that "it packages" is currently a
-claim about one Linux machine on one day — see the CI item below.
+for one you hand to somebody else.
 
 ## 7. Claude Code presence — the follow-ups
 
@@ -220,7 +232,13 @@ deliberately left out of v1, in this order:
 - **Accessibility.** No keyboard shortcuts, no focus management, no screen
   reader pass.
 - **Window state.** Size and position are not persisted.
-- **CI.** No workflow runs any of this on push.
+- **CI on more than one OS.** `check.yml` runs the gate on every PR and on
+  pushes to `main`, and `release.yml` builds all three platforms on a tag — but
+  the gate itself only ever runs on Linux. The Windows-specific code
+  (`docker/wsl.ts`, the `wt.exe` and `conhost.exe` rows in
+  `terminal/targets.ts`) is untested anywhere, and a Windows runner in
+  `check.yml` would at least prove it compiles and runs there. That is not the
+  same as proving the probes are right, which needs a real machine.
 
 ## Done
 
@@ -229,6 +247,11 @@ Items completed since the first MVP pass, kept for the record:
 - ~~Packaging~~ — electron-builder, four targets, an icon, and a verified
   packaged build. What remains of that item is signing, notarisation and
   updates, which is why it still has a section above.
+- ~~A release process~~ — a `v*` tag builds macOS, Linux and Windows on their
+  own runners and collects the installers into one draft release
+  (`.github/workflows/release.yml`, `docs/releasing.md`). The version check
+  that refuses a tag disagreeing with `package.json` is the load-bearing part:
+  a published tag cannot be moved.
 - ~~A guide to running it~~ — `running.md`, covering the dev container driven
   from the CLI (`bun run devcontainer:open`), development on the host, and
   installing a built app on each OS.
