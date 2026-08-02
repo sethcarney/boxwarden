@@ -1,12 +1,13 @@
 # boxwarden
 
 Local dev container management. A desktop app that lists the dev containers on
-your machine and reattaches your editor to them.
+your machine, reattaches your editor to them, and opens a shell inside them.
 
-> **Status: early MVP.** Discovery, start/stop, and open-in-editor are
-> implemented and unit-tested, and the UI has been verified end to end against
-> fixtures. They have **not** yet been run against a real Docker daemon or a
-> real editor install — see [docs/roadmap.md](docs/roadmap.md#verified-and-unverified).
+> **Status: early MVP.** Discovery, start/stop, open-in-editor and
+> open-a-terminal are implemented and unit-tested, and the UI has been verified
+> end to end against fixtures. They have **not** yet been run against a real
+> Docker daemon, a real editor install, or a real terminal emulator on macOS or
+> Windows — see [docs/roadmap.md](docs/roadmap.md#verified-and-unverified).
 
 ## What it does
 
@@ -20,6 +21,13 @@ your machine and reattaches your editor to them.
 - Starts and stops them, individually or per project.
 - Opens them in VS Code, VS Code Insiders, Cursor, or Windsurf — with a
   copyable URI fallback when launching fails.
+- Opens a shell inside a running container, in your own terminal emulator —
+  Terminal.app, iTerm2, GNOME Terminal, Konsole, kitty, WezTerm, Alacritty,
+  Windows Terminal and others — with a copyable `docker exec` line when
+  launching fails.
+- Remembers a **startup command** per container, run inside it before the
+  interactive shell each time you open a terminal. Stored against the host
+  folder, so it survives a rebuild.
 - **Finds the ones you have not built yet.** A container only exists after
   someone builds it, so a machine full of freshly cloned repos looks empty.
   boxwarden also scans your folders for `devcontainer.json`, lists the projects

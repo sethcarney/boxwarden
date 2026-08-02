@@ -4,6 +4,7 @@ import { expandWindowsPath, isSpawnableOnWindows } from './resolve.js';
 /**
  * Both functions exist because of one concrete failure: "Open in VS Code" on
  * Windows died with `spawn ... ENOENT` while VS Code was plainly installed.
+ * They now guard the terminal launcher on the same grounds.
  *
  * `where code` returns two hits, in this order:
  *

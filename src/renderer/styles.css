@@ -406,6 +406,43 @@ button.link {
   color: var(--text-dim);
 }
 
+/*
+ * The startup command reads as an editable line of the card's metadata rather
+ * than as a form control: no border until it is hovered or focused, and the
+ * same monospace as the folder and image above it. It IS a shell command, and
+ * typing one into something that looks like a text box invites prose.
+ */
+.startup-command {
+  width: 100%;
+  font: inherit;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 1px 4px;
+  margin: -1px -4px;
+}
+
+.startup-command::placeholder {
+  color: var(--text-dim);
+  font-style: italic;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+
+.startup-command:hover:not(:disabled) {
+  border-color: var(--border);
+}
+
+.startup-command:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--bg);
+}
+
+.startup-command:disabled {
+  opacity: 0.5;
+}
+
 .port-unpublished {
   opacity: 0.6;
   border-style: dashed;
@@ -460,8 +497,15 @@ button.link {
   display: block;
 }
 
+/*
+ * `.meta-startup` joins the image and the ports here: rows mode is one LINE per
+ * container, and a text input on it would be both unreachable and the widest
+ * thing in the row. The Terminal button still works — it runs whatever command
+ * is stored — and editing that command is a job for grid or list mode.
+ */
 .list[data-layout='rows'] .card-meta dt,
 .list[data-layout='rows'] .meta-image,
+.list[data-layout='rows'] .meta-startup,
 .list[data-layout='rows'] .meta-ports {
   display: none;
 }

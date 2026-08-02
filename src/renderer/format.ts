@@ -92,6 +92,18 @@ export function canStop(runtime: DevContainerRuntime): boolean {
 }
 
 /**
+ * Whether a shell can be opened in this container.
+ *
+ * Stricter than `canStop`, and the difference is `paused`: a paused container
+ * still holds its process namespace, so `docker exec` is accepted and then
+ * blocks forever against frozen processes. A terminal that opens and hangs is
+ * worse than a disabled button, so pausing takes the action away.
+ */
+export function canExec(runtime: DevContainerRuntime): boolean {
+  return runtime.state === 'running';
+}
+
+/**
  * Turn an endpoint failure into a sentence with a fix in it.
  *
  * This is the screen a user sees when the app looks broken, so the text is the

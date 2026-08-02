@@ -9,6 +9,8 @@ import type { NoticesViewModel } from './useNotices.js';
 import { useNotices } from './useNotices.js';
 import type { ProjectsViewModel } from './useProjects.js';
 import { useProjects } from './useProjects.js';
+import type { TerminalsViewModel } from './useTerminals.js';
+import { useTerminals } from './useTerminals.js';
 import type { ThemeViewModel } from './useTheme.js';
 import { useTheme } from './useTheme.js';
 
@@ -23,6 +25,7 @@ export interface AppViewModel {
   readonly notices: NoticesViewModel;
   readonly theme: ThemeViewModel;
   readonly editors: EditorsViewModel;
+  readonly terminals: TerminalsViewModel;
   readonly discovery: DiscoveryViewModel;
   readonly projects: ProjectsViewModel;
 }
@@ -31,11 +34,11 @@ export interface AppViewModel {
  * The root ViewModel: every piece of state the app renders, and every action it
  * can take, with no JSX anywhere beneath it.
  *
- * Composition rather than one large hook, because the five below have genuinely
+ * Composition rather than one large hook, because the six below have genuinely
  * different lifetimes — Docker is polled every five seconds, the filesystem is
- * scanned on demand, the editor list is read once, and the theme never touches
- * the bridge at all. Keeping them separate is what lets each be tested against
- * a fake `BoxwardenApi` without standing up the others.
+ * scanned on demand, the editor and terminal lists are read once, and the theme
+ * never touches the bridge at all. Keeping them separate is what lets each be
+ * tested against a fake `BoxwardenApi` without standing up the others.
  *
  * Every hook is called unconditionally and guards on `api` internally: a bridge
  * that failed to load must not change the number of hooks this runs.
@@ -47,7 +50,10 @@ export function useAppViewModel(): AppViewModel {
   const notices = useNotices();
   const theme = useTheme();
   const editors = useEditors(api);
-  const discovery = useDiscovery(api, notices, editors.editorId);
+  // Before discovery, which needs the chosen terminal the same way it needs the
+  // chosen editor.
+  const terminals = useTerminals(api, notices);
+  const discovery = useDiscovery(api, notices, editors.editorId, terminals.terminalId);
   const projects = useProjects(api, notices, editors.editorId, discovery.containers);
 
   return {
@@ -56,6 +62,7 @@ export function useAppViewModel(): AppViewModel {
     notices,
     theme,
     editors,
+    terminals,
     discovery,
     projects,
   };

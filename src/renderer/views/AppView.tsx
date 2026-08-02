@@ -24,7 +24,7 @@ interface Props {
  * through a ViewModel field.
  */
 export function AppView({ vm }: Props) {
-  const { notices, theme, editors, discovery, projects, now } = vm;
+  const { notices, theme, editors, terminals, discovery, projects, now } = vm;
 
   if (!vm.bridgeAvailable) return <BridgeMissing />;
 
@@ -41,8 +41,8 @@ export function AppView({ vm }: Props) {
 
       <NoticeBar
         notice={notices.notice}
-        failedUri={notices.lastFailedUri}
-        onCopyUri={notices.copyFailedUri}
+        fallback={notices.fallback}
+        onCopy={notices.copyFallback}
         onDismiss={notices.dismiss}
       />
 
@@ -80,12 +80,17 @@ export function AppView({ vm }: Props) {
           editorId={editors.editorId}
           editorName={editors.editorName}
           editorAvailable={editors.editorAvailable}
+          terminalName={terminals.terminalName}
+          terminalAvailable={terminals.terminalAvailable}
+          startupCommandFor={terminals.startupCommandFor}
           now={now}
           isBusy={discovery.isBusy}
           isGroupBusy={discovery.isGroupBusy}
           onStart={discovery.start}
           onStop={discovery.stop}
           onOpen={discovery.open}
+          onOpenTerminal={discovery.openTerminal}
+          onStartupCommandChange={terminals.setStartupCommand}
           onStartAll={discovery.startAll}
           onStopAll={discovery.stopAll}
         />
@@ -116,6 +121,10 @@ export function AppView({ vm }: Props) {
         editors={editors.editors}
         editorId={editors.editorId}
         onChooseEditor={editors.chooseEditor}
+        terminals={terminals.terminals}
+        terminalId={terminals.terminalId}
+        showTerminalPicker={terminals.anyAvailable}
+        onChooseTerminal={terminals.chooseTerminal}
       />
     </main>
   );

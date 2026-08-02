@@ -6,6 +6,7 @@ import type {
   EngineSelection,
   ProjectId,
   ProjectScan,
+  TerminalId,
 } from '../../models/index.js';
 import type {
   ActionResult,
@@ -13,7 +14,9 @@ import type {
   DiscoverySnapshot,
   EditorOption,
   OpenInEditorResult,
+  OpenTerminalResult,
   ProjectRootsResult,
+  TerminalOption,
 } from '../../shared/ipc.js';
 
 /**
@@ -95,18 +98,28 @@ export interface FakeApi extends BoxwardenApi {
   openProject: Mock<(id: ProjectId, editorId: EditorId) => Promise<OpenInEditorResult>>;
   readonly addProjectRoot: Mock<() => Promise<ProjectRootsResult>>;
   readonly removeProjectRoot: Mock<(root: string) => Promise<ProjectRootsResult>>;
+  readonly listTerminals: Mock<() => Promise<readonly TerminalOption[]>>;
+  openTerminal: Mock<(id: ContainerId, terminalId: TerminalId) => Promise<OpenTerminalResult>>;
+  readonly getStartupCommands: Mock<() => Promise<Readonly<Record<string, string>>>>;
+  setStartupCommand: Mock<(id: ContainerId, command: string) => Promise<ActionResult>>;
 }
 
 export interface FakeApiOptions {
   readonly snapshot?: DiscoverySnapshot;
   readonly editors?: readonly EditorOption[];
   readonly scan?: ProjectScan;
+  readonly terminals?: readonly TerminalOption[];
+  readonly startupCommands?: Readonly<Record<string, string>>;
 }
 
 export function fakeApi(options: FakeApiOptions = {}): FakeApi {
   const current = options.snapshot ?? snapshot();
   const editors = options.editors ?? [{ id: 'vscode', displayName: 'VS Code', available: true }];
   const scan = options.scan ?? projectScan();
+  const terminals = options.terminals ?? [
+    { id: 'gnome-terminal', displayName: 'GNOME Terminal', available: true },
+  ];
+  const startupCommands = options.startupCommands ?? {};
 
   return {
     discover: vi.fn<() => Promise<DiscoverySnapshot>>(() => Promise.resolve(current)),
@@ -128,6 +141,18 @@ export function fakeApi(options: FakeApiOptions = {}): FakeApi {
     ),
     removeProjectRoot: vi.fn<(root: string) => Promise<ProjectRootsResult>>(() =>
       Promise.resolve({ ok: true, cancelled: false }),
+    ),
+    listTerminals: vi.fn<() => Promise<readonly TerminalOption[]>>(() =>
+      Promise.resolve(terminals),
+    ),
+    openTerminal: vi.fn<(id: ContainerId, terminalId: TerminalId) => Promise<OpenTerminalResult>>(
+      () => Promise.resolve({ ok: true, terminalId: 'gnome-terminal', command: "'docker' 'exec'" }),
+    ),
+    getStartupCommands: vi.fn<() => Promise<Readonly<Record<string, string>>>>(() =>
+      Promise.resolve(startupCommands),
+    ),
+    setStartupCommand: vi.fn<(id: ContainerId, command: string) => Promise<ActionResult>>(() =>
+      Promise.resolve({ ok: true }),
     ),
   };
 }

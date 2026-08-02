@@ -19,7 +19,10 @@ export { useProjects } from './useProjects.js';
 export type { EditorsViewModel } from './useEditors.js';
 export { useEditors } from './useEditors.js';
 
-export type { Notice, NoticesViewModel } from './useNotices.js';
+export type { TerminalsViewModel } from './useTerminals.js';
+export { useTerminals } from './useTerminals.js';
+
+export type { CopyableFallback, Notice, NoticesViewModel } from './useNotices.js';
 export { useNotices } from './useNotices.js';
 
 export type { ThemeViewModel } from './useTheme.js';

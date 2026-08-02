@@ -48,7 +48,7 @@ export function useProjects(
   const [scanning, setScanning] = useState(false);
   const mounted = useMounted();
 
-  const { showThrown, showError, showInfo, showOpenFailure } = notices;
+  const { showThrown, showError, showInfo, showLaunchFailure } = notices;
 
   const runScan = useCallback(async () => {
     if (api === undefined) return;
@@ -123,14 +123,17 @@ export function useProjects(
             );
             return;
           }
-          showOpenFailure(result.message, result.uri);
+          showLaunchFailure(
+            result.message,
+            result.uri === undefined ? undefined : { label: 'Copy URI', value: result.uri },
+          );
         },
         (error: unknown) => {
           showThrown(error);
         },
       );
     },
-    [api, editorId, showInfo, showOpenFailure, showThrown],
+    [api, editorId, showInfo, showLaunchFailure, showThrown],
   );
 
   /**

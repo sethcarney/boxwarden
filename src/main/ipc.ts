@@ -1,5 +1,6 @@
 import { ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron';
 import type {
+  ContainerCli,
   ContainerId,
   DevContainer,
   DevContainerProject,
@@ -11,6 +12,7 @@ import type {
 } from '../models/index.js';
 import {
   adviseEnvironment,
+  containerSettingsKey,
   enginesFrom,
   hostPlatform,
   parseEngineSelection,
@@ -21,7 +23,9 @@ import type {
   DiscoverySnapshot,
   EditorOption,
   OpenInEditorResult,
+  OpenTerminalResult,
   ProjectRootsResult,
+  TerminalOption,
 } from '../shared/ipc.js';
 import type { DockerBackend } from './docker/backend.js';
 import { EDITOR_TARGETS, editorTarget } from './editor/targets.js';
@@ -29,6 +33,15 @@ import { resolveEditor } from './editor/resolve.js';
 import { launchEditor } from './editor/launch.js';
 import { devContainerUri, folderUri } from './editor/uri.js';
 import { scanForProjects } from './projects/scan.js';
+import {
+  containerExecArgv,
+  containerShellScript,
+  posixQuote,
+  terminalLaunch,
+} from './terminal/command.js';
+import { launchTerminal } from './terminal/launch.js';
+import { resolveContainerCli, resolveTerminal } from './terminal/resolve.js';
+import { terminalsFor, terminalTarget } from './terminal/targets.js';
 
 /**
  * Registering the handlers needs the backend and a way to recognise our own
@@ -56,6 +69,20 @@ export interface IpcContext {
 
   /** Everything the project scan needs from outside this module. */
   readonly projects: ProjectsContext;
+
+  /** Where the per-container startup commands are read from and written to. */
+  readonly terminals: TerminalsContext;
+}
+
+/**
+ * The startup commands, reached through a seam for the same reason the project
+ * roots are: this module knows nothing about where preferences live on disk,
+ * and index.ts owns that along with the window and the trusted sender.
+ */
+export interface TerminalsContext {
+  startupCommands(): Readonly<Record<string, string>>;
+  /** `key` is a `containerSettingsKey` derived here, never a renderer-supplied string. */
+  setStartupCommand(key: string, command: string): void;
 }
 
 /**
@@ -385,6 +412,152 @@ export function registerIpcHandlers(context: IpcContext): void {
         ...new Set([...context.projects.roots().map((root) => root.path), chosen]),
       ]);
       return { ok: true, cancelled: false };
+    },
+    (message) => ({ ok: false, message }),
+  );
+
+  // ---- Terminals ----
+
+  handle<readonly TerminalOption[]>(
+    IPC.listTerminals,
+    async () => {
+      // Platform-filtered BEFORE probing: an mdfind per Linux terminal on a Mac
+      // would be a dozen processes spawned to learn nothing.
+      const targets = terminalsFor(hostPlatform(process.platform));
+      const resolved = await Promise.all(targets.map((target) => resolveTerminal(target)));
+      return resolved.map((entry) => ({
+        id: entry.target.id,
+        displayName: entry.target.displayName,
+        available: entry.ok,
+      }));
+    },
+    () => [],
+  );
+
+  handle<OpenTerminalResult>(
+    IPC.openTerminal,
+    async (rawId, rawTerminalId) => {
+      const container = known.get(rawId as ContainerId);
+      if (container === undefined) {
+        return {
+          ok: false,
+          code: 'launch-failed',
+          message: 'That container is no longer in the last scan. Refresh and try again.',
+        };
+      }
+
+      // `docker exec` needs a live process namespace to enter. A paused
+      // container has one but it is frozen, so the exec would hang rather than
+      // fail — worse than refusing.
+      if (container.runtime.state !== 'running') {
+        return {
+          ok: false,
+          code: 'not-running',
+          message: `${container.name} is not running, so there is no shell to open. Start it first.`,
+        };
+      }
+
+      const endpoint = context.backend.endpointFor(container.id);
+      const transport = endpoint?.transport;
+
+      // A socket inside a WSL distro is reached by running the CLI in there, so
+      // what matters is which CLI that distro has — not what is on the Windows
+      // PATH, which may well be nothing. `origin.runtime` is the probe's own
+      // record of which engine answered on that socket.
+      const cli: ContainerCli | undefined =
+        transport?.transport === 'wsl'
+          ? {
+              kind:
+                endpoint?.origin.kind === 'wsl' && endpoint.origin.runtime === 'podman'
+                  ? 'podman'
+                  : 'docker',
+              binaryPath: '',
+            }
+          : await resolveContainerCli();
+
+      if (cli === undefined) {
+        return {
+          ok: false,
+          code: 'container-cli-not-found',
+          message:
+            'Neither docker nor podman is on PATH. Opening a terminal shells out to the CLI, which is a separate install from the daemon boxwarden talks to.',
+        };
+      }
+
+      // The main process reads its OWN copy of the startup command, keyed off
+      // its own copy of the container. The renderer never gets to say what runs.
+      const script = containerShellScript(
+        context.terminals.startupCommands()[containerSettingsKey(container)],
+      );
+      const exec = containerExecArgv({
+        cli,
+        containerId: container.id,
+        ...(transport === undefined ? {} : { transport }),
+        script,
+      });
+      // Shown to the user on failure, so they can run it themselves. Quoted
+      // because that is the form they would paste into a shell.
+      const command = posixQuote(exec);
+
+      const target = terminalTarget(String(rawTerminalId));
+      if (target === undefined) {
+        return {
+          ok: false,
+          code: 'terminal-not-found',
+          message: `Unknown terminal: ${String(rawTerminalId)}`,
+          command,
+        };
+      }
+
+      const resolved = await resolveTerminal(target);
+      if (!resolved.ok) {
+        return {
+          ok: false,
+          code: 'terminal-not-found',
+          message: `Could not find ${target.displayName} on this machine.`,
+          command,
+        };
+      }
+
+      try {
+        await launchTerminal(terminalLaunch(target, resolved.binaryPath, exec));
+        return { ok: true, terminalId: target.id, command };
+      } catch (error) {
+        return {
+          ok: false,
+          code: 'launch-failed',
+          message: error instanceof Error ? error.message : String(error),
+          command,
+        };
+      }
+    },
+    (message) => ({ ok: false, code: 'launch-failed', message }),
+  );
+
+  handle<Readonly<Record<string, string>>>(
+    IPC.getStartupCommands,
+    () => Promise.resolve(context.terminals.startupCommands()),
+    () => ({}),
+  );
+
+  handle<ActionResult>(
+    IPC.setStartupCommand,
+    (rawId, rawCommand) => {
+      const container = known.get(rawId as ContainerId);
+      if (container === undefined) {
+        return Promise.resolve({
+          ok: false,
+          message: 'That container is no longer in the last scan.',
+        });
+      }
+      // The KEY comes from the main process's own copy of the container; only
+      // the command text crosses the bridge. A renderer cannot write a startup
+      // command against a folder it invented.
+      context.terminals.setStartupCommand(
+        containerSettingsKey(container),
+        typeof rawCommand === 'string' ? rawCommand : '',
+      );
+      return Promise.resolve({ ok: true });
     },
     (message) => ({ ok: false, message }),
   );

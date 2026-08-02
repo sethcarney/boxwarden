@@ -153,10 +153,10 @@ describe('useProjects', () => {
     await act(async () => {
       result.current.openProject(project);
       await vi.waitFor(() => {
-        expect(notices.showOpenFailure).toHaveBeenCalledWith(
-          'no code binary',
-          'file:///home/dev/code/api',
-        );
+        expect(notices.showLaunchFailure).toHaveBeenCalledWith('no code binary', {
+          label: 'Copy URI',
+          value: 'file:///home/dev/code/api',
+        });
       });
     });
   });

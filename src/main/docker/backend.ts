@@ -1,6 +1,7 @@
 import type {
   ContainerId,
   DevContainer,
+  DockerEndpoint,
   DockerEnvironment,
   EngineSelection,
 } from '../../models/index.js';
@@ -31,4 +32,17 @@ export interface DockerBackend {
    */
   selection(): EngineSelection;
   select(selection: EngineSelection): void;
+
+  /**
+   * Which endpoint the container was last seen on, or undefined if it was not
+   * in the last scan.
+   *
+   * Needed because opening a terminal shells out to the `docker` CLI, and the
+   * CLI has its own idea of which daemon to talk to. Selection narrows what
+   * this app lists, but it does not reach the CLI — so on a machine with two
+   * engines the exec would be a coin flip, and losing it means "no such
+   * container" for one that is plainly on screen. Everything else here reuses
+   * the dockerode connection and never has to ask.
+   */
+  endpointFor(id: ContainerId): DockerEndpoint | undefined;
 }

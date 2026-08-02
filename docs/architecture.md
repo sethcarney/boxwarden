@@ -70,15 +70,21 @@ They are React hooks — the idiomatic ViewModel in a function-component
 codebase — and they hold every piece of state the UI has, every command it can
 issue, and every value derived from the two.
 
-`useAppViewModel()` composes five, kept apart because their lifetimes differ:
+`useAppViewModel()` composes six, kept apart because their lifetimes differ:
 
-| Hook           | Owns                                               | Cadence           |
-| -------------- | -------------------------------------------------- | ----------------- |
-| `useDiscovery` | snapshot, busy set, start/stop/open, engine choice | polled every 5s   |
-| `useProjects`  | scan, roots, unbuilt/built partition               | on open, on ask   |
-| `useEditors`   | installed editors, the chosen one                  | read once         |
-| `useNotices`   | the message bar and the copyable failed URI        | event-driven      |
-| `useTheme`     | layout + theme, persisted to localStorage          | never touches IPC |
+| Hook           | Owns                                                        | Cadence           |
+| -------------- | ----------------------------------------------------------- | ----------------- |
+| `useDiscovery` | snapshot, busy set, start/stop/open/terminal, engine choice | polled every 5s   |
+| `useProjects`  | scan, roots, unbuilt/built partition                        | on open, on ask   |
+| `useEditors`   | installed editors, the chosen one                           | read once         |
+| `useTerminals` | installed emulators, the chosen one, startup commands       | read once         |
+| `useNotices`   | the message bar and the copyable fallback                   | event-driven      |
+| `useTheme`     | layout + theme, persisted to localStorage                   | never touches IPC |
+
+`useTerminals` owns the emulator list and the startup commands but not
+`openTerminal`, which lives in `useDiscovery` with the other container actions:
+they share one busy set, and two independent sets would let one re-enable a
+button the other still considers busy.
 
 Plus two small ones — `useClock` (one timer for every relative timestamp on
 screen) and `useCopyToClipboard` (a write that can be refused, and a timer that
@@ -89,6 +95,12 @@ The payoff is that the layer is testable with `renderHook` and a fake
 container busy, that `startAll` uses `allSettled` and reports the failures
 together, and that an engine change re-reads immediately — none of which
 required a browser, a daemon, or a rendered card.
+
+One deliberate exception to "a ViewModel owns the state": the startup command
+field's draft lives in `components/StartupCommandField.tsx`. It is where the
+text cursor is, not application state — hoisting it would re-render every card
+on every keystroke to hold a value only one of them can see. Keeping it in its
+own component is what lets `ContainerCard` stay a View with no state at all.
 
 ### 3. A View decides nothing
 
@@ -249,8 +261,8 @@ project as one framed group with its own Start all / Stop all.
 Two decisions worth knowing:
 
 - **Group actions loop over the existing single-container IPC calls** rather
-  than adding a `startMany` channel. The IPC surface stays six narrow verbs,
-  and a project is a handful of containers so the round trips do not matter.
+  than adding a `startMany` channel. The IPC surface stays narrow, and a
+  project is a handful of containers so the round trips do not matter.
   `Promise.allSettled`, not `all` — one service failing should not abandon its
   siblings half-started.
 - **A project takes the position of its first member**, so the caller's
@@ -339,6 +351,58 @@ one that matters: a `file:` URI pointing at `\\wsl.localhost\Ubuntu\...` opens
 the repo over 9P as a Windows share, with the wrong file modes and no Linux
 toolchain. It emits `vscode-remote://wsl+Ubuntu/...` instead.
 
+## Opening a terminal
+
+"Open a shell in this container" is `docker exec -it <id> sh -lc <script>`
+running inside a terminal window. Neither half is uniform, and the assembly is
+pure — `src/main/terminal/command.ts` — with `launch.ts` doing nothing but
+spawning the result.
+
+**Which daemon.** boxwarden connects to _every_ engine that answers, and the
+engine selection above narrows what it lists without reaching the CLI. So the
+endpoint the container was last seen on becomes `-H unix://…` (or `--url` for
+podman). Without it, `docker exec` on a machine with two engines reports "no
+such container" for one that is plainly on screen. A socket inside a WSL distro
+cannot be opened from Windows at all, so that arm runs `wsl.exe -d <distro> --`
+and names the CLI bare, on the Linux side.
+
+**Which terminal, and how it wants to be told.** `terminal/targets.ts` is a
+table of twelve emulators with three invocation styles:
+
+| Style            | Example                           | What crosses                  |
+| ---------------- | --------------------------------- | ----------------------------- |
+| `argv`           | `gnome-terminal -- docker exec …` | argv elements, nothing parsed |
+| `command-string` | `x-terminal-emulator -e "…"`      | one POSIX-quoted string       |
+| `applescript`    | Terminal.app, iTerm2              | one string, quoted twice      |
+
+`argv` is the default because it is structurally safe. The other two exist
+because those emulators accept nothing else — Terminal.app and iTerm2 have no
+command-line interface at all — and they are the reason `posixQuote` and
+`appleScriptString` are pure functions with tests rather than template literals
+at the call site. iTerm2 gets its own AppleScript dialect: 3.x dropped
+`do script`, and sending it anyway compiles and silently does nothing.
+
+The table is ordered by preference, and that ordering is load-bearing twice:
+Terminal.app ships with macOS, so probing it before iTerm2 would leave iTerm2
+permanently unreachable as a default; `x-terminal-emulator` and `xterm` are
+always present on a Linux desktop, so they go last.
+
+**The startup command.** A per-container command, run inside the container
+before the interactive shell each time a terminal opens. It is deliberately
+shell code — that is the feature — and it is deliberately shell code on the
+_container's_ side of the boundary: it travels as a single argv element the
+whole way, and where an emulator forces it into a string, the quoting above is
+what keeps it inert on the host. It is not backgrounded, so a dev server holds
+the window and shows its output, and interrupting it lands in a shell rather
+than closing the terminal.
+
+It is stored by `containerSettingsKey`, which is the host folder rather than
+the container id: rebuilding a dev container is the most common thing anyone
+does to one, and it recreates the container under a new id. A startup command
+that evaporates on rebuild is worse than none. Compose members append their
+container name, since every service in a project shares one folder label. The
+map lives in `preferences.json` beside the engine selection and the scan roots.
+
 ## Why containers are never dropped
 
 A container whose label cannot be parsed still appears in the list — greyed,
@@ -357,9 +421,11 @@ containers. Two consequences:
 2. Containers stopped from the UI are the developer's actual containers.
 
 Launching an editor is the part that does **not** work from inside the dev
-container: `editor/resolve.ts` looks for `code` on the container's PATH, not
-the host's. Use `BOXWARDEN_FAKE_DOCKER=1` for UI work, and run on the host to
-exercise the real open-in-editor path.
+container: resolution looks for `code` on the container's PATH, not the host's.
+Opening a terminal fails the same way and for the same reason — it looks for a
+terminal emulator on the container's PATH, and there is no display to open a
+window on regardless. Use `BOXWARDEN_FAKE_DOCKER=1` for UI work, and run on the
+host to exercise the real launch paths.
 
 ## Further reading
 

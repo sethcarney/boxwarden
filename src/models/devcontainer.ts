@@ -112,3 +112,23 @@ export interface DevContainer {
   readonly labels: DevContainerLabels;
   readonly runtime: DevContainerRuntime;
 }
+
+/**
+ * Stable identity for per-container SETTINGS, which is not the container id.
+ *
+ * The id is the wrong key for anything the user typed: rebuilding a dev
+ * container — the single most common thing to do to one — destroys and
+ * recreates it under a new id, and a startup command that evaporates on
+ * rebuild is worse than no startup command at all. The host folder survives
+ * that, because it is what the container was built FROM.
+ *
+ * The folder alone is not enough for compose, where every service in a project
+ * carries the same `devcontainer.local_folder` and would otherwise share one
+ * setting. The container name disambiguates them and is itself stable across
+ * `compose up` — it is derived from the project and service names, not from
+ * the id.
+ */
+export function containerSettingsKey(container: DevContainer): string {
+  const folder = container.labels.localFolderRaw;
+  return container.labels.composeProject === undefined ? folder : `${folder}::${container.name}`;
+}

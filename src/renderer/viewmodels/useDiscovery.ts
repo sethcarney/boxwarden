@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ContainerId, DevContainer, EditorId, EngineSelection } from '../../models/index.js';
+import type {
+  ContainerId,
+  DevContainer,
+  EditorId,
+  EngineSelection,
+  TerminalId,
+} from '../../models/index.js';
 import type { ActionResult, BoxwardenApi, DiscoverySnapshot } from '../../shared/ipc.js';
 import { canStart, canStop } from '../format.js';
 import type { ContainerGroup } from '../grouping.js';
@@ -30,6 +36,8 @@ export interface DiscoveryViewModel {
   readonly startAll: (containers: readonly DevContainer[]) => void;
   readonly stopAll: (containers: readonly DevContainer[]) => void;
   readonly open: (container: DevContainer) => void;
+  /** Open a shell in the container. No-op when no terminal emulator was found. */
+  readonly openTerminal: (container: DevContainer) => void;
   readonly selectEngine: (selection: EngineSelection) => void;
 }
 
@@ -46,6 +54,7 @@ export function useDiscovery(
   api: BoxwardenApi | undefined,
   notices: NoticesViewModel,
   editorId: EditorId,
+  terminalId: TerminalId | undefined,
 ): DiscoveryViewModel {
   const [snapshot, setSnapshot] = useState<DiscoverySnapshot | undefined>(undefined);
   const [busy, setBusy] = useState<readonly ContainerId[]>([]);
@@ -59,7 +68,7 @@ export function useDiscovery(
    */
   const inFlight = useRef(false);
 
-  const { showThrown, showError, showInfo, rememberFailedUri } = notices;
+  const { showThrown, showError, showInfo, rememberFallback } = notices;
 
   const refresh = useCallback(async () => {
     if (api === undefined || inFlight.current) return;
@@ -202,13 +211,42 @@ export function useDiscovery(
           showInfo(`Opening ${container.name}…`);
           return { ok: true };
         }
-        // Only the URI here — `withBusy` shows the message, and setting both
-        // would render the notice twice.
-        rememberFailedUri(result.uri);
+        // Only the fallback here — `withBusy` shows the message, and setting
+        // both would render the notice twice.
+        rememberFallback(
+          result.uri === undefined ? undefined : { label: 'Copy URI', value: result.uri },
+        );
         return { ok: false, message: result.message };
       });
     },
-    [api, editorId, showInfo, rememberFailedUri, withBusy],
+    [api, editorId, showInfo, rememberFallback, withBusy],
+  );
+
+  /**
+   * Opening a terminal is not a lifecycle action, but it shares the busy set
+   * with them — resolving an emulator and the container CLI spawns `which` a
+   * few times, and a second click while that is in flight would open a second
+   * window. Sharing the set is also what keeps the card's buttons agreeing with
+   * each other about whether anything is happening to it.
+   */
+  const openTerminal = useCallback(
+    (container: DevContainer) => {
+      if (api === undefined || terminalId === undefined) return;
+      void withBusy([container], async (): Promise<ActionResult> => {
+        const result = await api.openTerminal(container.id, terminalId);
+        if (result.ok) {
+          showInfo(`Opening a terminal in ${container.name}…`);
+          return { ok: true };
+        }
+        rememberFallback(
+          result.command === undefined
+            ? undefined
+            : { label: 'Copy command', value: result.command },
+        );
+        return { ok: false, message: result.message };
+      });
+    },
+    [api, terminalId, showInfo, rememberFallback, withBusy],
   );
 
   /**
@@ -271,6 +309,7 @@ export function useDiscovery(
     startAll,
     stopAll,
     open,
+    openTerminal,
     selectEngine,
   };
 }

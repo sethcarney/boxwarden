@@ -1,7 +1,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { BrowserWindow, app, dialog, session, shell, type WebContents } from 'electron';
-import { defaultProjectRoots, resolveProjectRoots } from '../models/index.js';
+import { defaultProjectRoots, resolveProjectRoots, withStartupCommand } from '../models/index.js';
 import { registerIpcHandlers } from './ipc.js';
 import type { DockerBackend } from './docker/backend.js';
 import { DockerodeBackend } from './docker/client.js';
@@ -292,6 +292,15 @@ void app.whenReady().then(async () => {
     isTrustedSender: (contents) => contents === mainWindow?.webContents,
     onSelectionChanged: (engineSelection) => {
       persist({ ...preferences, engineSelection });
+    },
+    terminals: {
+      startupCommands: () => preferences.startupCommands,
+      setStartupCommand: (key, command) => {
+        persist({
+          ...preferences,
+          startupCommands: withStartupCommand(preferences.startupCommands, key, command),
+        });
+      },
     },
     projects: {
       platform: process.platform,
