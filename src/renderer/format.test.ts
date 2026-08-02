@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { DevContainerProject, HostPath } from '../models/index.js';
 import { asProjectId } from '../models/index.js';
-import { devcontainerUpCommand } from './format.js';
+import { devcontainerUpCommand, statusDotClass } from './format.js';
 
 function projectAt(folder: HostPath): DevContainerProject {
   return {
@@ -136,5 +136,33 @@ describe('explainFailure', () => {
     expect(
       explainFailure({ code: 'api-too-old', server: '1.24', minimum: '1.41' }, target),
     ).toContain('1.41');
+  });
+});
+
+describe('statusDotClass', () => {
+  /**
+   * The pairs that carry a decision. `paused` is live and `created` is not,
+   * and those are the two a reader of the seven Docker states would get wrong
+   * — which is the whole reason the class comes from `displayStatus` rather
+   * than from `runtime.state`.
+   */
+  it('reads a paused container as running', () => {
+    expect(statusDotClass({ state: 'paused', startedAt: new Date(0), ports: [] })).toBe(
+      'dot dot-running',
+    );
+  });
+
+  it('reads a created container as stopped', () => {
+    expect(statusDotClass({ state: 'created' })).toBe('dot dot-stopped');
+  });
+
+  it('reads a non-zero exit as stopped, not as its own colour', () => {
+    expect(statusDotClass({ state: 'exited', exitCode: 137, finishedAt: new Date(0) })).toBe(
+      'dot dot-stopped',
+    );
+  });
+
+  it('gives restarting its own bucket', () => {
+    expect(statusDotClass({ state: 'restarting' })).toBe('dot dot-transitional');
   });
 });

@@ -320,6 +320,53 @@ fire-and-forget. Test files relax `no-unsafe-argument`,
 `no-unnecessary-condition`, and `no-unnecessary-type-assertion` because
 fixtures deliberately construct malformed inputs.
 
+### The layering rule is linted, not just documented
+
+`eslint-plugin-mvvm` enforces the three-part layering rule above. The layers
+are named explicitly in `settings.mvvm` rather than left to the plugin's
+generic conventions, so classification tracks this repo instead of guessing —
+the defaults also read `services/`, `api/`, `stores/` and `domain/` as Model,
+and a future `src/main/services/` would silently start being linted as a layer
+it is not.
+
+| Layer     | What matches                                                               |
+| --------- | -------------------------------------------------------------------------- |
+| Model     | `src/models/`                                                              |
+| ViewModel | `src/renderer/viewmodels/`, plus the pure `.ts` directly under `renderer/` |
+| View      | the `.tsx` under `src/renderer/`                                           |
+
+`presenters.ts`, `format.ts`, `grouping.ts` and `view.ts` are ViewModel, not
+unclassified: they are the derivations a View binds to, and naming them is what
+makes the direction _checked_ — an unclassified module is exempt from the rule,
+so leaving them out would let `presenters.ts` import a component with nothing
+to say so.
+
+`src/main` and `src/preload` are deliberately out of scope. They are the impure
+shells behind the IPC boundary, not an MVVM layer.
+
+Four things follow, and three of them are ordinary ESLint rules rather than the
+plugin, because the plugin cannot see them:
+
+- **`no-state-in-view` runs in `strict`, not the preset's `warn-business`.**
+  That mode only fires when `useState` sits beside a `fetch`/axios/TanStack
+  call, and this app reaches Docker over `window.boxwarden` — it would never
+  fire at all.
+- **A View may not import `renderer/api.ts`.** That is `no-api-in-view`
+  expressed in this app's terms: the plugin knows fetch and axios, and the
+  bridge here is `getApi()`.
+- **`src/models/` may not import from `renderer/`, `main/` or `preload/`** —
+  rule 1 above, as a lint error.
+- **A ViewModel may not import a component.** The plugin classifies a View by
+  file extension and resolves relative specifiers on disk; with
+  `verbatimModuleSyntax` on, every import here is written `./Foo.js` while the
+  file is `Foo.tsx`, which resolves to nothing, so `viewModelImportsView` and
+  `modelImportsView` never fire. Model and ViewModel are directory-matched and
+  survive it. The `no-restricted-imports` guard covers the gap by path.
+
+Type-only imports from Model into a View stay legal
+(`allowTypeImportsFromModel`). A View renders a `DevContainer`; banning the
+type would only mean duplicating it.
+
 ## Testing conventions
 
 - `vitest run` covers the pure layer (label parsing, inspect mapping, URI
