@@ -28,7 +28,7 @@ bun run test:watch
 bun run typecheck    # tsc over both TS projects (node config, then web config)
 bun run lint         # eslint, type-aware
 bun run format       # prettier --write
-bun run check        # typecheck + lint + format:check + test + check:devcontainer — run before committing
+bun run check        # typecheck + lint + format:check + test + check:devcontainer — run before committing, and what CI runs
 
 bun run package      # build + electron-builder --dir: unpacked app, no installer
 bun run dist         # build + installers for the host OS, into release/
@@ -78,6 +78,7 @@ MODEL       src/models/                pure types and functions, imports nothing
    | `discovery/resolve.ts` (fs, exec) | `editor/targets.ts`, `terminal/targets.ts` |
    | `projects/scan.ts` (fs walk)      | `models/project.ts`                        |
    | `preferences.ts` (fs)             | `models/{engine,project,terminal}.ts`      |
+   | `ssh-agent.ts` (env, fs, exec)    | `models/advice.ts`, `models/ssh-agent.ts`  |
 
 2. **A ViewModel renders nothing.** No module in `src/renderer/viewmodels/`
    imports `react-dom` or returns JSX. That is what lets the whole layer be
@@ -229,6 +230,31 @@ Two rules when adding to it:
   it renders and silently does nothing.
 
 Commands are shown, never run — they reboot machines and use `sudo`.
+
+### SSH agent forwarding
+
+Two halves, both fed by data the app already has.
+
+`src/models/ssh-agent.ts` folds `Config.Env` + mount destinations from the
+inspect response into `DevContainer.sshAgent`: `forwarded`,
+`declared-unmounted`, or `absent`. No extra Docker call, no new IPC verb.
+`declared-unmounted` — the variable is set, the socket is not there — is the
+one a user cannot diagnose alone; `absent` renders nothing at all.
+
+**The environment rule:** `Config.Env` carries tokens and passwords. Exactly
+one variable (`SSH_AUTH_SOCK`) is read out of it in `mapContainer` and the
+array is never bound to a name that outlives that call. It must never reach
+`DevContainer`, cross IPC, land in a snapshot, or hit a log line — the
+`does not carry any environment variable other than SSH_AUTH_SOCK` test in
+`mapping.test.ts` pins that over the serialised result. Don't relax it to
+"the variables we need"; the next need will be someone's registry password.
+
+`adviseSshAgent` in `advice.ts` handles the host side, from the probe in
+`src/main/ssh-agent.ts` (cached 30s — discovery polls every 5s and Windows
+spawns PowerShell). **Severity is never `error`**: plenty of dev containers
+have no business talking to a remote. When boxwarden runs in its own dev
+container, `process.env` describes the container, so the host branch is
+suppressed rather than reported about the wrong machine.
 
 ### WSL on Windows
 

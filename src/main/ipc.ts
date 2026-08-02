@@ -14,6 +14,7 @@ import type {
 import {
   adviseEnvironment,
   containerSettingsKey,
+  containersMissingAgentSocket,
   enginesFrom,
   hostPlatform,
   parseEngineSelection,
@@ -35,6 +36,7 @@ import { resolveEditor } from './editor/resolve.js';
 import { launchEditor } from './editor/launch.js';
 import { devContainerUri, folderUri } from './editor/uri.js';
 import { scanForProjects } from './projects/scan.js';
+import { probeSshAgent } from './ssh-agent.js';
 import {
   containerExecArgv,
   containerShellScript,
@@ -153,11 +155,11 @@ export function registerIpcHandlers(context: IpcContext): void {
    * an advisory or an engine list missing from one of them would show up as a
    * panel that flickers away on the exact scan where it mattered most.
    */
-  function snapshotOf(
+  async function snapshotOf(
     scannedAt: Date,
     environment: DockerEnvironment,
     containers: readonly DevContainer[],
-  ): DiscoverySnapshot {
+  ): Promise<DiscoverySnapshot> {
     const selection = context.backend.selection();
     return {
       scannedAt,
@@ -169,6 +171,17 @@ export function registerIpcHandlers(context: IpcContext): void {
         platform: hostPlatform(process.platform),
         environment,
         selection,
+        sshAgent: {
+          // Cached for 30s inside the probe — see the note there. Awaited
+          // rather than read from a background refresh so the advisory is
+          // right on the FIRST scan; an advisory that appears one poll late is
+          // an advisory the user has already scrolled past.
+          host: await probeSshAgent(),
+          // Names, not containers: the advisory only ever prints them, and a
+          // pure function that could reach into a DevContainer is a pure
+          // function that could start printing host paths.
+          unmountedIn: containersMissingAgentSocket(containers).map((container) => container.name),
+        },
       }),
     };
   }
@@ -176,25 +189,25 @@ export function registerIpcHandlers(context: IpcContext): void {
   ipcMain.handle(IPC.discover, async (event): Promise<DiscoverySnapshot> => {
     const scannedAt = new Date();
     if (!context.isTrustedSender(event.sender)) {
-      return snapshotOf(scannedAt, await context.backend.probe(), []);
+      return await snapshotOf(scannedAt, await context.backend.probe(), []);
     }
 
     const environment = await context.backend.probe();
     if (!environment.api.ok) {
       known.clear();
-      return snapshotOf(scannedAt, environment, []);
+      return await snapshotOf(scannedAt, environment, []);
     }
 
     try {
       const containers = await context.backend.listDevContainers();
       known.clear();
       for (const container of containers) known.set(container.id, container);
-      return snapshotOf(scannedAt, environment, containers);
+      return await snapshotOf(scannedAt, environment, containers);
     } catch (error) {
       // Reached the daemon, then failed to list. Surface it as an endpoint
       // failure rather than an empty list, which would read as "no dev
       // containers" and send the user looking in the wrong place.
-      return snapshotOf(
+      return await snapshotOf(
         scannedAt,
         {
           ...environment,

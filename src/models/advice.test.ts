@@ -7,9 +7,10 @@ import type {
   EngineId,
   EngineSelection,
   HostPlatform,
+  SshAgentHostProbe,
   WslStatus,
 } from './index.js';
-import { ALL_ENGINES, adviseEnvironment, hostPlatform } from './index.js';
+import { ALL_ENGINES, adviseEnvironment, adviseSshAgent, hostPlatform } from './index.js';
 
 /**
  * These tests are the reason the advice engine is pure.
@@ -314,5 +315,259 @@ describe('the docker CLI', () => {
       false,
     );
     expect(ids(advise('linux', broken))).not.toContain('docker-cli-missing');
+  });
+});
+
+/**
+ * SSH agent forwarding.
+ *
+ * Every branch here is a machine in a state nobody can arrange on demand — a
+ * Windows box with the ssh-agent service disabled, a Linux session whose agent
+ * died with the shell that made it — which is the same reason the rest of this
+ * file exists.
+ */
+describe('SSH agent advice', () => {
+  const HEALTHY_LINUX: SshAgentHostProbe = {
+    authSock: '/run/user/1000/keyring/ssh',
+    authSockExists: true,
+    inContainer: false,
+  };
+
+  function ssh(
+    platform: HostPlatform,
+    host: SshAgentHostProbe,
+    unmountedIn: readonly string[] = [],
+  ): Advice | undefined {
+    return adviseSshAgent(platform, { host, unmountedIn });
+  }
+
+  describe('when there is nothing to say', () => {
+    it('says nothing when the host agent is healthy and no container is broken', () => {
+      expect(ssh('linux', HEALTHY_LINUX)).toBeUndefined();
+      expect(
+        ssh('darwin', {
+          authSock: '/private/tmp/x/agent',
+          authSockExists: true,
+          inContainer: false,
+        }),
+      ).toBeUndefined();
+      expect(ssh('win32', { service: 'running', inContainer: false })).toBeUndefined();
+    });
+
+    /**
+     * The probe could not read the service. Inventing a problem out of that is
+     * how an advisory panel starts getting ignored.
+     */
+    it('says nothing when the Windows service state could not be read', () => {
+      expect(ssh('win32', { service: 'unknown', inContainer: false })).toBeUndefined();
+    });
+
+    /** No probe, no evidence, no advice. */
+    it('says nothing when the host was never probed', () => {
+      expect(adviseSshAgent('linux', undefined)).toBeUndefined();
+    });
+  });
+
+  describe('Windows', () => {
+    it('separates a disabled service from a merely stopped one', () => {
+      const disabled = ssh('win32', { service: 'disabled', inContainer: false });
+      const stopped = ssh('win32', { service: 'stopped', inContainer: false });
+      expect(disabled?.title).toMatch(/disabled/i);
+      expect(stopped?.title).toMatch(/not running/i);
+      expect(disabled?.title).not.toBe(stopped?.title);
+    });
+
+    it('gives the four commands that fix it', () => {
+      expect(ssh('win32', { service: 'disabled', inContainer: false })?.commands).toEqual([
+        'Get-Service ssh-agent',
+        'Set-Service ssh-agent -StartupType Automatic',
+        'Start-Service ssh-agent',
+        'ssh-add $env:USERPROFILE\\.ssh\\id_ed25519',
+      ]);
+    });
+
+    /**
+     * The wrinkle that makes this worth an advisory rather than a link. An
+     * agent started inside a distro is not the agent the Dev Containers
+     * extension forwards, so a user can do everything right in WSL and see no
+     * keys in the container.
+     */
+    it('warns that an agent inside WSL is a different agent', () => {
+      const body = ssh('win32', { service: 'stopped', inContainer: false })?.body ?? '';
+      expect(body).toMatch(/WSL/);
+      expect(body).toMatch(/different agent/i);
+    });
+
+    it('links the Microsoft key-management docs as well as the container ones', () => {
+      const urls = ssh('win32', { service: 'stopped', inContainer: false })?.links.map(
+        (link) => link.url,
+      );
+      expect(urls).toContain(
+        'https://learn.microsoft.com/windows-server/administration/openssh/openssh_keymanagement',
+      );
+      expect(urls).toContain(
+        'https://code.visualstudio.com/remote/advancedcontainers/sharing-git-credentials',
+      );
+    });
+  });
+
+  describe('macOS', () => {
+    it('gives the keychain commands', () => {
+      const advice = ssh('darwin', { inContainer: false });
+      expect(advice?.commands).toEqual([
+        'ssh-add --apple-use-keychain ~/.ssh/id_ed25519',
+        'ssh-add -l',
+      ]);
+    });
+
+    /** The part that survives a reboot, and a file edit rather than a command. */
+    it('mentions the ~/.ssh/config stanza in the body', () => {
+      const body = ssh('darwin', { inContainer: false })?.body ?? '';
+      expect(body).toContain('~/.ssh/config');
+      expect(body).toContain('AddKeysToAgent yes');
+      expect(body).toContain('UseKeychain yes');
+    });
+  });
+
+  describe('Linux', () => {
+    it('gives the shell agent and the systemd unit', () => {
+      expect(ssh('linux', { inContainer: false })?.commands).toEqual([
+        'eval "$(ssh-agent -s)"',
+        'ssh-add ~/.ssh/id_ed25519',
+        'systemctl --user enable --now ssh-agent.service',
+      ]);
+    });
+
+    /** Why the systemd unit is the one worth setting up. */
+    it('says the eval form dies with the shell', () => {
+      const body = ssh('linux', { inContainer: false })?.body ?? '';
+      expect(body).toMatch(/dies with the shell/i);
+      expect(body).toContain('systemd --user');
+    });
+
+    /** A stale socket left by a previous login is not the same as no agent. */
+    it('separates a stale socket from no agent at all', () => {
+      const stale = ssh('linux', {
+        authSock: '/tmp/ssh-old/agent.42',
+        authSockExists: false,
+        inContainer: false,
+      });
+      const none = ssh('linux', { inContainer: false });
+      expect(stale?.title).not.toBe(none?.title);
+      expect(stale?.title).toMatch(/not there/i);
+    });
+  });
+
+  describe('a container that declares a socket it does not have', () => {
+    it('warns, and names the container', () => {
+      const advice = ssh('linux', HEALTHY_LINUX, ['platform_devcontainer-app-1']);
+      expect(advice?.severity).toBe('warning');
+      expect(advice?.title).toContain('platform_devcontainer-app-1');
+      expect(advice?.id).toBe('ssh-agent-declared-unmounted');
+    });
+
+    it('counts them rather than listing them in the title when there are several', () => {
+      const advice = ssh('linux', HEALTHY_LINUX, ['app', 'worker']);
+      expect(advice?.title).toContain('2 containers');
+      // Both are still named in the body — the count alone does not say which.
+      expect(advice?.body).toContain('app');
+      expect(advice?.body).toContain('worker');
+    });
+
+    /** The symptom, named. Nobody connects "socket not mounted" to this on their own. */
+    it('says what will actually go wrong', () => {
+      const body = ssh('linux', HEALTHY_LINUX, ['app'])?.body ?? '';
+      expect(body).toContain('Could not open a connection to your authentication agent');
+    });
+
+    /** It outranks the host advisory: the host agent being fine does not fix it. */
+    it('warns even when the host agent is perfectly healthy', () => {
+      expect(ssh('linux', HEALTHY_LINUX, ['app'])?.severity).toBe('warning');
+    });
+  });
+
+  describe('when boxwarden is itself inside a container', () => {
+    /**
+     * docker-outside-of-docker: boxwarden sees the host's containers while
+     * process.env belongs to the container it is in. Advising from that would
+     * be reporting confidently on the wrong machine.
+     */
+    it('suppresses the host advisory entirely', () => {
+      expect(ssh('linux', { inContainer: true })).toBeUndefined();
+      expect(ssh('win32', { service: 'stopped', inContainer: true })).toBeUndefined();
+    });
+
+    /** Half A reads the inspected container, so it is unaffected — but say so. */
+    it('still warns about a broken container, worded so it cannot mislead', () => {
+      const advice = ssh('linux', { inContainer: true }, ['app']);
+      expect(advice?.severity).toBe('warning');
+      expect(advice?.body).toMatch(/boxwarden is itself running inside a container/i);
+      expect(advice?.body).toMatch(/on the host/i);
+    });
+  });
+
+  /**
+   * THE RULE. Plenty of dev containers have no business talking to a remote,
+   * and an advisory that nags every developer who does not need SSH teaches
+   * people to skip the panel that will one day matter.
+   */
+  it('never emits an error, on any platform, in any state', () => {
+    const platforms: readonly HostPlatform[] = ['win32', 'darwin', 'linux', 'other'];
+    const hosts: readonly SshAgentHostProbe[] = [
+      { inContainer: false },
+      { inContainer: true },
+      { service: 'stopped', inContainer: false },
+      { service: 'disabled', inContainer: false },
+      { service: 'running', inContainer: false },
+      { service: 'unknown', inContainer: false },
+      { authSock: '/tmp/agent', authSockExists: false, inContainer: false },
+      { authSock: '/tmp/agent', authSockExists: true, inContainer: false },
+    ];
+
+    for (const platform of platforms) {
+      for (const host of hosts) {
+        for (const unmountedIn of [[], ['app'], ['app', 'worker']]) {
+          const advice = adviseSshAgent(platform, { host, unmountedIn });
+          expect(advice?.severity).not.toBe('error');
+        }
+      }
+    }
+  });
+
+  describe('inside the full advisory list', () => {
+    it('rides along on a healthy machine without displacing anything', () => {
+      const healthy = environment([connected('/var/run/docker.sock')]);
+      const advice = adviseEnvironment({
+        platform: 'linux',
+        environment: healthy,
+        selection: ALL_ENGINES,
+        sshAgent: { host: { inContainer: false }, unmountedIn: [] },
+      });
+      expect(ids(advice)).toEqual(['ssh-agent-host']);
+      expect(advice[0]?.severity).toBe('info');
+    });
+
+    /** Below the engine advisories: it is never why the app looks broken. */
+    it('sorts below an engine problem', () => {
+      const broken = environment(
+        [failed('/var/run/docker.sock', { code: 'permission-denied', detail: 'EACCES' })],
+        undefined,
+      );
+      const advice = adviseEnvironment({
+        platform: 'linux',
+        environment: broken,
+        selection: ALL_ENGINES,
+        sshAgent: { host: { inContainer: false }, unmountedIn: [] },
+      });
+      expect(ids(advice).indexOf('ssh-agent-host')).toBeGreaterThan(
+        ids(advice).indexOf('socket-permission-denied'),
+      );
+    });
+
+    /** Callers that do not probe must not produce advice about a machine nobody looked at. */
+    it('is absent when the caller passed no probe', () => {
+      const healthy = environment([connected('/var/run/docker.sock')]);
+      expect(ids(advise('linux', healthy))).toEqual([]);
+    });
   });
 });

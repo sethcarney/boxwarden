@@ -6,6 +6,7 @@ import {
   claudeStopWarning,
   openBlockedReason,
   portLabel,
+  sshAgentBadge,
   terminalBlockedReason,
   visiblePorts,
 } from '../presenters.js';
@@ -80,6 +81,7 @@ export function ContainerCard({
   const ports = visiblePorts(container);
   const blocked = openBlockedReason(container, editorAvailable, editorName);
   const terminalBlocked = terminalBlockedReason(container, terminalAvailable, terminalName);
+  const agent = sshAgentBadge(container.sshAgent);
   const badge = claudeBadge(claude);
   const stopWarning = claudeStopWarning([claude]);
 
@@ -89,6 +91,15 @@ export function ContainerCard({
         <div className="card-title">
           <StatusDot runtime={container.runtime} />
           <h2>{cardTitle(container)}</h2>
+          {/* Nothing at all for `absent` — see the note on sshAgentBadge. */}
+          {agent !== undefined && (
+            <span
+              className={`agent-badge${agent.warning ? ' agent-badge-warning' : ''}`}
+              title={agent.title}
+            >
+              {dense ? agent.short : agent.text}
+            </span>
+          )}
         </div>
         <div className="card-head-right">
           {/* Shortened under `dense` to a bare count, with the full text kept

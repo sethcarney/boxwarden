@@ -52,10 +52,58 @@ export interface Advice {
   readonly links: readonly AdviceLink[];
 }
 
+/**
+ * The OpenSSH `ssh-agent` service on Windows, which ships DISABLED.
+ *
+ * Three states because they are three different problems with three different
+ * fixes: a stopped service needs starting, a disabled one needs its start type
+ * changed first or it will not survive a reboot, and `unknown` means the probe
+ * could not tell — which must produce no advisory at all rather than a guess.
+ */
+export type WindowsAgentService = 'running' | 'stopped' | 'disabled' | 'unknown';
+
+/** What the main process saw when it looked for an agent on THIS machine. */
+export interface SshAgentHostProbe {
+  /** SSH_AUTH_SOCK in boxwarden's own environment. Absent means unset. macOS and Linux. */
+  readonly authSock?: string;
+  /** Whether that path exists. Absent when there was no path to check. */
+  readonly authSockExists?: boolean;
+  /** Windows only. */
+  readonly service?: WindowsAgentService;
+  /**
+   * boxwarden is itself running inside a container.
+   *
+   * Everything above then describes the CONTAINER's environment, not the
+   * developer's machine — `bun run devcontainer:open` uses
+   * docker-outside-of-docker, so boxwarden sees the host's containers while
+   * `process.env` and the filesystem it can stat belong to the container it is
+   * in. Advice derived from those fields would be reporting on the wrong
+   * machine, so it is suppressed.
+   */
+  readonly inContainer: boolean;
+}
+
+export interface SshAgentAdviceInput {
+  readonly host: SshAgentHostProbe;
+  /**
+   * Names of containers in this scan whose SSH_AUTH_SOCK points at nothing —
+   * `containersMissingAgentSocket` over the container list.
+   */
+  readonly unmountedIn: readonly string[];
+}
+
 export interface AdviceInput {
   readonly platform: HostPlatform;
   readonly environment: DockerEnvironment;
   readonly selection: EngineSelection;
+  /**
+   * Absent means the host was not probed, and the SSH advisory is then
+   * suppressed entirely. That is the honest reading — there is no evidence to
+   * advise from — and it keeps callers that do not probe (tests, and anything
+   * reasoning about an environment alone) from emitting advice about a machine
+   * nobody looked at.
+   */
+  readonly sshAgent?: SshAgentAdviceInput;
 }
 
 const DOCS = {
@@ -78,6 +126,14 @@ const DOCS = {
   rancher: { label: 'Rancher Desktop', url: 'https://rancherdesktop.io' },
   colima: { label: 'Colima', url: 'https://github.com/abiosoft/colima' },
   devcontainers: { label: 'What a dev container is', url: 'https://containers.dev' },
+  sshInContainers: {
+    label: 'Sharing git credentials with your container',
+    url: 'https://code.visualstudio.com/remote/advancedcontainers/sharing-git-credentials',
+  },
+  windowsSshKeys: {
+    label: 'OpenSSH key management (Microsoft)',
+    url: 'https://learn.microsoft.com/windows-server/administration/openssh/openssh_keymanagement',
+  },
 } as const satisfies Record<string, AdviceLink>;
 
 /** Every failure code seen across the attempts, for the "why did nothing work" branches. */
@@ -270,6 +326,164 @@ function failureAdvice(input: AdviceInput): readonly Advice[] {
 }
 
 /**
+ * How to have a working agent, per platform.
+ *
+ * The commands are the canonical recipe for that OS, not a diagnosis — they
+ * are what a developer would be told to type by whoever they eventually asked.
+ * The `note` is the part that recipe leaves out, and it is why each of these
+ * is worth writing down rather than linking to: on Windows the agent people
+ * start is usually the wrong one, on macOS the keys silently vanish at the
+ * next reboot, and on Linux the agent dies with the shell that made it.
+ */
+const AGENT_SETUP: Readonly<
+  Record<HostPlatform, { readonly commands: readonly string[]; readonly note: string }>
+> = {
+  win32: {
+    commands: [
+      'Get-Service ssh-agent',
+      'Set-Service ssh-agent -StartupType Automatic',
+      'Start-Service ssh-agent',
+      'ssh-add $env:USERPROFILE\\.ssh\\id_ed25519',
+    ],
+    note: 'Run these in Windows PowerShell, not inside WSL. An ssh-agent started in a distro is a different agent from the Windows service, and the Dev Containers extension forwards the Windows one — keys added inside a distro never appear in the container, however correct the setup looks from in there.',
+  },
+  darwin: {
+    commands: ['ssh-add --apple-use-keychain ~/.ssh/id_ed25519', 'ssh-add -l'],
+    note: 'macOS always has an agent running under launchd, so the usual symptom is an agent with no keys in it rather than no agent. --apple-use-keychain is what makes that survive a reboot; adding "AddKeysToAgent yes" and "UseKeychain yes" under your Host entry in ~/.ssh/config is the same fix as a file rather than a command, and is the one that keeps working after the next OS update.',
+  },
+  linux: {
+    commands: [
+      'eval "$(ssh-agent -s)"',
+      'ssh-add ~/.ssh/id_ed25519',
+      'systemctl --user enable --now ssh-agent.service',
+    ],
+    note: 'The first form dies with the shell that started it and is invisible to every other one, which is why an agent that "was working a minute ago" is gone. The systemd --user unit (or your desktop keyring, if you have one) is the version worth setting up — it gives every session the same agent.',
+  },
+  other: {
+    commands: ['ssh-add -l'],
+    note: 'boxwarden does not recognise this platform well enough to say how agents are started on it. "ssh-add -l" answers the only question that matters: whether an agent is reachable and what it is holding.',
+  },
+};
+
+/** What is wrong with the agent on this machine, or undefined when nothing is. */
+type HostAgentProblem = 'service-disabled' | 'service-stopped' | 'no-agent' | 'socket-missing';
+
+function hostAgentProblem(
+  platform: HostPlatform,
+  host: SshAgentHostProbe,
+): HostAgentProblem | undefined {
+  // Everything the probe read describes the container boxwarden is in, not the
+  // machine the containers actually run on. There is nothing to conclude.
+  if (host.inContainer) return undefined;
+
+  switch (platform) {
+    case 'win32':
+      // `unknown` deliberately produces nothing: the probe could not read the
+      // service, and inventing a problem from that is how an advisory panel
+      // starts getting ignored.
+      if (host.service === 'disabled') return 'service-disabled';
+      if (host.service === 'stopped') return 'service-stopped';
+      return undefined;
+    case 'darwin':
+    case 'linux':
+      if (host.authSock === undefined) return 'no-agent';
+      return host.authSockExists === false ? 'socket-missing' : undefined;
+    case 'other':
+      return undefined;
+  }
+}
+
+function agentTitle(problem: HostAgentProblem | undefined, unmountedIn: readonly string[]): string {
+  if (unmountedIn.length > 0) {
+    return unmountedIn.length === 1
+      ? `SSH agent forwarding is broken in ${unmountedIn[0] ?? ''}`
+      : `SSH agent forwarding is broken in ${String(unmountedIn.length)} containers`;
+  }
+  switch (problem) {
+    case 'service-disabled':
+      return 'The Windows ssh-agent service is disabled';
+    case 'service-stopped':
+      return 'The Windows ssh-agent service is not running';
+    case 'socket-missing':
+      return 'SSH_AUTH_SOCK points at a socket that is not there';
+    case 'no-agent':
+    case undefined:
+      return 'No SSH agent is running on this machine';
+  }
+}
+
+function agentSituation(
+  problem: HostAgentProblem | undefined,
+  unmountedIn: readonly string[],
+): string {
+  if (unmountedIn.length > 0) {
+    const which =
+      unmountedIn.length === 1
+        ? `${unmountedIn[0] ?? ''} sets`
+        : `${unmountedIn.join(', ')} each set`;
+    return `${which} SSH_AUTH_SOCK, and nothing is mounted at the path it names. The socket does not exist, so anything inside using SSH fails with "Could not open a connection to your authentication agent" — and because the variable is set, every check a developer knows how to make agrees the container is configured. Rebuild it with the Dev Containers extension, which forwards the agent for you, or add the socket to the volumes in your compose file alongside the variable.`;
+  }
+  switch (problem) {
+    case 'service-disabled':
+      return 'Windows ships the OpenSSH ssh-agent service disabled, so nothing is holding your keys and nothing will after a reboot either. Dev containers get their git credentials by having that agent forwarded into them, so this stops any container on this machine from reaching a private repo.';
+    case 'service-stopped':
+      return 'The OpenSSH ssh-agent service is installed and stopped. Dev containers get their git credentials by having it forwarded into them, so nothing on this machine can reach a private repo until it is running.';
+    case 'socket-missing':
+      return 'SSH_AUTH_SOCK is set in boxwarden’s environment but there is nothing at that path, which is what a stale agent socket left over from a previous login session looks like. Anything reading it — including anything you forward into a container — is pointing at a socket that has gone.';
+    case 'no-agent':
+    case undefined:
+      return 'No SSH agent is reachable from here, so there are no keys to forward into a dev container. Containers that need to reach a private repo will fail at the first fetch.';
+  }
+}
+
+/**
+ * SSH agent forwarding: what is wrong here, and what to type.
+ *
+ * SEVERITY IS NEVER `error`, and that is a rule rather than a judgement call.
+ * Plenty of dev containers have no business talking to a remote, and an
+ * advisory that nags every developer who does not need SSH is worse than no
+ * advisory — it teaches people to skip the panel that will one day be telling
+ * them something urgent.
+ *
+ * `warning` is reserved for a container in front of the user that declares a
+ * socket it does not have, because that one is invisible from the inside.
+ * Everything else is `info`.
+ */
+export function adviseSshAgent(
+  platform: HostPlatform,
+  input: SshAgentAdviceInput | undefined,
+): Advice | undefined {
+  if (input === undefined) return undefined;
+
+  const { host, unmountedIn } = input;
+  const problem = hostAgentProblem(platform, host);
+  // Nothing broken in a container, and nothing wrong with the host agent —
+  // which includes the case where we could not tell. Say nothing.
+  if (unmountedIn.length === 0 && problem === undefined) return undefined;
+
+  const setup = AGENT_SETUP[platform];
+  const body = [
+    agentSituation(problem, unmountedIn),
+    setup.note,
+    host.inContainer
+      ? 'boxwarden is itself running inside a container, so it cannot see whether an agent is running on your machine — it only checked the container it is in. Run the commands below on the host, in the same session you start your editor from.'
+      : undefined,
+  ]
+    .filter((part): part is string => part !== undefined)
+    .join(' ');
+
+  return {
+    id: unmountedIn.length > 0 ? 'ssh-agent-declared-unmounted' : 'ssh-agent-host',
+    severity: unmountedIn.length > 0 ? 'warning' : 'info',
+    title: agentTitle(problem, unmountedIn),
+    body,
+    commands: setup.commands,
+    links:
+      platform === 'win32' ? [DOCS.sshInContainers, DOCS.windowsSshKeys] : [DOCS.sshInContainers],
+  };
+}
+
+/**
  * Everything worth telling the user about this environment, most urgent first.
  *
  * Order is severity then specificity: an error about WSL comes before the
@@ -313,6 +527,12 @@ export function adviseEnvironment(input: AdviceInput): readonly Advice[] {
 
   const socat = socatAdvice(environment);
   if (socat !== undefined) advice.push(socat);
+
+  // Below the engine-level advisories on purpose. Agent forwarding only
+  // matters once boxwarden can see containers at all, and it is never the
+  // reason the app looks broken.
+  const ssh = adviseSshAgent(platform, input.sshAgent);
+  if (ssh !== undefined) advice.push(ssh);
 
   // Lowest priority, and only once the important things are working: the CLI
   // gates features that do not exist yet, so it is a note and never a warning.

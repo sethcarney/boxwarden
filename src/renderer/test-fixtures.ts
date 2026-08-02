@@ -33,6 +33,10 @@ export function devContainer(overrides: Partial<DevContainer> = {}): DevContaine
     labels: {
       localFolderRaw: localFolder.kind === 'unresolved' ? localFolder.raw : '/home/dev/code/webapp',
     },
+    // The common case, and the one that renders nothing. A fixture defaulting
+    // to `forwarded` would put a badge on every card in every component test,
+    // which is the opposite of what a default should do.
+    sshAgent: { kind: 'absent' },
     runtime: RUNNING,
     ...overrides,
   };

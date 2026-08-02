@@ -31,4 +31,7 @@ export { useNotices } from './useNotices.js';
 export type { ThemeViewModel } from './useTheme.js';
 export { useTheme } from './useTheme.js';
 
+export type { StartupCommandDraftViewModel } from './useStartupCommandDraft.js';
+export { useStartupCommandDraft } from './useStartupCommandDraft.js';
+
 export { CLOCK_INTERVAL_MS, useClock } from './useClock.js';

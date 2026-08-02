@@ -21,6 +21,7 @@ import type {
   EndpointProbe,
   EngineSelection,
   PortBinding,
+  SshAgentState,
 } from '../models/index.js';
 import { projectName } from '../models/index.js';
 import type { DiscoverySnapshot } from '../shared/ipc.js';
@@ -204,6 +205,50 @@ export function visiblePorts(container: DevContainer): readonly PortBinding[] {
   return container.runtime.state === 'running' || container.runtime.state === 'paused'
     ? container.runtime.ports
     : [];
+}
+
+export interface SshAgentBadge {
+  readonly text: string;
+  /** The dense-layout spelling. The full text stays reachable in `title`. */
+  readonly short: string;
+  readonly title: string;
+  readonly warning: boolean;
+}
+
+/**
+ * The SSH agent indicator, or undefined when there is nothing to say.
+ *
+ * `absent` renders NOTHING, and that is the important half of this function.
+ * Plenty of dev containers have no business talking to a remote, and a badge
+ * on every card announcing a feature the user did not ask for is how an
+ * indicator becomes wallpaper — by the time it means something, nobody reads
+ * it. Only the two states that carry information get a badge.
+ *
+ * `declared-unmounted` is the warning: the variable is set, so the container
+ * looks configured to anything that checks, and the socket behind it is not
+ * there. The title says what will actually go wrong, because "SSH agent not
+ * mounted" is a symptom nobody connects to the `git fetch` that fails ten
+ * minutes later.
+ */
+export function sshAgentBadge(state: SshAgentState): SshAgentBadge | undefined {
+  switch (state.kind) {
+    case 'absent':
+      return undefined;
+    case 'forwarded':
+      return {
+        text: 'SSH agent',
+        short: 'SSH',
+        title: `Your SSH agent is forwarded into this container at ${state.socket}, so git over SSH will use the keys loaded on your machine.`,
+        warning: false,
+      };
+    case 'declared-unmounted':
+      return {
+        text: 'SSH agent missing',
+        short: 'SSH!',
+        title: `This container sets SSH_AUTH_SOCK=${state.socket} but nothing is mounted there, so the socket does not exist. Anything using SSH — git fetch, git push against a private repo — will fail with "Could not open a connection to your authentication agent".`,
+        warning: true,
+      };
+  }
 }
 
 /** One port, as the chip renders it, plus the tooltip that explains it. */

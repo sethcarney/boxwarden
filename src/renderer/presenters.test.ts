@@ -11,6 +11,7 @@ import {
   openBlockedReason,
   portLabel,
   scanRootHint,
+  sshAgentBadge,
   summariseProjects,
   terminalBlockedReason,
   visiblePorts,
@@ -194,6 +195,38 @@ describe('ports', () => {
     expect(portLabel({ containerPort: 5432, protocol: 'tcp', hostPort: 15432 }).text).toBe(
       '15432 → 5432',
     );
+  });
+});
+
+describe('sshAgentBadge', () => {
+  /**
+   * The important half. Most dev containers never touch a remote, and a badge
+   * on every card announcing a feature nobody asked for is how an indicator
+   * becomes wallpaper.
+   */
+  it('renders nothing when no agent is declared', () => {
+    expect(sshAgentBadge({ kind: 'absent' })).toBeUndefined();
+  });
+
+  it('confirms a forwarded agent quietly, naming the socket in the tooltip', () => {
+    const badge = sshAgentBadge({ kind: 'forwarded', socket: '/run/host-services/ssh-auth.sock' });
+    expect(badge?.warning).toBe(false);
+    expect(badge?.text).toBe('SSH agent');
+    expect(badge?.title).toContain('/run/host-services/ssh-auth.sock');
+  });
+
+  /** The tooltip has to name the failure, not the symptom — see the presenter. */
+  it('warns for declared-unmounted and says what will actually break', () => {
+    const badge = sshAgentBadge({ kind: 'declared-unmounted', socket: '/ssh-agent' });
+    expect(badge?.warning).toBe(true);
+    expect(badge?.title).toContain('SSH_AUTH_SOCK=/ssh-agent');
+    expect(badge?.title).toMatch(/git (fetch|push)/);
+  });
+
+  it('has a short form for the rows layout, distinguishable from the healthy one', () => {
+    const ok = sshAgentBadge({ kind: 'forwarded', socket: '/ssh-agent' });
+    const broken = sshAgentBadge({ kind: 'declared-unmounted', socket: '/ssh-agent' });
+    expect(ok?.short).not.toBe(broken?.short);
   });
 });
 

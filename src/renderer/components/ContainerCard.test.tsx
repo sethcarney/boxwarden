@@ -20,7 +20,7 @@ function renderCard(
     onOpenTerminal: vi.fn(),
     onStartupCommandChange: vi.fn(),
   };
-  render(
+  const { container: dom } = render(
     <ContainerCard
       container={container}
       editorId="vscode"
@@ -35,7 +35,10 @@ function renderCard(
       {...props}
     />,
   );
-  return handlers;
+  // `dom` alongside the handlers so a test asserting on a class does not have
+  // to restate the whole prop list — which is how four of them ended up
+  // needing an edit when the terminal props arrived.
+  return { ...handlers, dom };
 }
 
 describe('ContainerCard', () => {
@@ -278,6 +281,49 @@ describe('ContainerCard', () => {
     expect(screen.getByRole('heading', { name: 'platform_devcontainer-db-1' })).toBeDefined();
     expect(screen.queryByRole('heading', { name: 'platform' })).toBeNull();
   });
+
+  describe('the SSH agent indicator', () => {
+    it('renders nothing at all for a container that declares no agent', () => {
+      const { dom } = renderCard(devContainer({ sshAgent: { kind: 'absent' } }));
+      expect(dom.querySelector('.agent-badge')).toBeNull();
+    });
+
+    it('confirms a forwarded agent without marking it a problem', () => {
+      const { dom } = renderCard(
+        devContainer({
+          sshAgent: { kind: 'forwarded', socket: '/run/host-services/ssh-auth.sock' },
+        }),
+      );
+      expect(dom.querySelector('.agent-badge')).not.toBeNull();
+      expect(dom.querySelector('.agent-badge-warning')).toBeNull();
+    });
+
+    /**
+     * The case the feature exists for. It has to look different from the
+     * healthy badge, and the tooltip has to name the failure — the container
+     * itself gives the user no other clue.
+     */
+    it('styles declared-unmounted as a warning and explains it in the title', () => {
+      const { dom } = renderCard(
+        devContainer({ sshAgent: { kind: 'declared-unmounted', socket: '/ssh-agent' } }),
+      );
+      const badge = dom.querySelector('.agent-badge-warning');
+      expect(badge).not.toBeNull();
+      expect(badge?.getAttribute('title')).toContain('SSH_AUTH_SOCK=/ssh-agent');
+    });
+
+    /** Dense shortens the label and keeps the full text reachable. */
+    it('shortens under dense, keeping the explanation in the title', () => {
+      const { dom } = renderCard(
+        devContainer({ sshAgent: { kind: 'declared-unmounted', socket: '/ssh-agent' } }),
+        { dense: true },
+      );
+      const badge = dom.querySelector('.agent-badge');
+      expect(badge?.textContent).toBe('SSH!');
+      expect(badge?.getAttribute('title')).toContain('nothing is mounted there');
+    });
+  });
+
   /**
    * The badge is the whole point of the Claude Code presence feature, and its
    * ABSENCE carries meaning too: no badge is how a card says stopping is safe.

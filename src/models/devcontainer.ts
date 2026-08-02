@@ -1,4 +1,5 @@
 import type { ContainerPath, HostPath, MaybeHostPath } from './paths.js';
+import type { SshAgentState } from './ssh-agent.js';
 
 export type ContainerId = string & { readonly __brand: 'ContainerId' };
 
@@ -108,6 +109,17 @@ export interface DevContainer {
   readonly workspaceFolder?: ContainerPath;
 
   readonly configFile?: HostPath;
+
+  /**
+   * Whether an SSH agent socket is usable in here.
+   *
+   * Required, not optional, and with an `absent` arm rather than `undefined`:
+   * it is derived from the same inspect response as everything else on this
+   * type, so "we did not look" is not a state that can occur. Under
+   * `exactOptionalPropertyTypes` an optional field would invite exactly that
+   * ambiguity at every call site.
+   */
+  readonly sshAgent: SshAgentState;
 
   readonly labels: DevContainerLabels;
   readonly runtime: DevContainerRuntime;

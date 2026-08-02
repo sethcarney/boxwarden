@@ -118,6 +118,27 @@ Bun blocks dependency lifecycle scripts by default, and Electron's postinstall
 is what fetches its binary. Without it the install "succeeds" and the app then
 refuses to launch.
 
+## CI
+
+`.github/workflows/check.yml` runs `bun run check` and `bun run build` on every
+pull request, and on every push to `main`.
+
+Both triggers matter. The pull request run is what stops a mistake reaching
+`main`; the `main` run catches the case a per-PR check cannot see, where two
+branches are each green on their own and red once both have landed. That is not
+hypothetical here — the `mvvm/no-state-in-view` rule and a View holding three
+`useState` calls arrived in separate pull requests, and `main` failed its own
+lint for two merges afterwards.
+
+CI runs the same `check` script a developer runs, rather than listing the steps
+again in YAML, so the two cannot drift.
+
+It installs with `ELECTRON_SKIP_BINARY_DOWNLOAD=1`, which saves a ~100MB
+download per run. Nothing in the job launches Electron: typecheck, lint and the
+tests never touch the binary, and `electron-vite build` only bundles. The binary
+is what `bun run dev`, `start` and `dist` need — see the note above about
+`trustedDependencies`, which is the same fact from the other side.
+
 ## Working without Docker
 
 ```bash
@@ -129,14 +150,21 @@ containers through the **real** `mapContainer`. The fixtures deliberately cover
 the cases least likely to exist on your own machine and most likely to render
 badly:
 
-| Fixture          | What it exercises                                                      |
-| ---------------- | ---------------------------------------------------------------------- |
-| `webapp`         | Running, healthy, one published and one unpublished port               |
-| `api-service`    | Cleanly exited                                                         |
-| `platform`       | Compose-managed — the `compose` tag                                    |
-| `reporting-tool` | Windows host path, no `WorkingDir` → `/workspaces/<basename>` fallback |
-| `legacy-thing`   | Unparseable label → degraded row, exit code 137                        |
-| `infra-scripts`  | Paused, WSL UNC path                                                   |
+| Fixture          | What it exercises                                                               |
+| ---------------- | ------------------------------------------------------------------------------- |
+| `webapp`         | Running, healthy, one published and one unpublished port; a forwarded SSH agent |
+| `api-service`    | Cleanly exited                                                                  |
+| `platform`       | Compose-managed — the `compose` tag; SSH agent declared and **not** mounted     |
+| `reporting-tool` | Windows host path, no `WorkingDir` → `/workspaces/<basename>` fallback          |
+| `legacy-thing`   | Unparseable label → degraded row, exit code 137                                 |
+| `infra-scripts`  | Paused, WSL UNC path                                                            |
+
+`webapp`'s fixture carries decoy environment variables — a `DATABASE_URL`, a
+`NODE_ENV` — beside its `SSH_AUTH_SOCK`. They are as much the point of that
+fixture as the socket is: that is the shape of a real environment block, and
+only `SSH_AUTH_SOCK` may survive `mapContainer`. `platform` is the silent
+failure, left inside the compose group because that is where the mistake is
+easiest to make and hardest to spot.
 
 The fake also serves fixture `top` responses through the **real**
 `parseClaudeProcesses`, so the Claude Code badge is exercised without an agent
