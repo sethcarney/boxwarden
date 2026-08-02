@@ -129,14 +129,21 @@ containers through the **real** `mapContainer`. The fixtures deliberately cover
 the cases least likely to exist on your own machine and most likely to render
 badly:
 
-| Fixture          | What it exercises                                                      |
-| ---------------- | ---------------------------------------------------------------------- |
-| `webapp`         | Running, healthy, one published and one unpublished port               |
-| `api-service`    | Cleanly exited                                                         |
-| `platform`       | Compose-managed — the `compose` tag                                    |
-| `reporting-tool` | Windows host path, no `WorkingDir` → `/workspaces/<basename>` fallback |
-| `legacy-thing`   | Unparseable label → degraded row, exit code 137                        |
-| `infra-scripts`  | Paused, WSL UNC path                                                   |
+| Fixture          | What it exercises                                                               |
+| ---------------- | ------------------------------------------------------------------------------- |
+| `webapp`         | Running, healthy, one published and one unpublished port; a forwarded SSH agent |
+| `api-service`    | Cleanly exited                                                                  |
+| `platform`       | Compose-managed — the `compose` tag; SSH agent declared and **not** mounted     |
+| `reporting-tool` | Windows host path, no `WorkingDir` → `/workspaces/<basename>` fallback          |
+| `legacy-thing`   | Unparseable label → degraded row, exit code 137                                 |
+| `infra-scripts`  | Paused, WSL UNC path                                                            |
+
+`webapp`'s fixture carries decoy environment variables — a `DATABASE_URL`, a
+`NODE_ENV` — beside its `SSH_AUTH_SOCK`. They are as much the point of that
+fixture as the socket is: that is the shape of a real environment block, and
+only `SSH_AUTH_SOCK` may survive `mapContainer`. `platform` is the silent
+failure, left inside the compose group because that is where the mistake is
+easiest to make and hardest to spot.
 
 The fake also reports **three** reachable engines (a Docker socket, a podman
 machine pipe, and a podman inside a WSL distro) and a WSL status with one distro

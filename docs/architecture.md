@@ -220,6 +220,62 @@ The commands are shown, never run. They reboot machines, install system
 components and use `sudo`; an app that fires those from a button press is not
 one to trust with a Docker socket.
 
+## SSH agent forwarding
+
+The difference between `git push` working and a container that looks completely
+healthy and cannot reach a private repo. It fails silently, and it fails
+differently on every OS, so it is answered in two independent halves.
+
+**Per container** — `models/ssh-agent.ts` folds `Config.Env` and the mount
+destinations from the inspect response discovery already reads into an
+`SshAgentState`, carried on `DevContainer.sshAgent`. No extra Docker call, no
+new IPC verb. Three arms, and the middle one is the point:
+
+| Arm                  | Meaning                                                        |
+| -------------------- | -------------------------------------------------------------- |
+| `forwarded`          | `SSH_AUTH_SOCK` is set and something is mounted there          |
+| `declared-unmounted` | The variable is set and the socket it names does not exist     |
+| `absent`             | No agent declared — ordinary, usually correct, renders nothing |
+
+`declared-unmounted` is the state a user cannot diagnose alone: `env | grep
+SSH` agrees with every tutorial they will find, and the socket behind it is not
+there. `absent` renders no badge at all, because an indicator on every card is
+one nobody reads.
+
+Mount matching accepts an ancestor **directory** as well as an exact
+destination, so a setup sharing the agent socket's parent still reads as
+`forwarded`. The bias is one-directional on purpose: erring towards `forwarded`
+costs a warning we did not raise, erring the other way costs the credibility of
+every warning we do.
+
+**The environment rule, non-negotiable.** A container's `Config.Env` holds
+registry credentials, database passwords and API tokens. Exactly one variable
+is read out of it, in `mapContainer`, and the array is never bound to a name
+that outlives that call — it must never reach `DevContainer`, cross IPC, land
+in a snapshot, or appear in a log line. `mapContainer does not carry any
+environment variable other than SSH_AUTH_SOCK` in `mapping.test.ts` asserts it
+over the serialised result, so a future field that copies the env fails there
+rather than shipping.
+
+**Per host** — `adviseSshAgent` in `models/advice.ts`, from a probe in
+`main/ssh-agent.ts` (`SSH_AUTH_SOCK` and whether that path exists on
+macOS/Linux; `Get-Service ssh-agent` on Windows, where the service ships
+disabled). The probe is cached for 30s because discovery polls every five
+seconds and spawning PowerShell on that cadence is not a reasonable thing for a
+background poll to do.
+
+Two rules specific to it:
+
+- **Severity is never `error`.** Plenty of dev containers have no business
+  talking to a remote. `warning` only for a container in front of the user that
+  declares a socket it does not have; `info` otherwise. An advisory that nags
+  every developer who does not need SSH teaches people to skip the panel that
+  will one day matter.
+- **When boxwarden runs inside its own dev container**, `process.env` describes
+  the container, not the developer's machine — so the host branch is suppressed
+  entirely, and the container-side warning (which reads the inspected
+  container, and is unaffected) says on which machine to run the commands.
+
 ## WSL is part of the environment, not a detail of it
 
 On Windows, `DockerEnvironment.wsl` carries a `WslStatus`:

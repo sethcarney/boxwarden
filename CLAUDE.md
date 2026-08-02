@@ -209,6 +209,31 @@ Two rules when adding to it:
 
 Commands are shown, never run — they reboot machines and use `sudo`.
 
+### SSH agent forwarding
+
+Two halves, both fed by data the app already has.
+
+`src/models/ssh-agent.ts` folds `Config.Env` + mount destinations from the
+inspect response into `DevContainer.sshAgent`: `forwarded`,
+`declared-unmounted`, or `absent`. No extra Docker call, no new IPC verb.
+`declared-unmounted` — the variable is set, the socket is not there — is the
+one a user cannot diagnose alone; `absent` renders nothing at all.
+
+**The environment rule:** `Config.Env` carries tokens and passwords. Exactly
+one variable (`SSH_AUTH_SOCK`) is read out of it in `mapContainer` and the
+array is never bound to a name that outlives that call. It must never reach
+`DevContainer`, cross IPC, land in a snapshot, or hit a log line — the
+`does not carry any environment variable other than SSH_AUTH_SOCK` test in
+`mapping.test.ts` pins that over the serialised result. Don't relax it to
+"the variables we need"; the next need will be someone's registry password.
+
+`adviseSshAgent` in `advice.ts` handles the host side, from the probe in
+`src/main/ssh-agent.ts` (cached 30s — discovery polls every 5s and Windows
+spawns PowerShell). **Severity is never `error`**: plenty of dev containers
+have no business talking to a remote. When boxwarden runs in its own dev
+container, `process.env` describes the container, so the host branch is
+suppressed rather than reported about the wrong machine.
+
 ### WSL on Windows
 
 `DockerEnvironment.wsl` carries a `WslStatus` (`not-installed` → `no-distros`

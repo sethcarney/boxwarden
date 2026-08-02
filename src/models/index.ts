@@ -40,8 +40,17 @@ export {
   selectionIsReachable,
 } from './engine.js';
 
-export type { Advice, AdviceLink, AdviceSeverity, AdviceInput, HostPlatform } from './advice.js';
-export { adviseEnvironment, hostPlatform } from './advice.js';
+export type {
+  Advice,
+  AdviceLink,
+  AdviceSeverity,
+  AdviceInput,
+  HostPlatform,
+  SshAgentAdviceInput,
+  SshAgentHostProbe,
+  WindowsAgentService,
+} from './advice.js';
+export { adviseEnvironment, adviseSshAgent, hostPlatform } from './advice.js';
 
 export type {
   DevContainerProject,
