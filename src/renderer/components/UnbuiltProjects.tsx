@@ -1,9 +1,9 @@
-import { useState } from 'react';
 import type { DevContainerProject, ProjectScan } from '../../models/index.js';
 import { devcontainerUpCommand, hostPathLabel, relativeTime } from '../format.js';
 import { scanRootHint } from '../presenters.js';
 import type { ProjectsViewModel } from '../viewmodels/index.js';
 import { useCopyToClipboard } from '../viewmodels/useCopyToClipboard.js';
+import { useDisclosure } from '../viewmodels/useDisclosure.js';
 
 /**
  * The projects that are on disk and not in Docker.
@@ -36,14 +36,13 @@ interface Props {
 }
 
 export function UnbuiltProjects({ projects, editorName, editorAvailable, now }: Props) {
-  const [expanded, setExpanded] = useState(false);
+  const disclosure = useDisclosure();
 
   // Nothing has been scanned yet and nothing is in flight: stay out of the way
   // rather than rendering an empty frame that explains nothing.
   if (projects.idle) return null;
 
-  const visible = expanded ? projects.unbuilt : projects.unbuilt.slice(0, COLLAPSED_LIMIT);
-  const hidden = projects.unbuilt.length - visible.length;
+  const { visible, hidden } = disclosure.reveal(projects.unbuilt, COLLAPSED_LIMIT);
 
   return (
     <section className="panel projects" aria-label="Dev container projects not built yet">
@@ -84,13 +83,7 @@ export function UnbuiltProjects({ projects, editorName, editorAvailable, now }: 
       )}
 
       {hidden > 0 && (
-        <button
-          type="button"
-          className="link"
-          onClick={() => {
-            setExpanded(true);
-          }}
-        >
+        <button type="button" className="link" onClick={disclosure.expand}>
           Show {hidden} more
         </button>
       )}
