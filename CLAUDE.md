@@ -28,7 +28,7 @@ bun run test:watch
 bun run typecheck    # tsc over both TS projects (node config, then web config)
 bun run lint         # eslint, type-aware
 bun run format       # prettier --write
-bun run check        # typecheck + lint + format:check + test + check:devcontainer — run before committing
+bun run check        # typecheck + lint + format:check + test + check:devcontainer — run before committing, and what CI runs
 
 bun run package      # build + electron-builder --dir: unpacked app, no installer
 bun run dist         # build + installers for the host OS, into release/

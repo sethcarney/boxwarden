@@ -1,0 +1,61 @@
+name: check
+
+# The gate `bun run check` was always meant to be. Until this existed the
+# checks ran only where someone remembered to run them, and the repo has
+# already paid for that once: the mvvm/no-state-in-view rule landed in one PR
+# and a View holding three useState calls landed in the next, leaving main
+# failing its own lint for two merges.
+#
+# Runs on pull_request AND on push to main. The PR run is the one that blocks a
+# mistake; the main run is what catches the case above, where two PRs are each
+# green alone and red together.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A second push to the same PR makes the first run irrelevant. Cancel it rather
+# than queueing behind it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # ELECTRON_SKIP_BINARY_DOWNLOAD saves a ~100MB download on every run.
+      # Nothing in this job launches Electron: typecheck, lint and the tests
+      # never import the binary, and `electron-vite build` only bundles. The
+      # binary is needed for `bun run dev`, `start` and `dist` — none of which
+      # run here. Verified against a clean install with the variable set.
+      #
+      # --frozen-lockfile so a lockfile that disagrees with package.json fails
+      # the run instead of being quietly resolved into something CI tested and
+      # nobody else has.
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+
+      # typecheck + lint + format:check + test + check:devcontainer, in one
+      # script, so CI and a developer's pre-commit run cannot drift apart. Any
+      # step added to `check` in package.json is picked up here for free.
+      - name: Check
+        run: bun run check
+
+      # Separate from `check` because it is a different question: `check` asks
+      # whether the source is correct, this asks whether it still bundles.
+      # electron-vite resolves main, preload and renderer as three separate
+      # builds, and a bad import can typecheck and still fail to bundle.
+      - name: Build
+        run: bun run build
