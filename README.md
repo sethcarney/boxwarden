@@ -54,14 +54,21 @@ bun run dev:fake
 
 ## Install it
 
+Grab an installer from [the releases page](https://github.com/sethcarney/boxwarden/releases)
+— a dmg for macOS, an AppImage and a deb for Linux, an NSIS installer for
+Windows, x64 and arm64 for each. Or build your own:
+
 ```bash
 bun run dist          # installers for the host OS, into release/
 ```
 
-macOS gets a dmg, Linux an AppImage and a deb, Windows an NSIS installer. The
-builds are unsigned, so each platform will interpose on first launch —
-[the running guide](docs/running.md#3-installing-it-on-your-computer) walks
-through that, and through uninstalling again.
+The builds are **unsigned**, so each platform will interpose on first launch,
+and there is no auto-update.
+[The running guide](docs/running.md#3-installing-it-on-your-computer) walks
+through both, and through uninstalling again;
+[the release guide](docs/releasing.md) covers cutting a new one.
+
+> There are no releases yet — v1 is the first. Until then, build it yourself.
 
 ## Work on it in its own dev container
 
@@ -79,6 +86,7 @@ launching. [Details](docs/running.md#1-the-dev-container-from-the-command-line).
 |                                                |                                                                     |
 | ---------------------------------------------- | ------------------------------------------------------------------- |
 | [Running](docs/running.md)                     | The dev container from the CLI, development on the host, installing |
+| [Releasing](docs/releasing.md)                 | Cutting a version: the tag, the workflow, the draft                 |
 | [Architecture](docs/architecture.md)           | Process model, the two path spaces, why the raw label matters       |
 | [Electron security](docs/electron-security.md) | The upstream checklist and where each item lands here               |
 | [Development](docs/development.md)             | Commands, fixtures, the two TS projects, testing                    |

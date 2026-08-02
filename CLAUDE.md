@@ -34,6 +34,8 @@ bun run package      # build + electron-builder --dir: unpacked app, no installe
 bun run dist         # build + installers for the host OS, into release/
 bun run dist:mac / dist:linux / dist:win
 
+bun run check:release-version   # tag vs package.json — run before tagging, not part of `check`
+
 bun run devcontainer:open   # devcontainer up, then attach an editor to it (scripts/devcontainer-open.mjs)
 ```
 
@@ -556,12 +558,45 @@ path needs `BOXWARDEN_DOCKER_SOCKET` — see
 troubleshooting path (this is a common source of confusing dev-container
 startup failures).
 
+## Releasing
+
+A `v*` tag runs `.github/workflows/release.yml`: verify, then one build job per
+OS, then a single job that collects all three platforms' installers into one
+**draft** GitHub release. `docs/releasing.md` is the procedure; four invariants
+hold it together:
+
+- **`package.json` is the only version.** electron-builder reads it and nothing
+  else, so `scripts/check-release-version.mjs` fails the run unless the tag is
+  exactly `v<that version>` — before three platforms spend ten minutes building
+  a number nobody can correct, because a published tag cannot be moved. It also
+  refuses `0.0.0`, the placeholder the whole MVP carried, which is a valid
+  semver string and would otherwise sail through a tag-match check.
+- **The build jobs never publish.** They run `bun run dist:<os> -- --publish
+never` and upload workflow artefacts; one later job creates the release.
+  Three parallel electron-builder publishers race to create "the" draft and the
+  loser silently makes a second one.
+- **`check:release-version` is not in `bun run check`.** Both of its assertions
+  are false on an ordinary branch — no tag, and the placeholder version — so it
+  would fail every PR. It runs once, on the tag.
+- **CI signs nothing, and says so.** `CSC_IDENTITY_AUTO_DISCOVERY: false` is set
+  deliberately: left unset, electron-builder searches an empty keychain and
+  reports the failure as a warning inside a green log, so an unsigned release
+  looks exactly like a signed one. The unsigned-install boilerplate in
+  `releasing.md` goes into every release's notes until there is a certificate.
+
+`publish:` in `electron-builder.yml` describes where an update _would_ come
+from, not how this repo publishes — it is what puts the right provider into the
+`latest*.yml` manifests. Those are attached to every release even though
+nothing reads them yet, because the build that would need to find them is the
+one already installed.
+
 ## Docs
 
 - `docs/architecture.md` — process model, path spaces, discovery, grouping (fuller version of the above)
 - `docs/development.md` — Podman/rootless setup, fixtures, testing/lint rationale
 - `docs/electron-security.md` — full security checklist and rationale
 - `docs/running.md` — the three ways to run the app, troubleshooting table
+- `docs/releasing.md` — cutting a version: the tag, the workflow, the draft
 - `docs/roadmap.md` — what's unverified (no real Docker daemon or editor has touched this yet) and what's next
 
 The README's status line matters: discovery/start-stop/open-in-editor are

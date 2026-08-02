@@ -7,8 +7,10 @@
 # installers into release/. It does NOT compile anything, which is why `dist`
 # runs the build first.
 #
-# See docs/running.md for what to do with the artefacts, and docs/roadmap.md
-# for what is still missing (signing, notarisation, auto-update).
+# See docs/running.md for what to do with the artefacts, docs/releasing.md for
+# how a tagged release turns into installers people can download, and
+# docs/roadmap.md for what is still missing (signing, notarisation,
+# auto-update).
 
 appId: com.boxwarden.app
 productName: boxwarden
@@ -50,6 +52,23 @@ asar: true
 # most likely to break under a package manager electron-builder does not know.
 # Turn this back on the day a genuine native dependency is added.
 npmRebuild: false
+
+# Where an update would come from, NOT how this repo publishes. The release
+# workflow builds with `--publish never` and attaches the artefacts itself
+# (.github/workflows/release.yml explains why three parallel publishers are a
+# race); what this block does is put the right provider into the `latest*.yml`
+# manifests electron-builder emits alongside every installer. Those are the
+# files electron-updater reads, and a release published without them cannot be
+# retrofitted as an update source later — the version that needs them is the
+# one already installed. Nothing consumes them today.
+#
+# It is also inert locally: `bun run dist` on a developer's machine has no
+# GH_TOKEN, so electron-builder logs that it is skipping publishing rather
+# than uploading anything.
+publish:
+  provider: github
+  owner: sethcarney
+  repo: boxwarden
 
 mac:
   category: public.app-category.developer-tools

@@ -153,6 +153,18 @@ lists the rest of the commands.
 
 ## 3. Installing it on your computer
 
+### Download one
+
+[The releases page](https://github.com/sethcarney/boxwarden/releases) carries
+an installer for each platform, built by
+[the release workflow](../.github/workflows/release.yml) on the OS it targets.
+Take the one for your machine and skip to [Install it](#install-it) — the
+caveats there apply exactly the same, because these are the same artefacts
+`bun run dist` produces locally.
+
+There are no releases yet; v1 is the first. [releasing.md](./releasing.md) is
+how one gets cut.
+
 ### Build the installers
 
 ```bash
