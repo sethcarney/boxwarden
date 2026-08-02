@@ -1,11 +1,19 @@
-import type { DevContainer } from '../../models/index.js';
+import type { ClaudeStatus, DevContainer } from '../../models/index.js';
 import { canStart, canStop } from '../format.js';
+import { claudeStopWarning } from '../presenters.js';
 import { groupCanStart, groupCanStop } from '../grouping.js';
 
 interface Props {
   readonly project: string;
   readonly containers: readonly DevContainer[];
   readonly busy: boolean;
+  /**
+   * One entry per container in `containers`, in the same order. Aggregated for
+   * "Stop all", which is where this warning matters most: that button reaches
+   * every service in the project, including ones whose own card the user never
+   * looked at.
+   */
+  readonly claude?: readonly (ClaudeStatus | undefined)[] | undefined;
   readonly onStartAll: (containers: readonly DevContainer[]) => void;
   readonly onStopAll: (containers: readonly DevContainer[]) => void;
   readonly children: React.ReactNode;
@@ -27,6 +35,7 @@ export function ComposeGroup({
   project,
   containers,
   busy,
+  claude = [],
   onStartAll,
   onStopAll,
   children,
@@ -34,6 +43,7 @@ export function ComposeGroup({
   const startable = groupCanStart(containers, canStart);
   const stoppable = groupCanStop(containers, canStop);
   const runningCount = containers.filter((c) => canStop(c.runtime)).length;
+  const stopWarning = claudeStopWarning(claude);
 
   return (
     <section className="group" aria-label={`Compose project ${project}`}>
@@ -50,6 +60,8 @@ export function ComposeGroup({
           {stoppable && (
             <button
               type="button"
+              className={stopWarning === undefined ? undefined : 'warn'}
+              title={stopWarning}
               disabled={busy}
               onClick={() => {
                 onStopAll(containers);

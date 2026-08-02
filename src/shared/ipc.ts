@@ -1,5 +1,6 @@
 import type {
   Advice,
+  ClaudeStatus,
   ContainerId,
   DevContainer,
   DockerEnvironment,
@@ -82,6 +83,20 @@ export type OpenInEditorResult =
       readonly uri?: string;
     };
 
+/**
+ * Claude Code presence, keyed by container id.
+ *
+ * A plain record rather than a Map: structured clone would carry a Map, but
+ * every other payload here is plain data and the renderer holds this in state,
+ * where a record compares and spreads without ceremony.
+ *
+ * An ABSENT key means "not asked, or asked about a container the main process
+ * does not recognise" — not "no session". The renderer must not collapse the
+ * two: a missing entry renders no badge, `{ kind: 'none' }` renders no badge
+ * *and* means the Stop button is safe.
+ */
+export type ClaudeStatusMap = Readonly<Record<ContainerId, ClaudeStatus>>;
+
 /** An editor offered in the UI, with whether it was actually found on this machine. */
 export interface EditorOption {
   readonly id: EditorId;
@@ -150,6 +165,7 @@ export const IPC = {
   openTerminal: 'boxwarden:open-terminal',
   getStartupCommands: 'boxwarden:get-startup-commands',
   setStartupCommand: 'boxwarden:set-startup-command',
+  claudeStatus: 'boxwarden:claude-status',
 } as const;
 
 /**
@@ -241,4 +257,24 @@ export interface BoxwardenApi {
    * a renderer cannot file a startup command against a folder it invented.
    */
   setStartupCommand(id: ContainerId, command: string): Promise<ActionResult>;
+
+  /**
+   * ---- Claude Code presence ----
+   *
+   * Whether a Claude Code session is running inside each of these containers.
+   *
+   * Its own verb, and not a field on `DiscoverySnapshot`, for the reason
+   * `scanProjects` is not in there either: CADENCE. Discovery polls every five
+   * seconds, and folding this in would multiply that poll's Docker traffic by
+   * the number of live containers — one `top` each — to re-derive an answer
+   * that changes on the timescale of a person starting an agent. The renderer
+   * polls it on a slower clock of its own.
+   *
+   * Batched so one round trip covers the whole list. Ids are validated against
+   * the main process's own last container list before use, the same rule as
+   * `openInEditor` taking an id rather than a `DevContainer`. Never rejects: a
+   * per-container failure comes back as `{ kind: 'unknown' }`, which the UI
+   * must keep distinct from `none` — the Stop button reads it.
+   */
+  claudeStatus(ids: readonly ContainerId[]): Promise<ClaudeStatusMap>;
 }

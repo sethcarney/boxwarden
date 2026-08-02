@@ -12,6 +12,14 @@ export type {
 } from './devcontainer.js';
 export { asContainerId, containerSettingsKey, displayStatus } from './devcontainer.js';
 
+export type { ClaudeSession, ClaudeStatus } from './claude.js';
+export {
+  classifyTopFailure,
+  looksLikeClaudeCode,
+  parseClaudeProcesses,
+  sessionCount,
+} from './claude.js';
+
 export type {
   ContainerRuntimeKind,
   DockerCliProbe,

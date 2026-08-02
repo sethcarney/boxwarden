@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ContainerCard } from './ContainerCard.js';
 import { devContainer, unresolvedContainer } from '../test-fixtures.js';
-import type { DevContainer } from '../../models/index.js';
+import type { ClaudeStatus, DevContainer } from '../../models/index.js';
 import { asContainerPath } from '../../models/index.js';
 
 const NOW = new Date('2026-07-27T12:00:00Z').getTime();
@@ -321,6 +321,102 @@ describe('ContainerCard', () => {
       const badge = dom.querySelector('.agent-badge');
       expect(badge?.textContent).toBe('SSH!');
       expect(badge?.getAttribute('title')).toContain('nothing is mounted there');
+    });
+  });
+
+  /**
+   * The badge is the whole point of the Claude Code presence feature, and its
+   * ABSENCE carries meaning too: no badge is how a card says stopping is safe.
+   * Both directions are pinned.
+   */
+  describe('the Claude Code badge', () => {
+    const oneSession: ClaudeStatus = {
+      kind: 'running',
+      sessions: [{ pid: 412, command: 'claude', elapsed: '1h12m33.0s' }],
+    };
+
+    it('renders when a session is running', () => {
+      renderCard(devContainer(), { claude: oneSession });
+      expect(screen.getByText('Claude')).toBeDefined();
+    });
+
+    it('is absent when nothing is running, and while the first poll is outstanding', () => {
+      // Asked, nothing running.
+      renderCard(devContainer(), { claude: { kind: 'none' } });
+      expect(document.querySelector('.badge-claude')).toBeNull();
+
+      cleanup();
+
+      // Not asked yet — a different fact, and the same rendering, because the
+      // only honest thing to show before the first answer is nothing.
+      renderCard(devContainer());
+      expect(document.querySelector('.badge-claude')).toBeNull();
+    });
+
+    it('counts more than one session, keeping the detail in the title', () => {
+      renderCard(devContainer(), {
+        claude: {
+          kind: 'running',
+          sessions: [
+            { pid: 412, command: 'claude', elapsed: '1h12m33.0s' },
+            { pid: 907, command: 'claude', elapsed: '4m8.0s' },
+          ],
+        },
+      });
+
+      const badge = screen.getByText('Claude ×2');
+      expect(badge.getAttribute('title')).toContain('pid 412');
+      expect(badge.getAttribute('title')).toContain('pid 907');
+      expect(badge.getAttribute('title')).toContain('up 1h12m33.0s');
+    });
+
+    /**
+     * Rows layout is one line per container, so the badge shortens to a bare
+     * count — the same trade the image row and the primary button make. The
+     * full text stays reachable through `title`, and the accessible name stays
+     * the long one so a screen reader is not left with "2".
+     */
+    it('shortens under dense but keeps the full text in title', () => {
+      renderCard(devContainer(), { dense: true, claude: oneSession });
+
+      const badge = screen.getByLabelText('Claude');
+      expect(badge.textContent).toBe('1');
+      expect(badge.getAttribute('title')).toContain('A Claude Code session is running');
+      expect(badge.getAttribute('title')).toContain('pid 412');
+    });
+
+    /**
+     * "Could not tell" gets its own badge rather than falling back to the
+     * no-badge rendering, which means "safe to stop".
+     */
+    it('says so when the check could not be made', () => {
+      renderCard(devContainer(), { claude: { kind: 'unknown', reason: 'socket went away' } });
+      const badge = screen.getByText('Claude ?');
+      expect(badge.getAttribute('title')).toContain('socket went away');
+    });
+  });
+
+  /**
+   * v1 annotates rather than gates: stopping a container with a live agent in
+   * it stays one click, it just stops being an uninformed one.
+   */
+  describe('the Stop button when a session is live', () => {
+    it('warns in the title and stays clickable', async () => {
+      const { onStop } = renderCard(devContainer(), {
+        claude: { kind: 'running', sessions: [{ pid: 412, command: 'claude' }] },
+      });
+
+      const stop = screen.getByRole('button', { name: 'Stop' });
+      expect(stop.getAttribute('title')).toMatch(/Claude Code session is running/i);
+      expect(stop.hasAttribute('disabled')).toBe(false);
+
+      await userEvent.click(stop);
+      expect(onStop).toHaveBeenCalledTimes(1);
+    });
+
+    it('carries no warning when nothing is running', () => {
+      renderCard(devContainer(), { claude: { kind: 'none' } });
+      expect(screen.getByRole('button', { name: 'Stop' }).getAttribute('title')).toBeNull();
     });
   });
 });

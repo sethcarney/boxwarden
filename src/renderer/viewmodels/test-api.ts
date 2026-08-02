@@ -1,6 +1,7 @@
 import type { Mock } from 'vitest';
 import { vi } from 'vitest';
 import type {
+  ClaudeStatus,
   ContainerId,
   EditorId,
   EngineSelection,
@@ -11,6 +12,7 @@ import type {
 import type {
   ActionResult,
   BoxwardenApi,
+  ClaudeStatusMap,
   DiscoverySnapshot,
   EditorOption,
   OpenInEditorResult,
@@ -102,6 +104,7 @@ export interface FakeApi extends BoxwardenApi {
   openTerminal: Mock<(id: ContainerId, terminalId: TerminalId) => Promise<OpenTerminalResult>>;
   readonly getStartupCommands: Mock<() => Promise<Readonly<Record<string, string>>>>;
   setStartupCommand: Mock<(id: ContainerId, command: string) => Promise<ActionResult>>;
+  readonly claudeStatus: Mock<(ids: readonly ContainerId[]) => Promise<ClaudeStatusMap>>;
 }
 
 export interface FakeApiOptions {
@@ -110,6 +113,13 @@ export interface FakeApiOptions {
   readonly scan?: ProjectScan;
   readonly terminals?: readonly TerminalOption[];
   readonly startupCommands?: Readonly<Record<string, string>>;
+  /**
+   * What `claudeStatus` answers for every id it is asked about. A single value
+   * rather than a map because the tests care about the arm, not about which
+   * container carries it — and a map would have to be kept in step with
+   * whichever fixture ids the test happened to use.
+   */
+  readonly claude?: ClaudeStatus;
 }
 
 export function fakeApi(options: FakeApiOptions = {}): FakeApi {
@@ -120,6 +130,7 @@ export function fakeApi(options: FakeApiOptions = {}): FakeApi {
     { id: 'gnome-terminal', displayName: 'GNOME Terminal', available: true },
   ];
   const startupCommands = options.startupCommands ?? {};
+  const claude = options.claude ?? { kind: 'none' };
 
   return {
     discover: vi.fn<() => Promise<DiscoverySnapshot>>(() => Promise.resolve(current)),
@@ -153,6 +164,9 @@ export function fakeApi(options: FakeApiOptions = {}): FakeApi {
     ),
     setStartupCommand: vi.fn<(id: ContainerId, command: string) => Promise<ActionResult>>(() =>
       Promise.resolve({ ok: true }),
+    ),
+    claudeStatus: vi.fn<(ids: readonly ContainerId[]) => Promise<ClaudeStatusMap>>((ids) =>
+      Promise.resolve(Object.fromEntries(ids.map((id) => [id, claude]))),
     ),
   };
 }

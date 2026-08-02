@@ -1,5 +1,7 @@
 import { useMemo } from 'react';
 import { getApi } from '../api.js';
+import type { ClaudeViewModel } from './useClaudeStatus.js';
+import { useClaudeStatus } from './useClaudeStatus.js';
 import { useClock } from './useClock.js';
 import type { DiscoveryViewModel } from './useDiscovery.js';
 import { useDiscovery } from './useDiscovery.js';
@@ -28,17 +30,19 @@ export interface AppViewModel {
   readonly terminals: TerminalsViewModel;
   readonly discovery: DiscoveryViewModel;
   readonly projects: ProjectsViewModel;
+  readonly claude: ClaudeViewModel;
 }
 
 /**
  * The root ViewModel: every piece of state the app renders, and every action it
  * can take, with no JSX anywhere beneath it.
  *
- * Composition rather than one large hook, because the six below have genuinely
- * different lifetimes — Docker is polled every five seconds, the filesystem is
- * scanned on demand, the editor and terminal lists are read once, and the theme
- * never touches the bridge at all. Keeping them separate is what lets each be
- * tested against a fake `BoxwardenApi` without standing up the others.
+ * Composition rather than one large hook, because the seven below have
+ * genuinely different lifetimes — Docker is polled every five seconds, Claude
+ * Code presence every fifteen, the filesystem is scanned on demand, the editor
+ * and terminal lists are read once, and the theme never touches the bridge at
+ * all. Keeping them separate is what lets each be tested against a fake
+ * `BoxwardenApi` without standing up the others.
  *
  * Every hook is called unconditionally and guards on `api` internally: a bridge
  * that failed to load must not change the number of hooks this runs.
@@ -55,6 +59,7 @@ export function useAppViewModel(): AppViewModel {
   const terminals = useTerminals(api, notices);
   const discovery = useDiscovery(api, notices, editors.editorId, terminals.terminalId);
   const projects = useProjects(api, notices, editors.editorId, discovery.containers);
+  const claude = useClaudeStatus(api, notices, discovery.containers);
 
   return {
     bridgeAvailable: api !== undefined,
@@ -65,5 +70,6 @@ export function useAppViewModel(): AppViewModel {
     terminals,
     discovery,
     projects,
+    claude,
   };
 }

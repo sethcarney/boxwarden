@@ -21,7 +21,7 @@ import type { BoxwardenApi } from '../shared/ipc.js';
  *     Anything else arrives as undefined on the far side.
  *
  * The methods are deliberately narrow — no generic "invoke any channel" escape
- * hatch. A renderer bug can misuse only these fourteen verbs, and every one
+ * hatch. A renderer bug can misuse only these fifteen verbs, and every one
  * that acts on a container or a project takes an ID: the main process resolves
  * that to its own copy rather than acting on data the renderer supplied.
  *
@@ -43,6 +43,10 @@ const api: BoxwardenApi = {
   openTerminal: (id, terminalId) => ipcRenderer.invoke(IPC.openTerminal, id, terminalId),
   getStartupCommands: () => ipcRenderer.invoke(IPC.getStartupCommands),
   setStartupCommand: (id, command) => ipcRenderer.invoke(IPC.setStartupCommand, id, command),
+  // An array crosses as a copy, so the main process cannot be handed a live
+  // renderer object here — and it re-validates every id against its own last
+  // container list regardless.
+  claudeStatus: (ids) => ipcRenderer.invoke(IPC.claudeStatus, [...ids]),
 };
 
 contextBridge.exposeInMainWorld('boxwarden', api);

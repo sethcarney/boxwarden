@@ -24,7 +24,7 @@ interface Props {
  * through a ViewModel field.
  */
 export function AppView({ vm }: Props) {
-  const { notices, theme, editors, terminals, discovery, projects, now } = vm;
+  const { notices, theme, editors, terminals, discovery, projects, claude, now } = vm;
 
   if (!vm.bridgeAvailable) return <BridgeMissing />;
 
@@ -86,6 +86,8 @@ export function AppView({ vm }: Props) {
           now={now}
           isBusy={discovery.isBusy}
           isGroupBusy={discovery.isGroupBusy}
+          claudeFor={claude.statusFor}
+          claudeForAll={claude.statusesFor}
           onStart={discovery.start}
           onStop={discovery.stop}
           onOpen={discovery.open}
