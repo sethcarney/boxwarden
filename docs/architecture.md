@@ -87,9 +87,18 @@ issue, and every value derived from the two.
 they share one busy set, and two independent sets would let one re-enable a
 button the other still considers busy.
 
-Plus two small ones — `useClock` (one timer for every relative timestamp on
-screen) and `useCopyToClipboard` (a write that can be refused, and a timer that
-must be cancelled on unmount).
+Plus three small ones — `useClock` (one timer for every relative timestamp on
+screen), `useCopyToClipboard` (a write that can be refused, and a timer that
+must be cancelled on unmount), and `useStartupCommandDraft`.
+
+The last is the one that shows the layer is about direction rather than about a
+single object. It is **not** composed into `useAppViewModel`: one instance lives
+with each startup-command field, because the draft is where the text cursor is,
+and hoisting it would re-render every card on every keystroke to hold a value
+only one of them can see. It is still a ViewModel — the rules about when an
+edit commits and when it is thrown away are decisions, and a View decides
+nothing. `mvvm/no-state-in-view` is what keeps that from drifting back into the
+component.
 
 The payoff is that the layer is testable with `renderHook` and a fake
 `BoxwardenApi`: `viewmodels/useDiscovery.test.ts` asserts that a start marks its
