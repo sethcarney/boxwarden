@@ -1,5 +1,6 @@
 import { ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron';
 import type {
+  ClaudeStatus,
   ContainerCli,
   ContainerId,
   DevContainer,
@@ -20,6 +21,7 @@ import {
 import { IPC } from '../shared/ipc.js';
 import type {
   ActionResult,
+  ClaudeStatusMap,
   DiscoverySnapshot,
   EditorOption,
   OpenInEditorResult,
@@ -575,5 +577,55 @@ export function registerIpcHandlers(context: IpcContext): void {
       return Promise.resolve({ ok: true, cancelled: false });
     },
     (message) => ({ ok: false, message }),
+  );
+
+  handle<ClaudeStatusMap>(
+    IPC.claudeStatus,
+    async (rawIds) => {
+      // Ids are validated against the main process's OWN last container list,
+      // for the same reason openInEditor takes an id rather than a
+      // DevContainer: acting on identifiers the renderer supplied would let a
+      // compromised renderer aim a Docker call at any container on the daemon,
+      // dev container or not. Anything not in `known` is simply dropped.
+      const requested = Array.isArray(rawIds) ? rawIds : [];
+      const containers = requested
+        .filter((id): id is ContainerId => typeof id === 'string')
+        .map((id) => known.get(id))
+        .filter((container): container is DevContainer => container !== undefined);
+
+      const statuses: Record<ContainerId, ClaudeStatus> = {};
+
+      // A container that is not live has no process table, and asking anyway
+      // would spend a Docker round trip to be told so. Its state is already in
+      // hand from the last discovery, so answer it here.
+      const live = containers.filter(
+        (container) =>
+          container.runtime.state === 'running' || container.runtime.state === 'paused',
+      );
+      const liveIds = new Set(live.map((container) => container.id));
+      for (const container of containers) {
+        if (!liveIds.has(container.id)) statuses[container.id] = { kind: 'not-applicable' };
+      }
+
+      try {
+        const found = await context.backend.claudeStatus([...liveIds]);
+        for (const id of liveIds) {
+          statuses[id] = found.get(id) ?? {
+            kind: 'unknown',
+            reason: 'The container engine did not answer for this container.',
+          };
+        }
+      } catch (error) {
+        // The backend is not supposed to reject. If it does, every live
+        // container gets "could not tell" rather than the silent "no session"
+        // an empty map would render as — the difference matters, because the
+        // Stop button reads this.
+        const reason = error instanceof Error ? error.message : String(error);
+        for (const id of liveIds) statuses[id] = { kind: 'unknown', reason };
+      }
+
+      return statuses;
+    },
+    () => ({}),
   );
 }

@@ -1,7 +1,9 @@
-import type { DevContainer, EditorId } from '../../models/index.js';
+import type { ClaudeStatus, DevContainer, EditorId } from '../../models/index.js';
 import { canStart, canStop, hostPathLabel, statusLabel } from '../format.js';
 import {
   cardTitle,
+  claudeBadge,
+  claudeStopWarning,
   openBlockedReason,
   portLabel,
   terminalBlockedReason,
@@ -28,6 +30,20 @@ interface Props {
    * is dropped without a `title` keeping it reachable.
    */
   readonly dense?: boolean;
+  /**
+   * Whether Claude Code is running in this container.
+   *
+   * Absent while the first poll is outstanding, and for a container the main
+   * process has not been asked about. Absent is NOT `{ kind: 'none' }`: one
+   * means "no answer yet", the other means "asked, nothing running", and only
+   * the second one makes the Stop button safe.
+   *
+   * Spelled `?: T | undefined` rather than `?: T` because
+   * exactOptionalPropertyTypes is on and the parent passes the result of a
+   * lookup — an expression that is legitimately `undefined` rather than a key
+   * it can omit.
+   */
+  readonly claude?: ClaudeStatus | undefined;
   readonly onStart: (container: DevContainer) => void;
   readonly onStop: (container: DevContainer) => void;
   readonly onOpen: (container: DevContainer) => void;
@@ -53,6 +69,7 @@ export function ContainerCard({
   busy,
   now,
   dense = false,
+  claude,
   onStart,
   onStop,
   onOpen,
@@ -63,6 +80,8 @@ export function ContainerCard({
   const ports = visiblePorts(container);
   const blocked = openBlockedReason(container, editorAvailable, editorName);
   const terminalBlocked = terminalBlockedReason(container, terminalAvailable, terminalName);
+  const badge = claudeBadge(claude);
+  const stopWarning = claudeStopWarning([claude]);
 
   return (
     <article className={`card${unresolved ? ' card-degraded' : ''}`}>
@@ -71,7 +90,21 @@ export function ContainerCard({
           <StatusDot runtime={container.runtime} />
           <h2>{cardTitle(container)}</h2>
         </div>
-        <span className="card-status">{statusLabel(container.runtime, now)}</span>
+        <div className="card-head-right">
+          {/* Shortened under `dense` to a bare count, with the full text kept
+              in `title` — the same contract as the image row and the primary
+              button. The session count, pids and uptimes are all in there. */}
+          {badge !== undefined && (
+            <span
+              className={`badge badge-claude badge-claude-${badge.tone}`}
+              title={badge.title}
+              aria-label={badge.label}
+            >
+              {dense ? badge.denseLabel : badge.label}
+            </span>
+          )}
+          <span className="card-status">{statusLabel(container.runtime, now)}</span>
+        </div>
       </header>
 
       <dl className="card-meta">
@@ -153,6 +186,10 @@ export function ContainerCard({
         {canStop(container.runtime) && (
           <button
             type="button"
+            // Annotated, not gated. Stopping a container with a live agent in
+            // it stays one click — it just stops being an uninformed one.
+            className={stopWarning === undefined ? undefined : 'warn'}
+            title={stopWarning}
             disabled={busy}
             onClick={() => {
               onStop(container);

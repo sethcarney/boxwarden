@@ -138,6 +138,18 @@ badly:
 | `legacy-thing`   | Unparseable label → degraded row, exit code 137                        |
 | `infra-scripts`  | Paused, WSL UNC path                                                   |
 
+The fake also serves fixture `top` responses through the **real**
+`parseClaudeProcesses`, so the Claude Code badge is exercised without an agent
+running anywhere. Between them they cover every arm of `ClaudeStatus`:
+
+| Fixture          | Claude Code status                                                   |
+| ---------------- | -------------------------------------------------------------------- |
+| `webapp`         | One session, Docker's `ps -ef` column layout (`STIME`, no `ELAPSED`) |
+| `platform` (app) | Two sessions, Podman's layout — one of them via the wrapper script   |
+| `reporting-tool` | Node processes that are **not** Claude Code → no badge               |
+| `infra-scripts`  | A response the parser cannot read → the "could not tell" badge       |
+| everything else  | An ordinary process table → no badge                                 |
+
 The fake also reports **three** reachable engines (a Docker socket, a podman
 machine pipe, and a podman inside a WSL distro) and a WSL status with one distro
 missing socat. The fixtures round-robin across those engines, so the engine

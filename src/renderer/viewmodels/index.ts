@@ -13,6 +13,9 @@ export { useAppViewModel } from './useAppViewModel.js';
 export type { DiscoveryViewModel } from './useDiscovery.js';
 export { REFRESH_INTERVAL_MS, useDiscovery } from './useDiscovery.js';
 
+export type { ClaudeViewModel } from './useClaudeStatus.js';
+export { CLAUDE_INTERVAL_MS, useClaudeStatus } from './useClaudeStatus.js';
+
 export type { ProjectsViewModel } from './useProjects.js';
 export { useProjects } from './useProjects.js';
 

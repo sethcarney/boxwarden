@@ -90,6 +90,29 @@ paths on the main side of the bridge:
 - `scanProjects` reads directory names and the `name` field of each config. It
   reports what it could not read, and never sends file contents to the renderer.
 
+### Reading a container's processes uses `top`, never `exec`
+
+`claudeStatus` answers "is a Claude Code session running in here" from
+`GET /containers/{id}/top`. That endpoint is read-only: no shell, no writes, no
+code executed inside the container.
+
+An `exec` running `ps | grep claude` would be the obvious alternative and is
+strictly worse. It runs a process in the container, needs a shell string
+assembled from data the app does not control, and buys nothing `top` does not
+already give. The container's process table is **attacker-influenced** — a
+command line is chosen by whoever started the process, and anyone who can create
+containers on the daemon can put an arbitrary string in it. Through `top` that
+string is inert data handed to a pure parser; through an `exec` shell string it
+is a much larger surface for the same answer.
+
+The parser treats it as untrusted accordingly: it never evaluates the command,
+only matches path segments in it, and any shape it cannot read becomes an
+`unknown` status rather than a throw.
+
+`claudeStatus` also takes container **ids**, validated against the main
+process's own last scan before any Docker call reaches them — the same rule as
+`openInEditor` above and `openProject` beside it.
+
 ### Launching an editor never goes through a shell
 
 `src/main/editor/launch.ts` uses `spawn` with an argv **array** and never

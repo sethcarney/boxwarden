@@ -1,4 +1,4 @@
-import type { DevContainer, EditorId } from '../../models/index.js';
+import type { ClaudeStatus, DevContainer, EditorId } from '../../models/index.js';
 import { ComposeGroup } from '../components/ComposeGroup.js';
 import { ContainerCard } from '../components/ContainerCard.js';
 import type { ContainerGroup } from '../grouping.js';
@@ -16,6 +16,11 @@ interface Props {
   readonly now: number;
   readonly isBusy: (id: DevContainer['id']) => boolean;
   readonly isGroupBusy: (group: ContainerGroup) => boolean;
+  /** Claude Code presence, looked up per container. Undefined means "no answer yet". */
+  readonly claudeFor: (id: DevContainer['id']) => ClaudeStatus | undefined;
+  readonly claudeForAll: (
+    containers: readonly DevContainer[],
+  ) => readonly (ClaudeStatus | undefined)[];
   readonly onStart: (container: DevContainer) => void;
   readonly onStop: (container: DevContainer) => void;
   readonly onOpen: (container: DevContainer) => void;
@@ -44,6 +49,8 @@ export function ContainerList({
   now,
   isBusy,
   isGroupBusy,
+  claudeFor,
+  claudeForAll,
   onStart,
   onStop,
   onOpen,
@@ -69,6 +76,7 @@ export function ContainerList({
       // Rows mode is one line per container, and "Open in VS Code Insiders"
       // does not fit on it. The full label stays as the button's title.
       dense={layout === 'rows'}
+      claude={claudeFor(container.id)}
       onStart={onStart}
       onStop={onStop}
       onOpen={onOpen}
@@ -88,6 +96,7 @@ export function ContainerList({
             project={group.project}
             containers={group.containers}
             busy={isGroupBusy(group)}
+            claude={claudeForAll(group.containers)}
             onStartAll={onStartAll}
             onStopAll={onStopAll}
           >

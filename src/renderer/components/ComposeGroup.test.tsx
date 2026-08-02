@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event';
 import { ComposeGroup } from './ComposeGroup.js';
 import { devContainer } from '../test-fixtures.js';
 import { asContainerId } from '../../models/index.js';
-import type { DevContainer } from '../../models/index.js';
+import type { ClaudeStatus, DevContainer } from '../../models/index.js';
 
 const RUNNING = { state: 'running', startedAt: new Date(), ports: [] } as const;
 const EXITED = { state: 'exited', exitCode: 0, finishedAt: new Date() } as const;
@@ -19,7 +19,11 @@ function member(name: string, runtime: DevContainer['runtime']): DevContainer {
   });
 }
 
-function renderGroup(containers: readonly DevContainer[], busy = false) {
+function renderGroup(
+  containers: readonly DevContainer[],
+  busy = false,
+  claude: readonly (ClaudeStatus | undefined)[] = [],
+) {
   const onStartAll = vi.fn();
   const onStopAll = vi.fn();
   render(
@@ -27,6 +31,7 @@ function renderGroup(containers: readonly DevContainer[], busy = false) {
       project="platform"
       containers={containers}
       busy={busy}
+      claude={claude}
       onStartAll={onStartAll}
       onStopAll={onStopAll}
     >
@@ -96,5 +101,36 @@ describe('ComposeGroup', () => {
     renderGroup([member('app', RUNNING)], true);
     const button = screen.getByRole('button', { name: 'Working…' });
     expect(button.hasAttribute('disabled')).toBe(true);
+  });
+  /**
+   * "Stop all" is where this warning matters most: it reaches every service in
+   * the project, including ones whose own card the user never looked at. The
+   * aggregate is the point — one session anywhere in the group warns.
+   */
+  describe('when Claude Code is running somewhere in the group', () => {
+    const session: ClaudeStatus = {
+      kind: 'running',
+      sessions: [{ pid: 412, command: 'claude' }],
+    };
+
+    it('warns on "Stop all", counting sessions across every member', () => {
+      renderGroup([member('app', RUNNING), member('db', RUNNING)], false, [
+        { kind: 'none' },
+        session,
+      ]);
+
+      const stopAll = screen.getByRole('button', { name: 'Stop all' });
+      expect(stopAll.getAttribute('title')).toMatch(/Claude Code session is running/i);
+      // Annotated, not gated.
+      expect(stopAll.hasAttribute('disabled')).toBe(false);
+    });
+
+    it('carries no warning when the group is quiet', () => {
+      renderGroup([member('app', RUNNING), member('db', RUNNING)], false, [
+        { kind: 'none' },
+        { kind: 'none' },
+      ]);
+      expect(screen.getByRole('button', { name: 'Stop all' }).getAttribute('title')).toBeNull();
+    });
   });
 });

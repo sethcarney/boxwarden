@@ -14,7 +14,14 @@
  * hooks stay thin and these can be tested without React or a DOM.
  */
 
-import type { DevContainer, EndpointProbe, EngineSelection, PortBinding } from '../models/index.js';
+import type {
+  ClaudeSession,
+  ClaudeStatus,
+  DevContainer,
+  EndpointProbe,
+  EngineSelection,
+  PortBinding,
+} from '../models/index.js';
 import { projectName } from '../models/index.js';
 import type { DiscoverySnapshot } from '../shared/ipc.js';
 import { canExec, describeTarget, runtimeLabel } from './format.js';
@@ -211,4 +218,108 @@ export function portLabel(port: PortBinding): { readonly text: string; readonly 
     text: `${String(port.hostPort)} → ${String(port.containerPort)}`,
     title: `${port.hostIp ?? '0.0.0.0'}:${String(port.hostPort)} → ${String(port.containerPort)}`,
   };
+}
+
+/**
+ * The Claude Code badge, or nothing.
+ *
+ * A presenter rather than a `switch` in the component: the View gets a field.
+ * Four `ClaudeStatus` arms collapse to three outcomes —
+ *
+ *   - `running`  -> a badge, with the session count and how long they have been up
+ *   - `unknown`  -> a badge that says so, because "we could not tell" and "there
+ *                   is nothing running" must not look the same on a card whose
+ *                   Stop button reads this
+ *   - `none` / `not-applicable` / not yet polled -> nothing
+ *
+ * `label` is the short form the card shows; `title` is the full text, which the
+ * card keeps in the `title` attribute so nothing is lost to the shortening.
+ */
+export interface ClaudeBadge {
+  readonly label: string;
+  /** Even shorter, for the rows layout — a count with no word in front of it. */
+  readonly denseLabel: string;
+  readonly title: string;
+  readonly tone: 'running' | 'unknown';
+}
+
+export function claudeBadge(status: ClaudeStatus | undefined): ClaudeBadge | undefined {
+  if (status === undefined) return undefined;
+
+  switch (status.kind) {
+    case 'not-applicable':
+    case 'none':
+      return undefined;
+
+    case 'unknown':
+      return {
+        label: 'Claude ?',
+        denseLabel: '?',
+        title: `Could not tell whether Claude Code is running in this container: ${status.reason}`,
+        tone: 'unknown',
+      };
+
+    case 'running': {
+      const count = status.sessions.length;
+      return {
+        label: count === 1 ? 'Claude' : `Claude ×${String(count)}`,
+        denseLabel: count === 1 ? '1' : String(count),
+        title: [
+          count === 1
+            ? 'A Claude Code session is running in this container.'
+            : `${String(count)} Claude Code sessions are running in this container.`,
+          ...status.sessions.map(describeSession),
+          count === 1 ? 'Stopping the container ends it.' : 'Stopping the container ends them.',
+        ].join('\n'),
+        tone: 'running',
+      };
+    }
+  }
+}
+
+/**
+ * One session, for the badge's tooltip.
+ *
+ * "up" and "since" are not interchangeable, and the wording follows whichever
+ * column the engine supplied: Podman gives an elapsed duration, Docker's
+ * default `ps -ef` gives a start time. Printing a start time as an elapsed
+ * duration would report a session that began ten minutes ago as ten hours old.
+ */
+function describeSession(session: ClaudeSession): string {
+  const age =
+    session.elapsed !== undefined
+      ? `up ${session.elapsed}`
+      : session.startTime !== undefined
+        ? `since ${session.startTime}`
+        : 'uptime not reported';
+  return `  pid ${String(session.pid)} · ${age}`;
+}
+
+/**
+ * The warning that annotates a Stop action, or nothing.
+ *
+ * Annotates rather than gates: v1 puts the fact on the button's tooltip and
+ * marks it, and leaves the click alone. A confirmation dialog is the right end
+ * state, but this app has no modal today and adding the first one should wait
+ * until the detection has been seen to be reliable against a real daemon.
+ *
+ * Takes a LIST so a compose group's "Stop all" aggregates — which is the case
+ * where the warning matters most, since that button reaches services whose own
+ * cards the user may never have looked at.
+ *
+ * An `unknown` status deliberately does not warn. Annotating every container
+ * boxwarden could not read would train the user to ignore the annotation, which
+ * costs more than the case it covers.
+ */
+export function claudeStopWarning(
+  statuses: readonly (ClaudeStatus | undefined)[],
+): string | undefined {
+  const sessions = statuses.reduce(
+    (total, status) => total + (status?.kind === 'running' ? status.sessions.length : 0),
+    0,
+  );
+  if (sessions === 0) return undefined;
+  return sessions === 1
+    ? 'A Claude Code session is running in here. Stopping ends it.'
+    : `${String(sessions)} Claude Code sessions are running in here. Stopping ends them.`;
 }

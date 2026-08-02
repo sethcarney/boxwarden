@@ -123,7 +123,7 @@ Four conventions hold this together:
 - **Failures report through `useNotices`**, never through a second message
   channel, so a later failure cannot hide behind an earlier one.
 
-**The IPC surface is fourteen narrow verbs** — see `src/shared/ipc.ts` — all
+**The IPC surface is fifteen narrow verbs** — see `src/shared/ipc.ts` — all
 declared as a `BoxwardenApi` interface consumed by the renderer without
 importing Electron. They fall into three groups by cadence:
 
@@ -133,22 +133,26 @@ importing Electron. They fall into three groups by cadence:
   `addProjectRoot`, `removeProjectRoot`.
 - **Terminals, read once then on demand**: `listTerminals`, `openTerminal`,
   `getStartupCommands`, `setStartupCommand`.
+- **Container processes, polled every 15s**: `claudeStatus`.
 
 Prefer looping over the existing verbs (e.g. `Promise.allSettled` for a compose
 group's "Start all") over adding new channels. The exceptions so far all earned
 it: `selectEngine` changes main-process state that outlives the call; the
-project verbs are a _different cadence_ — folding `scanProjects` into
-`DiscoverySnapshot` would make the 5s poll pay for a filesystem walk sixty times
-an hour; and the terminal verbs spawn a process no combination of the others
-can. Lifecycle actions return failure as `{ ok: false, message }` data rather
-than throwing — a thrown main-process error crosses IPC as an opaque string
-with the real message buried.
+terminal verbs spawn a process no combination of the others can; and the
+project verbs and `claudeStatus` are a _different cadence_ — folding
+`scanProjects` into `DiscoverySnapshot` would make the 5s poll pay for a
+filesystem walk sixty times an hour, and folding in `claudeStatus` would
+multiply its Docker traffic by the number of live containers. **A new verb has
+to clear one of those three bars.** Lifecycle actions return failure as
+`{ ok: false, message }` data rather than throwing — a thrown main-process
+error crosses IPC as an opaque string with the real message buried.
 
 Every verb that acts on a container or a project takes an **ID**. The main
 process resolves it against its own copy from the last scan and never acts on
 renderer-supplied data: `openInEditor` will not take a host path,
-`openProject` will not take a folder, and `openTerminal` will not take a
-startup command — it reads its own stored copy.
+`openProject` will not take a folder, `openTerminal` will not take a startup
+command — it reads its own stored copy — and `claudeStatus` drops any id that
+is not in the last scan.
 
 `addProjectRoot` takes **no argument** on purpose: the renderer can ask for the
 folder picker, and cannot say which folder the answer is.
@@ -296,6 +300,49 @@ group. It is a pure function, called by `useDiscovery` and exposed as
 flat one. Known gap: grouping only sees containers carrying
 `devcontainer.local_folder`, so an unlabeled compose sibling is invisible to
 "Stop all" (see `docs/roadmap.md`).
+
+### Claude Code presence
+
+Each card says whether a `claude` process is running inside the container, so
+Stop and "Stop all" are not blind to an agent mid-task. Same shell/core split
+as everything else: `claudeStatus` in `docker/client.ts` calls
+`Container.top()` and hands the raw rows to the pure `parseClaudeProcesses` in
+`src/models/claude.ts`; `useClaudeStatus` polls, `claudeBadge` in
+`presenters.ts` turns a status into a label and tone, and `ContainerCard` gets a
+field rather than a `switch`.
+
+Four things this feature will break on if they are forgotten:
+
+- **`top`, never `exec`.** Read-only, no shell, runs nothing in the container.
+  The process table is attacker-influenced data (anyone who can create
+  containers on the daemon), so an `exec` would be a far larger surface for a
+  strictly smaller answer.
+- **Find the command column by _title_, never by index.** Docker's default is
+  `ps -ef` (`UID PID PPID C STIME TTY TIME CMD`); Podman returns
+  `USER PID PPID %CPU ELAPSED TTY TIME COMMAND`. The response carries `Titles`
+  alongside `Processes` for exactly this.
+- **`STIME` is not `ELAPSED`.** Docker gives a start time, Podman a duration.
+  They live on separate `ClaudeSession` fields and the UI says "since" vs "up"
+  accordingly — folding them together ages a ten-minute session by ten hours.
+- **Match the package path, not the process name.** The CLI is a Node process
+  (`node .../@anthropic-ai/claude-code/cli.js`), and a wrapper named `claude` is
+  the other spelling. Matching any token containing "claude" false-positives on
+  an ordinary checkout, which is worse than no badge — the badge only earns its
+  place if it is believed.
+
+Three arms of `ClaudeStatus` render as nothing (`none`, `not-applicable`, and a
+container not yet polled) and one renders as an uncertain badge (`unknown`).
+Keep them distinct: **the absence of a badge is how a card says stopping is
+safe**, and "we could not tell" must not borrow that meaning.
+
+**Scope is presence, not activity.** Working vs. idle vs. waiting on a prompt
+would mean parsing session transcripts or IDE lock files under the container's
+`~/.claude`; neither is a versioned interface. Presence is cheap and stable,
+activity is neither.
+
+v1 **annotates** the Stop button rather than gating it; a confirm dialog is the
+follow-up, once the detection has been seen to be reliable against a real
+daemon.
 
 ### Layout and theme
 

@@ -41,6 +41,12 @@
   --group-bg: rgba(255, 255, 255, 0.02);
   --hairline: rgba(255, 255, 255, 0.04);
   --hover: rgba(255, 255, 255, 0.04);
+  /* Deliberately not --ok. The status dot already means "this container is
+     up"; this means "something is working in there", and two identical greens
+     on one card read as one fact stated twice. */
+  --claude: #e0a184;
+  --claude-border: rgba(203, 123, 93, 0.5);
+  --claude-bg: rgba(203, 123, 93, 0.14);
   color-scheme: dark;
 }
 
@@ -62,6 +68,9 @@
   --group-bg: rgba(15, 23, 42, 0.02);
   --hairline: rgba(15, 23, 42, 0.06);
   --hover: rgba(15, 23, 42, 0.04);
+  --claude: #a04a1e;
+  --claude-border: rgba(160, 74, 30, 0.45);
+  --claude-bg: rgba(160, 74, 30, 0.1);
   color-scheme: light;
 }
 
@@ -322,10 +331,57 @@ button.link {
   text-overflow: ellipsis;
 }
 
+.card-head-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
 .card-status {
   font-size: 11px;
   color: var(--text-dim);
   white-space: nowrap;
+}
+
+/* ---------- Claude Code presence ---------- */
+
+.badge {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  cursor: default;
+}
+
+.badge-claude-running {
+  border-color: var(--claude-border);
+  background: var(--claude-bg);
+  color: var(--claude);
+}
+
+/* "Could not tell" has to look different from "nothing running", which is the
+   absence of a badge — not louder, just clearly uncertain. */
+.badge-claude-unknown {
+  border-color: var(--border);
+  color: var(--text-dim);
+  font-weight: 500;
+}
+
+/* A Stop that would end a live session. Annotated, not disabled — only the
+   border changes, because the click is still allowed. */
+button.warn {
+  border-color: var(--transitional);
+  color: var(--transitional);
+}
+
+button.warn:hover:not(:disabled) {
+  border-color: var(--transitional);
+  background: var(--claude-bg);
 }
 
 .tag {
@@ -487,6 +543,13 @@ button.link {
 
 .list[data-layout='rows'] .card-title h2 {
   font-size: 13px;
+}
+
+/* One line per container, so the badge is a count in a circle. The label it
+   replaces stays reachable through the button's title and aria-label. */
+.list[data-layout='rows'] .badge {
+  padding: 1px 6px;
+  font-size: 10px;
 }
 
 .list[data-layout='rows'] .card-meta {
