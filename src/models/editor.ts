@@ -1,3 +1,5 @@
+import type { BinaryDiscovery } from './discovery.js';
+
 export type KnownEditorId = 'vscode' | 'vscode-insiders' | 'cursor' | 'windsurf';
 
 /** Open-ended: a user-configured fork should not require a code change. */
@@ -8,18 +10,13 @@ export type EditorId = KnownEditorId | (string & {});
  *
  * A list rather than a single strategy because "`code` is often not on PATH
  * on macOS, fall back to probing the app bundle" is really "try these in
- * order", and each editor wants a different order. Keeping it as data means
- * adding Windsurf is a config entry, not a new code branch.
+ * order", and each editor wants a different order.
+ *
+ * An alias rather than its own union: terminal emulators are found exactly the
+ * same way, so the shape lives in `discovery.ts` and this name survives as the
+ * spelling the editor code reads best with.
  */
-export type EditorDiscovery =
-  | { readonly kind: 'explicit-path'; readonly binaryPath: string }
-  | { readonly kind: 'path-lookup'; readonly command: string }
-  | {
-      readonly kind: 'macos-bundle';
-      readonly bundleId: string;
-      readonly cliRelativePath: string;
-    }
-  | { readonly kind: 'well-known-dir'; readonly paths: readonly string[] };
+export type EditorDiscovery = BinaryDiscovery;
 
 export interface EditorTarget {
   readonly id: EditorId;

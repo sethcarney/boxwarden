@@ -150,7 +150,19 @@ Windows machine in a particular state of disrepair, and those are exactly the
 screens that have to be right for a user whose setup does not work.
 
 The main process logs a loud warning when this is on. A fake container list the
-user believes is real is the worst possible failure for this app.
+user believes is real is the worst possible failure for this app. The fake's
+socket paths say `(fake)` out loud for the same reason — that string reaches
+the `docker exec` command line the terminal shows, where a plausible-looking
+`/var/run/docker.sock` would be an invitation to believe the fixtures.
+
+Everything the UI does works against the fixtures except the two things that
+leave the app: opening an editor, and opening a terminal. The Terminal button
+resolves a real emulator and builds a real exec line, then fails at the daemon
+that is not there — which is the correct outcome, and still exercises emulator
+resolution, quoting, and the startup-command round trip. Because the fixtures
+round-robin across the three fake engines, one in three of them produces a
+`wsl.exe -d dev --` command line, which is the arm of `containerExecArgv` least
+likely to be looked at otherwise.
 
 ## Two TypeScript projects
 
@@ -173,8 +185,15 @@ _absent key_, not `undefined`. Hence the conditional spreads throughout
 ## Testing
 
 `vitest run`. The suite covers the pure layer — label parsing, inspect
-mapping, URI construction, endpoint ordering, display formatting — so it needs
-neither a daemon nor a display and runs anywhere.
+mapping, URI construction, terminal command assembly, preference parsing,
+endpoint ordering, display formatting — so it needs neither a daemon nor a
+display and runs anywhere.
+
+`src/main/terminal/command.test.ts` is worth reading before touching anything
+it covers. The quoting functions are the only thing standing between a
+user-authored startup command and the host shell, so the tests feed them a
+deliberately hostile command and assert on containment rather than on output
+formatting.
 
 The one impure exception is `src/main/projects/scan.test.ts`, which builds a
 tree of `.devcontainer` directories under `mkdtemp` and removes it afterwards.
@@ -213,13 +232,22 @@ two TypeScript projects exist to enforce.
 ## Verifying the UI headlessly
 
 The app was smoke-tested in CI-like conditions with `xvfb-run` plus a
-screenshot capture. Two gotchas if you repeat it:
+screenshot capture. Three gotchas if you repeat it:
 
 - `app.enableSandbox()` means `--no-sandbox` is refused, so the app **cannot
   run as root**. Run as an unprivileged user and ensure
   `node_modules/electron/dist/chrome-sandbox` is `root:root` mode `4755`.
+  Passing `--no-sandbox` anyway does not degrade gracefully: every child
+  process aborts and respawns in a loop, and the app hangs without a window.
 - Electron needs a D-Bus session for some subsystems; the errors it logs
   without one are noise, not failures.
+- Driving the IPC surface from the harness is more informative than a
+  screenshot. `BrowserWindow.getAllWindows()[0].webContents.executeJavaScript`
+  can call `window.boxwarden` directly, which is how the terminal path was
+  checked end to end: `listTerminals` against an installed `xterm`,
+  `setStartupCommand` through to `preferences.json`, and `openTerminal`
+  returning the exec line. Feeding that line back through `sh -c` with a script
+  that prints its argv is the cheapest proof the quoting holds.
 
 ## Linting
 

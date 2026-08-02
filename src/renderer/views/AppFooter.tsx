@@ -1,5 +1,5 @@
-import type { EditorId } from '../../models/index.js';
-import type { EditorOption } from '../../shared/ipc.js';
+import type { EditorId, TerminalId } from '../../models/index.js';
+import type { EditorOption, TerminalOption } from '../../shared/ipc.js';
 import { ViewPicker } from '../components/ViewPicker.js';
 import type { ViewPreferences } from '../view.js';
 
@@ -13,6 +13,15 @@ interface Props {
   readonly editors: readonly EditorOption[];
   readonly editorId: EditorId;
   readonly onChooseEditor: (id: EditorId) => void;
+  readonly terminals: readonly TerminalOption[];
+  readonly terminalId: TerminalId | undefined;
+  /**
+   * False when nothing was found. Hidden rather than shown empty: on a machine
+   * with no emulator this app knows about, an empty picker is a puzzle, and the
+   * card's Terminal button already carries the explanation in its tooltip.
+   */
+  readonly showTerminalPicker: boolean;
+  readonly onChooseTerminal: (id: TerminalId) => void;
 }
 
 export function AppFooter({
@@ -23,6 +32,10 @@ export function AppFooter({
   editors,
   editorId,
   onChooseEditor,
+  terminals,
+  terminalId,
+  showTerminalPicker,
+  onChooseTerminal,
 }: Props) {
   return (
     <footer className="app-foot">
@@ -50,6 +63,25 @@ export function AppFooter({
             ))}
           </select>
         </label>
+
+        {showTerminalPicker && (
+          <label className="editor-picker">
+            Terminal
+            <select
+              value={terminalId ?? ''}
+              onChange={(event) => {
+                onChooseTerminal(event.target.value);
+              }}
+            >
+              {terminals.map((terminal) => (
+                <option key={terminal.id} value={terminal.id}>
+                  {terminal.displayName}
+                  {terminal.available ? '' : ' (not found)'}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
       </div>
     </footer>
   );

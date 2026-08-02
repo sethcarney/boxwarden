@@ -8,6 +8,7 @@ import type {
   EngineSummary,
   ProjectId,
   ProjectScan,
+  TerminalId,
 } from '../models/index.js';
 
 /**
@@ -102,6 +103,38 @@ export type ProjectRootsResult =
   | { readonly ok: true; readonly cancelled: boolean }
   | { readonly ok: false; readonly message: string };
 
+/** Same shape as `EditorOption`, for the terminal emulators found on this machine. */
+export interface TerminalOption {
+  readonly id: TerminalId;
+  readonly displayName: string;
+  readonly available: boolean;
+}
+
+export type OpenTerminalFailure =
+  /** `docker exec` needs a live container; a stopped one has no process namespace to enter. */
+  | 'not-running'
+  /** Neither `docker` nor `podman` is on PATH, so there is nothing to exec with. */
+  | 'container-cli-not-found'
+  /** No terminal emulator found for the requested id. */
+  | 'terminal-not-found'
+  /** The emulator was found but the spawn failed. */
+  | 'launch-failed';
+
+export type OpenTerminalResult =
+  | { readonly ok: true; readonly terminalId: TerminalId; readonly command: string }
+  | {
+      readonly ok: false;
+      readonly code: OpenTerminalFailure;
+      readonly message: string;
+      /**
+       * The exec command line, when one could be built. Serves the same purpose
+       * as `uri` above: if the terminal could not be opened but the command is
+       * sound, the user can paste it into a shell they already have and get
+       * where they were going.
+       */
+      readonly command?: string;
+    };
+
 export const IPC = {
   discover: 'boxwarden:discover',
   start: 'boxwarden:start',
@@ -113,6 +146,10 @@ export const IPC = {
   openProject: 'boxwarden:open-project',
   addProjectRoot: 'boxwarden:add-project-root',
   removeProjectRoot: 'boxwarden:remove-project-root',
+  listTerminals: 'boxwarden:list-terminals',
+  openTerminal: 'boxwarden:open-terminal',
+  getStartupCommands: 'boxwarden:get-startup-commands',
+  setStartupCommand: 'boxwarden:set-startup-command',
 } as const;
 
 /**
@@ -173,4 +210,35 @@ export interface BoxwardenApi {
 
   /** Remove a root by path. Safe to accept a string: it can only ever narrow what is scanned. */
   removeProjectRoot(root: string): Promise<ProjectRootsResult>;
+
+  /**
+   * ---- Terminals ----
+   *
+   * Read once, like `listEditors`: the set of terminal emulators on a machine
+   * does not change while the app is open.
+   */
+  listTerminals(): Promise<readonly TerminalOption[]>;
+
+  /**
+   * Open a shell in a running container.
+   *
+   * The startup command is deliberately NOT a parameter. The renderer sends an
+   * id; the main process looks up its own copy of the container and its own
+   * copy of the command, exactly as `openInEditor` refuses to accept a host
+   * path and `openProject` refuses to accept a folder. What gets spawned is
+   * then a function of what the main process already trusted, not of what the
+   * message contained.
+   */
+  openTerminal(id: ContainerId, terminalId: TerminalId): Promise<OpenTerminalResult>;
+
+  /** Keyed by `containerSettingsKey`, so the renderer can look one up per card. */
+  getStartupCommands(): Promise<Readonly<Record<string, string>>>;
+
+  /**
+   * Set or clear one container's startup command. An empty command clears it.
+   *
+   * The container is named by id and the KEY is derived in the main process, so
+   * a renderer cannot file a startup command against a folder it invented.
+   */
+  setStartupCommand(id: ContainerId, command: string): Promise<ActionResult>;
 }

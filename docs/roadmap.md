@@ -14,6 +14,12 @@ unblocks the most.
 - Start and stop, individually or per project.
 - Open in VS Code / Insiders / Cursor / Windsurf via `vscode-remote://`, with a
   **Copy URI** fallback when launching fails.
+- **Open a terminal** in a running container, via `docker exec -it` in the
+  user's own emulator, with a **Copy command** fallback. Twelve emulators
+  across macOS, Linux and Windows, selected from the footer.
+- A per-container **startup command**, run inside the container before the
+  interactive shell. Persisted in `preferences.json` under the host folder, so a
+  rebuild does not lose it.
 - Recovers the **WSL distribution** from bind-mount sources, so a path inside a
   distro is not displayed as a native Linux path.
 - A diagnostics screen naming every socket that was tried and why each failed.
@@ -26,12 +32,19 @@ unblocks the most.
 ## Verified and unverified
 
 Verified here: build, ESLint + Prettier, typecheck across both TS projects,
-132 unit and component tests, and a headless launch under `xvfb` against
+390 unit and component tests, and a headless launch under `xvfb` against
 `BOXWARDEN_FAKE_DOCKER=1` — 7 cards in 1 compose group, group actions correct
 for the members' states, WSL path resolved from mounts, ports and footer right.
 That launch has since been repeated against a **packaged** Linux build, which
 exercises the parts development mode does not: the asar archive, the sandboxed
 preload loaded from inside it, and production CSP.
+
+The terminal path was driven through the same harness with `xterm` installed:
+the emulator was found and offered, the Terminal button was live only for the
+running fixtures, a startup command written through the bridge landed in
+`preferences.json` under the compose-aware key, and `openTerminal` spawned
+xterm and returned the exec line — which round-tripped through a real `sh -c`
+as eight intact argv elements. What that cannot prove is the far end.
 
 **Not verified**, because the environment this was built in has no Docker
 socket and no editor installed:
@@ -39,9 +52,18 @@ socket and no editor installed:
 - Discovery against a real daemon.
 - That the `vscode-remote://` URI actually reattaches VS Code.
 - Editor binary resolution on any OS.
+- That `docker exec` actually lands a shell in a container. There was no daemon
+  behind the exec above.
+- **The Windows emulators specifically.** `wt.exe new-tab`'s option parsing and
+  its `\;` escape, and the `conhost.exe <command>` fallback, are both written
+  from documentation rather than from a machine. They are the least trustworthy
+  rows in `terminal/targets.ts`.
+- The AppleScript for Terminal.app and iTerm2 — in particular that iTerm2 3.x
+  really does want `create window with default profile command` and not
+  `do script`.
 
-Those three are the first thing to do on a real machine, and until they pass
-the app should be considered unproven rather than working.
+Those are the first thing to do on a real machine, and until they pass the app
+should be considered unproven rather than working.
 
 ---
 
@@ -55,7 +77,11 @@ the app should be considered unproven rather than working.
   untested. If it does normalise, `authorityFor` needs to match that
   normalisation exactly, and the test in `uri.test.ts` inverts.
 - Confirm `code` resolution via each strategy, especially the macOS
-  `mdfind` path.
+  `mdfind` path. The same resolver now finds terminal emulators, so a fix there
+  is a fix for both.
+- Open a terminal on each OS and confirm the shell lands in the container, the
+  startup command runs before it, and interrupting a long-running startup
+  command leaves an interactive shell rather than closing the window.
 
 ## 2. Verify the forks
 
@@ -156,6 +182,17 @@ claim about one Linux machine on one day — see the CI item below.
   offering them would be better.
 - **Watching for new projects.** The scan runs on open and on demand. A repo
   cloned while the app is running does not appear until the user rescans.
+- **A terminal for a compose project.** There is no "shell into every service",
+  and it is not obvious there should be — a window per service is rarely what
+  anyone wants.
+- **A user-configured terminal.** `terminal/targets.ts` covers twelve
+  emulators; anything else needs a table entry. An explicit-path override
+  (`BOXWARDEN_TERMINAL`) would close that without a code change, and the
+  discovery type already has an `explicit-path` arm for it.
+- **Startup command history.** One command per container, overwritten in place.
+  No previous values, no per-project defaults, and no way to edit one from rows
+  layout — the field is hidden there because a text input does not fit on a
+  single-line row.
 - **App-level tests.** `App.tsx` — polling, the busy set, group fan-out — has
   no test of its own; the pieces it composes are covered individually.
 - **Accessibility.** No keyboard shortcuts, no focus management, no screen
@@ -180,4 +217,8 @@ Items completed since the first MVP pass, kept for the record:
   editor extensions and ran `source.fixAll.eslint` on save while neither tool
   was installed.
 - ~~Compose grouping~~.
-- ~~Copy the URI as a fallback~~.
+- ~~Copy the URI as a fallback~~ — now a labelled pair, so a failed terminal
+  offers **Copy command** through the same slot.
+- ~~Open a terminal in a container~~, with a per-container startup command.
+  What remains of that item is confirming it against real daemons and real
+  emulators, which is why it appears above under "Not verified".

@@ -13,13 +13,22 @@ function renderCard(
   container: DevContainer,
   props: Partial<Parameters<typeof ContainerCard>[0]> = {},
 ) {
-  const handlers = { onStart: vi.fn(), onStop: vi.fn(), onOpen: vi.fn() };
+  const handlers = {
+    onStart: vi.fn(),
+    onStop: vi.fn(),
+    onOpen: vi.fn(),
+    onOpenTerminal: vi.fn(),
+    onStartupCommandChange: vi.fn(),
+  };
   render(
     <ContainerCard
       container={container}
       editorId="vscode"
       editorName="VS Code"
       editorAvailable
+      terminalName="GNOME Terminal"
+      terminalAvailable
+      startupCommand=""
       busy={false}
       now={NOW}
       {...handlers}
@@ -48,11 +57,16 @@ describe('ContainerCard', () => {
           editorId="vscode"
           editorName="VS Code"
           editorAvailable
+          terminalName="GNOME Terminal"
+          terminalAvailable
+          startupCommand=""
           busy={false}
           now={NOW}
           onStart={vi.fn()}
           onStop={vi.fn()}
           onOpen={vi.fn()}
+          onOpenTerminal={vi.fn()}
+          onStartupCommandChange={vi.fn()}
         />,
       );
       expect(dom.querySelector('.card-degraded')).not.toBeNull();
@@ -110,6 +124,59 @@ describe('ContainerCard', () => {
       renderCard(devContainer(), { dense: true, editorName: 'VS Code Insiders' });
       const button = screen.getByRole('button', { name: 'Open' });
       expect(button.getAttribute('title')).toBe('Open in VS Code Insiders');
+    });
+  });
+
+  describe('the Terminal button', () => {
+    it('is enabled and fires for a running container with an emulator installed', async () => {
+      const { onOpenTerminal } = renderCard(devContainer());
+      const button = screen.getByRole('button', { name: 'Terminal' });
+      expect(button.hasAttribute('disabled')).toBe(false);
+      await userEvent.click(button);
+      expect(onOpenTerminal).toHaveBeenCalledTimes(1);
+    });
+
+    it('is disabled, with the reason, for a stopped container', () => {
+      // `docker exec` needs a live process namespace. Offering the button and
+      // failing at the daemon would put the explanation in a notice the user
+      // has to dismiss, rather than in the tooltip of the thing they clicked.
+      renderCard(
+        devContainer({
+          runtime: { state: 'exited', exitCode: 0, finishedAt: new Date(NOW - 3_600_000) },
+        }),
+      );
+      const button = screen.getByRole('button', { name: 'Terminal' });
+      expect(button.hasAttribute('disabled')).toBe(true);
+      expect(button.getAttribute('title')).toMatch(/only be opened in a running container/i);
+    });
+
+    /**
+     * A paused container is the case that motivates `canExec` existing apart
+     * from `canStop`: it still has a process namespace, so the exec is accepted
+     * and then blocks forever against frozen processes. A terminal that opens
+     * and hangs is worse than one that refuses.
+     */
+    it('is disabled for a paused container, even though Stop is offered', () => {
+      renderCard(
+        devContainer({
+          runtime: { state: 'paused', startedAt: new Date(NOW - 3_600_000), ports: [] },
+        }),
+      );
+      expect(screen.getByRole('button', { name: 'Terminal' }).hasAttribute('disabled')).toBe(true);
+      expect(screen.getByRole('button', { name: 'Stop' }).hasAttribute('disabled')).toBe(false);
+    });
+
+    it('is disabled, naming the terminal, when that emulator is not installed', () => {
+      renderCard(devContainer(), { terminalAvailable: false, terminalName: 'Konsole' });
+      const button = screen.getByRole('button', { name: 'Terminal' });
+      expect(button.hasAttribute('disabled')).toBe(true);
+      expect(button.getAttribute('title')).toMatch(/Konsole was not found/i);
+    });
+
+    it('blames nobody when no emulator was found at all', () => {
+      renderCard(devContainer(), { terminalAvailable: false, terminalName: undefined });
+      const button = screen.getByRole('button', { name: 'Terminal' });
+      expect(button.getAttribute('title')).toMatch(/No terminal emulator/i);
     });
   });
 
@@ -174,11 +241,16 @@ describe('ContainerCard', () => {
           editorId="vscode"
           editorName="VS Code"
           editorAvailable
+          terminalName="GNOME Terminal"
+          terminalAvailable
+          startupCommand=""
           busy={false}
           now={NOW}
           onStart={vi.fn()}
           onStop={vi.fn()}
           onOpen={vi.fn()}
+          onOpenTerminal={vi.fn()}
+          onStartupCommandChange={vi.fn()}
         />,
       );
       expect(dom.querySelector('.ports')).toBeNull();

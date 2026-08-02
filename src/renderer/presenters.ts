@@ -17,7 +17,7 @@
 import type { DevContainer, EndpointProbe, EngineSelection, PortBinding } from '../models/index.js';
 import { projectName } from '../models/index.js';
 import type { DiscoverySnapshot } from '../shared/ipc.js';
-import { describeTarget, runtimeLabel } from './format.js';
+import { canExec, describeTarget, runtimeLabel } from './format.js';
 
 /**
  * Anything thrown, as a sentence.
@@ -112,6 +112,28 @@ export function openBlockedReason(
   }
   if (!editorAvailable) return `${editorName} was not found on this machine.`;
   return undefined;
+}
+
+/**
+ * Why the Terminal button is disabled, or undefined when it is not.
+ *
+ * Two preconditions, and the order matters: a stopped container cannot be
+ * exec'd into whatever emulator is installed, so that reason comes first and
+ * naming a missing emulator would be a red herring.
+ *
+ * `terminalName` being undefined is a third case rather than a missing name —
+ * nothing was found, so there is nobody to blame and no install to suggest.
+ */
+export function terminalBlockedReason(
+  container: DevContainer,
+  terminalAvailable: boolean,
+  terminalName: string | undefined,
+): string | undefined {
+  if (!canExec(container.runtime)) return 'A shell can only be opened in a running container.';
+  if (terminalAvailable) return undefined;
+  return terminalName === undefined
+    ? 'No terminal emulator boxwarden recognises was found on this machine.'
+    : `${terminalName} was not found on this machine.`;
 }
 
 /**
