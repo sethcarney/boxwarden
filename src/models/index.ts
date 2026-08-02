@@ -10,7 +10,7 @@ export type {
   Health,
   PortBinding,
 } from './devcontainer.js';
-export { asContainerId, displayStatus } from './devcontainer.js';
+export { asContainerId, containerSettingsKey, displayStatus } from './devcontainer.js';
 
 export type {
   ContainerRuntimeKind,
@@ -85,3 +85,22 @@ export type {
   KnownEditorId,
   ResolvedEditor,
 } from './editor.js';
+
+export type { BinaryDiscovery, ResolvedBinary } from './discovery.js';
+
+export type {
+  ContainerCli,
+  ContainerCliKind,
+  KnownTerminalId,
+  ResolvedTerminal,
+  TerminalArgumentEscaping,
+  TerminalId,
+  TerminalInvocation,
+  TerminalTarget,
+} from './terminal.js';
+export {
+  MAX_STARTUP_COMMAND_LENGTH,
+  normaliseStartupCommand,
+  parseStartupCommands,
+  withStartupCommand,
+} from './terminal.js';

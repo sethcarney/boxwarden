@@ -15,38 +15,54 @@ export interface Notice {
   readonly message: string;
 }
 
+/**
+ * Something a failed launch produced that the user can still use by hand.
+ *
+ * A labelled pair rather than a bare string because there are now two kinds:
+ * an editor URI and a `docker exec` command line. They are offered in the same
+ * place and copied the same way, but a button reading "Copy URI" beside a
+ * shell command would be a small lie in the one part of the UI whose whole job
+ * is to be accurate when something has gone wrong.
+ */
+export interface CopyableFallback {
+  /** The button's label — "Copy URI", "Copy command". */
+  readonly label: string;
+  readonly value: string;
+}
+
 export interface NoticesViewModel {
   readonly notice: Notice | undefined;
   /**
-   * The URI of the last failed open, offered as a copyable fallback.
+   * What the last failed launch produced, offered as a copyable fallback.
    *
-   * `OpenInEditorResult` carries `uri` on its failure arm for exactly this: if
-   * a valid URI was built but the editor could not be launched, the user can
-   * still paste it into a browser or a shell and get where they were going.
-   * Showing only "could not find VS Code" would be withholding the one thing
+   * Both failure arms carry one — `OpenInEditorResult.uri` and
+   * `OpenTerminalResult.command` — for exactly this: if a valid URI or a valid
+   * exec line was built but the thing that consumes it could not be launched,
+   * the user can still paste it somewhere and get where they were going.
+   * Showing only "could not find VS Code" would be withholding the one part
    * that still works.
    */
-  readonly lastFailedUri: string | undefined;
+  readonly fallback: CopyableFallback | undefined;
   readonly showInfo: (message: string) => void;
   readonly showError: (message: string) => void;
   /** Report a caught rejection. */
   readonly showThrown: (error: unknown) => void;
-  /** Report a failed open, keeping its URI for the copy button. */
-  readonly showOpenFailure: (message: string, uri: string | undefined) => void;
+  /** Report a failed launch, keeping its fallback for the copy button. */
+  readonly showLaunchFailure: (message: string, fallback: CopyableFallback | undefined) => void;
   /**
-   * Keep a failed open's URI without touching the notice.
+   * Keep a failed launch's fallback without touching the notice.
    *
    * For the case where the caller is inside `withBusy`, which reports the
    * message itself — setting both here would show the notice twice.
    */
-  readonly rememberFailedUri: (uri: string | undefined) => void;
-  readonly copyFailedUri: () => void;
+  readonly rememberFallback: (fallback: CopyableFallback | undefined) => void;
+  readonly copyFallback: () => void;
   readonly dismiss: () => void;
 }
 
 export function useNotices(): NoticesViewModel {
   const [notice, setNotice] = useState<Notice | undefined>(undefined);
-  const [lastFailedUri, setLastFailedUri] = useState<string | undefined>(undefined);
+  const [fallback, setFallback] = useState<CopyableFallback | undefined>(undefined);
 
   const showInfo = useCallback((message: string) => {
     setNotice({ tone: 'info', message });
@@ -60,47 +76,47 @@ export function useNotices(): NoticesViewModel {
     setNotice({ tone: 'error', message: errorMessage(error) });
   }, []);
 
-  const showOpenFailure = useCallback((message: string, uri: string | undefined) => {
-    setLastFailedUri(uri);
+  const showLaunchFailure = useCallback((message: string, next: CopyableFallback | undefined) => {
+    setFallback(next);
     setNotice({ tone: 'error', message });
   }, []);
 
-  const rememberFailedUri = useCallback((uri: string | undefined) => {
-    setLastFailedUri(uri);
+  const rememberFallback = useCallback((next: CopyableFallback | undefined) => {
+    setFallback(next);
   }, []);
 
   /**
    * Clipboard writes can be refused, and silently dropping that would leave the
-   * user believing they had the URI. The failure replaces the notice with one
+   * user believing they had the value. The failure replaces the notice with one
    * that says so.
    */
-  const copyFailedUri = useCallback(() => {
-    if (lastFailedUri === undefined) return;
-    void navigator.clipboard.writeText(lastFailedUri).then(
+  const copyFallback = useCallback(() => {
+    if (fallback === undefined) return;
+    void navigator.clipboard.writeText(fallback.value).then(
       () => {
-        setNotice({ tone: 'info', message: 'Copied the editor URI to the clipboard.' });
-        setLastFailedUri(undefined);
+        setNotice({ tone: 'info', message: 'Copied to the clipboard.' });
+        setFallback(undefined);
       },
       () => {
         setNotice({ tone: 'error', message: 'Could not write to the clipboard.' });
       },
     );
-  }, [lastFailedUri]);
+  }, [fallback]);
 
   const dismiss = useCallback(() => {
     setNotice(undefined);
-    setLastFailedUri(undefined);
+    setFallback(undefined);
   }, []);
 
   return {
     notice,
-    lastFailedUri,
+    fallback,
     showInfo,
     showError,
     showThrown,
-    showOpenFailure,
-    rememberFailedUri,
-    copyFailedUri,
+    showLaunchFailure,
+    rememberFallback,
+    copyFallback,
     dismiss,
   };
 }

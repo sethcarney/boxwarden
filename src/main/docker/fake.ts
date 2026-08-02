@@ -308,6 +308,21 @@ export class FakeDockerBackend implements DockerBackend {
     return FAKE_ENDPOINTS.map((endpoint) => engineIdFor(endpoint.transport));
   }
 
+  /**
+   * The same round-robin `listDevContainers` filters by, so a fixture container
+   * reports the engine it appears to have come from.
+   *
+   * Worth mirroring rather than always answering DOCKER_ENDPOINT: it puts a
+   * `wsl.exe -d dev --` command line in front of anyone running the fake on
+   * Linux, which is the arm of `containerExecArgv` least likely to be looked at
+   * otherwise. The socket paths say "(fake)" out loud for the same reason they
+   * do above — that string reaches the command line the terminal shows.
+   */
+  endpointFor(id: ContainerId): DockerEndpoint | undefined {
+    const index = this.#containers.findIndex((container) => container.Id === id);
+    return index === -1 ? undefined : FAKE_ENDPOINTS[index % FAKE_ENDPOINTS.length];
+  }
+
   /** Mutates the fixture so the UI's optimistic update has something real to land on. */
   start(id: ContainerId): Promise<void> {
     return this.#transition(id, {

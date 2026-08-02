@@ -10,12 +10,17 @@ interface Props {
   readonly editorId: EditorId;
   readonly editorName: string;
   readonly editorAvailable: boolean;
+  readonly terminalName: string | undefined;
+  readonly terminalAvailable: boolean;
+  readonly startupCommandFor: (container: DevContainer) => string;
   readonly now: number;
   readonly isBusy: (id: DevContainer['id']) => boolean;
   readonly isGroupBusy: (group: ContainerGroup) => boolean;
   readonly onStart: (container: DevContainer) => void;
   readonly onStop: (container: DevContainer) => void;
   readonly onOpen: (container: DevContainer) => void;
+  readonly onOpenTerminal: (container: DevContainer) => void;
+  readonly onStartupCommandChange: (container: DevContainer, command: string) => void;
   readonly onStartAll: (containers: readonly DevContainer[]) => void;
   readonly onStopAll: (containers: readonly DevContainer[]) => void;
 }
@@ -33,12 +38,17 @@ export function ContainerList({
   editorId,
   editorName,
   editorAvailable,
+  terminalName,
+  terminalAvailable,
+  startupCommandFor,
   now,
   isBusy,
   isGroupBusy,
   onStart,
   onStop,
   onOpen,
+  onOpenTerminal,
+  onStartupCommandChange,
   onStartAll,
   onStopAll,
 }: Props) {
@@ -51,6 +61,9 @@ export function ContainerList({
       editorId={editorId}
       editorName={editorName}
       editorAvailable={editorAvailable}
+      terminalName={terminalName}
+      terminalAvailable={terminalAvailable}
+      startupCommand={startupCommandFor(container)}
       busy={isBusy(container.id)}
       now={now}
       // Rows mode is one line per container, and "Open in VS Code Insiders"
@@ -59,6 +72,8 @@ export function ContainerList({
       onStart={onStart}
       onStop={onStop}
       onOpen={onOpen}
+      onOpenTerminal={onOpenTerminal}
+      onStartupCommandChange={onStartupCommandChange}
     />
   );
 

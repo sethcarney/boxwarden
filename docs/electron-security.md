@@ -28,6 +28,7 @@ this repo so a reviewer can check the claim rather than take it on trust.
 | 15. `shell.openExternal` only on trusted input | Closed origin allow-list; never a renderer-chosen URL                          | `src/main/index.ts`                            |
 | 16. Current Electron                           | Electron 43                                                                    | `package.json`                                 |
 | 17. Validate IPC senders                       | `isTrustedSender` compares the `WebContents` object                            | `src/main/ipc.ts`                              |
+| Spawning, generally                            | argv arrays only, never `shell: true`, for editors and terminals alike         | `src/main/{editor,terminal}/launch.ts`         |
 
 Several of these are already Electron 43 defaults. They are written out anyway:
 a default that flips in a future major is the kind of regression nobody
@@ -65,6 +66,13 @@ The same reasoning explains why `openInEditor` takes a **container id**, not a
 against a host path the renderer supplied. The main process looks up its own
 copy from the last scan instead.
 
+`openTerminal` follows it twice over. It takes an id, and it does **not** take
+the startup command — the main process reads its own stored copy, keyed off its
+own copy of the container. `setStartupCommand` is the same shape from the other
+direction: the renderer sends the command text, and the main process derives
+the key it is filed under. A renderer cannot write a startup command against a
+folder it invented, nor run one it merely claimed was stored.
+
 ### The renderer never names a path
 
 The unbuilt-projects feature added four verbs, and all four keep filesystem
@@ -94,6 +102,30 @@ it would be command injection.
 URI to whatever is registered for the scheme. It is used only for the
 allow-listed documentation origins.
 
+### Nor does opening a terminal
+
+`src/main/terminal/launch.ts` follows the same rule with a sharper edge: what
+it launches is, by design, a command line containing user-authored shell code —
+the container's startup command. That code is meant to run inside the
+container, and `shell: true` would run a copy of it on the host first.
+
+Wherever the terminal emulator accepts an argv array, containment is
+structural: every part stays a separate element and nothing is ever parsed as
+syntax. Two emulators make that impossible — macOS Terminal and iTerm2 have no
+command-line interface, only AppleScript — and for those the guarantee is
+`posixQuote` and `appleScriptString` in `src/main/terminal/command.ts`. Both
+wrap rather than escape a denylist, both are pure, and both are covered by
+tests that feed them a deliberately hostile command. Read
+`terminal/command.test.ts` before changing either one.
+
+Two smaller notes on the same path. `discovery/resolve.ts` refuses to resolve a
+`.cmd` or `.bat` on Windows, because Node will not spawn one without
+`shell: true` and accepting it here would only move the pressure to the
+launcher. And the startup command is normalised, not filtered
+(`models/terminal.ts`): NUL and CR are stripped because they would be mangled
+downstream, and nothing else is touched. The command is shell code by design;
+containment is argv, not a denylist.
+
 That allow-list is a **closed set** and has to stay one. The setup advice
 (`src/models/advice.ts`) links to install instructions for every engine
 boxwarden supports, so each new vendor is one more origin in
@@ -107,8 +139,9 @@ added here renders and does nothing; check both files together.
 ### The one granted permission
 
 Everything is denied except `clipboard-sanitized-write`. That exists because
-the diagnostics path offers **Copy URI** when launching an editor fails, and
-the URI is the one remaining way for the user to get where they were going.
+the diagnostics path offers **Copy URI** when launching an editor fails and
+**Copy command** when opening a terminal fails — in both cases the one
+remaining way for the user to get where they were going.
 
 It is write-only and sanitized. Clipboard **read** stays denied: a renderer
 that could read the clipboard could exfiltrate whatever the user last copied,

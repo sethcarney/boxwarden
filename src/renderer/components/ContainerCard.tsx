@@ -5,8 +5,10 @@ import {
   openBlockedReason,
   portLabel,
   sshAgentBadge,
+  terminalBlockedReason,
   visiblePorts,
 } from '../presenters.js';
+import { StartupCommandField } from './StartupCommandField.js';
 import { StatusDot } from './StatusDot.js';
 
 interface Props {
@@ -14,6 +16,11 @@ interface Props {
   readonly editorId: EditorId;
   readonly editorName: string;
   readonly editorAvailable: boolean;
+  /** Undefined when no emulator was found — a different sentence from "Konsole was not found". */
+  readonly terminalName: string | undefined;
+  readonly terminalAvailable: boolean;
+  /** '' when none is set. */
+  readonly startupCommand: string;
   readonly busy: boolean;
   readonly now: number;
   /**
@@ -25,6 +32,8 @@ interface Props {
   readonly onStart: (container: DevContainer) => void;
   readonly onStop: (container: DevContainer) => void;
   readonly onOpen: (container: DevContainer) => void;
+  readonly onOpenTerminal: (container: DevContainer) => void;
+  readonly onStartupCommandChange: (container: DevContainer, command: string) => void;
 }
 
 /**
@@ -39,16 +48,22 @@ export function ContainerCard({
   container,
   editorName,
   editorAvailable,
+  terminalName,
+  terminalAvailable,
+  startupCommand,
   busy,
   now,
   dense = false,
   onStart,
   onStop,
   onOpen,
+  onOpenTerminal,
+  onStartupCommandChange,
 }: Props) {
   const unresolved = container.localFolder.kind === 'unresolved';
   const ports = visiblePorts(container);
   const blocked = openBlockedReason(container, editorAvailable, editorName);
+  const terminalBlocked = terminalBlockedReason(container, terminalAvailable, terminalName);
   const agent = sshAgentBadge(container.sshAgent);
 
   return (
@@ -109,6 +124,14 @@ export function ContainerCard({
             </dd>
           </>
         )}
+
+        <StartupCommandField
+          value={startupCommand}
+          disabled={busy}
+          onCommit={(command) => {
+            onStartupCommandChange(container, command);
+          }}
+        />
       </dl>
 
       <footer className="card-actions">
@@ -122,6 +145,20 @@ export function ContainerCard({
           }}
         >
           {dense ? 'Open' : `Open in ${editorName}`}
+        </button>
+
+        <button
+          type="button"
+          disabled={busy || terminalBlocked !== undefined}
+          title={
+            terminalBlocked ??
+            `Open a shell in this container${terminalName === undefined ? '' : ` with ${terminalName}`}.`
+          }
+          onClick={() => {
+            onOpenTerminal(container);
+          }}
+        >
+          Terminal
         </button>
 
         {canStop(container.runtime) && (

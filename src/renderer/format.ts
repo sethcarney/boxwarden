@@ -7,6 +7,7 @@ import type {
   EngineSummary,
   MaybeHostPath,
 } from '../models/index.js';
+import { displayStatus } from '../models/index.js';
 
 /** Pure display helpers. Kept out of the components so they can be tested without a DOM. */
 
@@ -35,6 +36,18 @@ export function relativeTime(then: Date, now: number = Date.now()): string {
   }
   const days = Math.floor(delta / DAY);
   return `${days} day${days === 1 ? '' : 's'} ago`;
+}
+
+/**
+ * The dot's class, from the domain's three-way bucket.
+ *
+ * `displayStatus` is the Model's decision — that `paused` reads as live and
+ * `created` reads as stopped. Turning it into a class name is a display one,
+ * and doing it here rather than in the component is what keeps StatusDot from
+ * importing the Model directly for a value it only renders.
+ */
+export function statusDotClass(runtime: DevContainerRuntime): string {
+  return `dot dot-${displayStatus(runtime)}`;
 }
 
 /**
@@ -76,6 +89,18 @@ export function canStart(runtime: DevContainerRuntime): boolean {
 /** Whether a stop action makes sense for this state. */
 export function canStop(runtime: DevContainerRuntime): boolean {
   return runtime.state === 'running' || runtime.state === 'paused';
+}
+
+/**
+ * Whether a shell can be opened in this container.
+ *
+ * Stricter than `canStop`, and the difference is `paused`: a paused container
+ * still holds its process namespace, so `docker exec` is accepted and then
+ * blocks forever against frozen processes. A terminal that opens and hangs is
+ * worse than a disabled button, so pausing takes the action away.
+ */
+export function canExec(runtime: DevContainerRuntime): boolean {
+  return runtime.state === 'running';
 }
 
 /**

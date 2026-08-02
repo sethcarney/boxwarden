@@ -200,6 +200,15 @@ export class DockerodeBackend implements DockerBackend {
    */
   readonly #ownerById = new Map<ContainerId, Docker>();
 
+  /**
+   * The same mapping as `#ownerById`, but as the domain endpoint rather than
+   * the dockerode handle. Kept alongside instead of derived from it because a
+   * `Docker` instance does not carry the endpoint it was built from — the
+   * transport arm (a WSL socket in particular) is the thing the terminal
+   * launcher needs, and it only exists on this side.
+   */
+  readonly #endpointById = new Map<ContainerId, DockerEndpoint>();
+
   /** Defaults to the union of every reachable engine; see src/domain/engine.ts. */
   #selection: EngineSelection = ALL_ENGINES;
 
@@ -233,6 +242,7 @@ export class DockerodeBackend implements DockerBackend {
 
     this.#connections = connections;
     this.#ownerById.clear();
+    this.#endpointById.clear();
 
     const cli = await probeCli();
 
@@ -292,6 +302,7 @@ export class DockerodeBackend implements DockerBackend {
   #invalidate(): void {
     this.#connections = undefined;
     this.#ownerById.clear();
+    this.#endpointById.clear();
   }
 
   async #listFrom(connection: Connection): Promise<readonly DevContainer[]> {
@@ -325,7 +336,10 @@ export class DockerodeBackend implements DockerBackend {
       .map(mapContainer)
       .filter((value): value is DevContainer => value !== undefined);
 
-    for (const container of containers) this.#ownerById.set(container.id, docker);
+    for (const container of containers) {
+      this.#ownerById.set(container.id, docker);
+      this.#endpointById.set(container.id, connection.endpoint);
+    }
     return containers;
   }
 
@@ -409,6 +423,16 @@ export class DockerodeBackend implements DockerBackend {
       this.#invalidate();
       throw error;
     }
+  }
+
+  /**
+   * Synchronous and best-effort, unlike `#ownerOf`: a miss must not trigger a
+   * re-list. The caller is building a command line, and the honest answer to
+   * "which daemon owns this" being unknown is to omit the flag and let the CLI
+   * decide, not to make the user wait on a scan to find out.
+   */
+  endpointFor(id: ContainerId): DockerEndpoint | undefined {
+    return this.#endpointById.get(id);
   }
 }
 

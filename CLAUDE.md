@@ -56,9 +56,11 @@ VIEWMODEL   src/renderer/viewmodels/   state, commands, derived values (React ho
         │ ipcMain.handle
 MODEL       src/models/                pure types and functions, imports nothing
             src/main/                  the impure shells that fill them
-              docker/    endpoint discovery, dockerode, inspect→model
-              editor/    binary resolution, URI building, spawn
-              projects/  filesystem walk for unbuilt dev containers
+              docker/     endpoint discovery, dockerode, inspect→model
+              discovery/  finding a binary on this machine
+              editor/     URI building, spawn
+              terminal/   docker exec argv, emulator quoting, spawn
+              projects/   filesystem walk for unbuilt dev containers
 ```
 
 **The layering rule** has three parts, and all three are load-bearing:
@@ -67,13 +69,16 @@ MODEL       src/models/                pure types and functions, imports nothing
    Anything that touches the outside world lives in `src/main/` as a thin shell
    around a pure core:
 
-   | Impure edge                    | Pure core it wraps                         |
-   | ------------------------------ | ------------------------------------------ |
-   | `docker/client.ts` (dockerode) | `docker/mapping.ts`, `docker/host-path.ts` |
-   | `docker/client.ts` (probing)   | `docker/endpoint.ts`                       |
-   | `editor/launch.ts` (spawn)     | `editor/uri.ts`                            |
-   | `editor/resolve.ts` (fs, exec) | `editor/targets.ts` (data)                 |
-   | `projects/scan.ts` (fs walk)   | `models/project.ts`                        |
+   | Impure edge                       | Pure core it wraps                         |
+   | --------------------------------- | ------------------------------------------ |
+   | `docker/client.ts` (dockerode)    | `docker/mapping.ts`, `docker/host-path.ts` |
+   | `docker/client.ts` (probing)      | `docker/endpoint.ts`                       |
+   | `editor/launch.ts` (spawn)        | `editor/uri.ts`                            |
+   | `terminal/launch.ts` (spawn)      | `terminal/command.ts`                      |
+   | `discovery/resolve.ts` (fs, exec) | `editor/targets.ts`, `terminal/targets.ts` |
+   | `projects/scan.ts` (fs walk)      | `models/project.ts`                        |
+   | `preferences.ts` (fs)             | `models/{engine,project,terminal}.ts`      |
+   | `ssh-agent.ts` (env, fs, exec)    | `models/advice.ts`, `models/ssh-agent.ts`  |
 
 2. **A ViewModel renders nothing.** No module in `src/renderer/viewmodels/`
    imports `react-dom` or returns JSX. That is what lets the whole layer be
@@ -89,16 +94,17 @@ Docker daemon or a display, and why the shells stay small.
 
 ### The ViewModel layer
 
-`useAppViewModel()` composes five, kept separate because their lifetimes
+`useAppViewModel()` composes six, kept separate because their lifetimes
 genuinely differ:
 
-| Hook           | Owns                                               | Cadence           |
-| -------------- | -------------------------------------------------- | ----------------- |
-| `useDiscovery` | snapshot, busy set, start/stop/open, engine choice | polled every 5s   |
-| `useProjects`  | scan, roots, unbuilt/built partition               | on open, on ask   |
-| `useEditors`   | installed editors, the chosen one                  | read once         |
-| `useNotices`   | the message bar and the copyable failed URI        | event-driven      |
-| `useTheme`     | layout + theme, persisted to localStorage          | never touches IPC |
+| Hook           | Owns                                                        | Cadence           |
+| -------------- | ----------------------------------------------------------- | ----------------- |
+| `useDiscovery` | snapshot, busy set, start/stop/open/terminal, engine choice | polled every 5s   |
+| `useProjects`  | scan, roots, unbuilt/built partition                        | on open, on ask   |
+| `useEditors`   | installed editors, the chosen one                           | read once         |
+| `useTerminals` | installed emulators, the chosen one, startup commands       | read once         |
+| `useNotices`   | the message bar and the copyable fallback                   | event-driven      |
+| `useTheme`     | layout + theme, persisted to localStorage                   | never touches IPC |
 
 Four conventions hold this together:
 
@@ -108,30 +114,42 @@ Four conventions hold this together:
   `notices`** rather than depending on the object. `useNotices` returns a fresh
   object literal each render, and depending on it would re-run the poll effect
   on every notice.
-- **Actions live next to the state they change.** Start/stop/open sit in
-  `useDiscovery` because each ends by re-reading — the poll, the busy set and
+- **Actions live next to the state they change.** Start/stop/open/terminal sit
+  in `useDiscovery` because they share the busy set — the poll, the busy set and
   the lifecycle verbs are one state machine, and splitting them lets a stop land
-  on top of a refresh and get overwritten with pre-stop state.
+  on top of a refresh and get overwritten with pre-stop state. `useTerminals`
+  owns the emulator list and the startup commands but NOT `openTerminal`, for
+  exactly that reason: two busy sets would let one re-enable a button the other
+  still considers busy.
 - **Failures report through `useNotices`**, never through a second message
   channel, so a later failure cannot hide behind an earlier one.
 
-**The IPC surface is ten narrow verbs** — see `src/shared/ipc.ts` — all
+**The IPC surface is fourteen narrow verbs** — see `src/shared/ipc.ts` — all
 declared as a `BoxwardenApi` interface consumed by the renderer without
-importing Electron. They fall into two groups by cadence:
+importing Electron. They fall into three groups by cadence:
 
 - **Docker, polled every 5s**: `discover`, `start`, `stop`, `listEditors`,
   `openInEditor`, `selectEngine`.
 - **Filesystem, on demand only**: `scanProjects`, `openProject`,
   `addProjectRoot`, `removeProjectRoot`.
+- **Terminals, read once then on demand**: `listTerminals`, `openTerminal`,
+  `getStartupCommands`, `setStartupCommand`.
 
 Prefer looping over the existing verbs (e.g. `Promise.allSettled` for a compose
-group's "Start all") over adding new channels. The two exceptions so far both
-earned it: `selectEngine` changes main-process state that outlives the call, and
-the project verbs are a _different cadence_ — folding `scanProjects` into
+group's "Start all") over adding new channels. The exceptions so far all earned
+it: `selectEngine` changes main-process state that outlives the call; the
+project verbs are a _different cadence_ — folding `scanProjects` into
 `DiscoverySnapshot` would make the 5s poll pay for a filesystem walk sixty times
-an hour. Lifecycle actions return failure as `{ ok: false, message }` data
-rather than throwing — a thrown main-process error crosses IPC as an opaque
-string with the real message buried.
+an hour; and the terminal verbs spawn a process no combination of the others
+can. Lifecycle actions return failure as `{ ok: false, message }` data rather
+than throwing — a thrown main-process error crosses IPC as an opaque string
+with the real message buried.
+
+Every verb that acts on a container or a project takes an **ID**. The main
+process resolves it against its own copy from the last scan and never acts on
+renderer-supplied data: `openInEditor` will not take a host path,
+`openProject` will not take a folder, and `openTerminal` will not take a
+startup command — it reads its own stored copy.
 
 `addProjectRoot` takes **no argument** on purpose: the renderer can ask for the
 folder picker, and cannot say which folder the answer is.
@@ -270,6 +288,31 @@ of the story on a machine where nothing has been built yet.
   a stronger case: it pulls images and executes `postCreateCommand` from the
   repo.
 
+### Opening a terminal
+
+`docker exec -it <id> sh -lc <script>` inside a terminal window, assembled
+purely in `src/main/terminal/command.ts` and spawned by `launch.ts`.
+
+- **The daemon is named explicitly** (`-H` for docker, `--url` for podman) from
+  the endpoint the container was last seen on. This app connects to every engine
+  that answers; the engine selection narrows what it LISTS but does not reach
+  the CLI, so leaving the choice to the CLI's default means "no such container"
+  for one that is on screen. A WSL socket runs `wsl.exe -d <distro> --` and
+  names the CLI bare, on the Linux side.
+- **`terminal/targets.ts` is a data table** of twelve emulators with three
+  invocation styles: `argv` (safe, the default), `command-string`, and
+  `applescript` (Terminal.app and iTerm2, which have no CLI at all). iTerm2 3.x
+  needs `create window with default profile command`, not `do script`.
+- **The quoting is the security boundary.** `posixQuote` and
+  `appleScriptString` are pure, wrap rather than escape a denylist, and are
+  tested against a deliberately hostile startup command. `spawn` is never given
+  `shell: true` — the startup command is user-authored shell code meant to run
+  _inside_ the container.
+- **Startup commands are keyed by `containerSettingsKey`**, i.e. the host folder
+  (plus container name for compose members), not the container id. A rebuild
+  changes the id, and a setting that evaporates on rebuild is worse than none.
+  They live in `preferences.json` beside the engine selection and scan roots.
+
 ### Compose grouping
 
 `src/renderer/grouping.ts` folds the flat container list into `ContainerGroup`
@@ -315,10 +358,12 @@ preserve when touching this code:
   is also why `openInEditor` takes a container **id**, not a `DevContainer` —
   the main process looks up its own copy rather than trusting a renderer-
   supplied host path.
-- **Editor launch never goes through a shell**: `src/main/editor/launch.ts`
-  uses `spawn` with an argv array, never `shell: true`. The URI embeds a
-  hex-encoded host path that originates from a container label (i.e.
-  attacker-influenced by anyone who can create containers on the daemon).
+- **Launching never goes through a shell**: `src/main/editor/launch.ts` and
+  `src/main/terminal/launch.ts` use `spawn` with an argv array, never
+  `shell: true`. The URI embeds a hex-encoded host path that originates from a
+  container label (i.e. attacker-influenced by anyone who can create containers
+  on the daemon), and the terminal command line embeds the user's startup
+  command verbatim.
 
 Full checklist and rationale: `docs/electron-security.md`. Read it before
 changing `webPreferences`, adding an IPC channel, or loading new content into
@@ -344,6 +389,53 @@ an app that's mostly async I/O — use `void somePromise()` for deliberate
 fire-and-forget. Test files relax `no-unsafe-argument`,
 `no-unnecessary-condition`, and `no-unnecessary-type-assertion` because
 fixtures deliberately construct malformed inputs.
+
+### The layering rule is linted, not just documented
+
+`eslint-plugin-mvvm` enforces the three-part layering rule above. The layers
+are named explicitly in `settings.mvvm` rather than left to the plugin's
+generic conventions, so classification tracks this repo instead of guessing —
+the defaults also read `services/`, `api/`, `stores/` and `domain/` as Model,
+and a future `src/main/services/` would silently start being linted as a layer
+it is not.
+
+| Layer     | What matches                                                               |
+| --------- | -------------------------------------------------------------------------- |
+| Model     | `src/models/`                                                              |
+| ViewModel | `src/renderer/viewmodels/`, plus the pure `.ts` directly under `renderer/` |
+| View      | the `.tsx` under `src/renderer/`                                           |
+
+`presenters.ts`, `format.ts`, `grouping.ts` and `view.ts` are ViewModel, not
+unclassified: they are the derivations a View binds to, and naming them is what
+makes the direction _checked_ — an unclassified module is exempt from the rule,
+so leaving them out would let `presenters.ts` import a component with nothing
+to say so.
+
+`src/main` and `src/preload` are deliberately out of scope. They are the impure
+shells behind the IPC boundary, not an MVVM layer.
+
+Four things follow, and three of them are ordinary ESLint rules rather than the
+plugin, because the plugin cannot see them:
+
+- **`no-state-in-view` runs in `strict`, not the preset's `warn-business`.**
+  That mode only fires when `useState` sits beside a `fetch`/axios/TanStack
+  call, and this app reaches Docker over `window.boxwarden` — it would never
+  fire at all.
+- **A View may not import `renderer/api.ts`.** That is `no-api-in-view`
+  expressed in this app's terms: the plugin knows fetch and axios, and the
+  bridge here is `getApi()`.
+- **`src/models/` may not import from `renderer/`, `main/` or `preload/`** —
+  rule 1 above, as a lint error.
+- **A ViewModel may not import a component.** The plugin classifies a View by
+  file extension and resolves relative specifiers on disk; with
+  `verbatimModuleSyntax` on, every import here is written `./Foo.js` while the
+  file is `Foo.tsx`, which resolves to nothing, so `viewModelImportsView` and
+  `modelImportsView` never fire. Model and ViewModel are directory-matched and
+  survive it. The `no-restricted-imports` guard covers the gap by path.
+
+Type-only imports from Model into a View stay legal
+(`allowTypeImportsFromModel`). A View renders a `DevContainer`; banning the
+type would only mean duplicating it.
 
 ## Testing conventions
 

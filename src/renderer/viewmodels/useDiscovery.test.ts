@@ -33,7 +33,7 @@ describe('useDiscovery', () => {
   it('takes a reading immediately, so the first paint is not an empty list', async () => {
     const api = fakeApi({ snapshot: snapshot({ containers: [running] }) });
     const notices = stubNotices();
-    const { result } = renderHook(() => useDiscovery(api, notices, 'vscode'));
+    const { result } = renderHook(() => useDiscovery(api, notices, 'vscode', 'gnome-terminal'));
 
     expect(result.current.loading).toBe(true);
     await waitFor(() => {
@@ -48,7 +48,7 @@ describe('useDiscovery', () => {
     api.discover.mockRejectedValue(new Error('socket gone'));
     const notices = stubNotices();
 
-    renderHook(() => useDiscovery(api, notices, 'vscode'));
+    renderHook(() => useDiscovery(api, notices, 'vscode', 'gnome-terminal'));
 
     await waitFor(() => {
       expect(notices.showThrown).toHaveBeenCalled();
@@ -66,7 +66,7 @@ describe('useDiscovery', () => {
     api.start.mockReturnValue(gate.promise);
 
     const notices = stubNotices();
-    const { result } = renderHook(() => useDiscovery(api, notices, 'vscode'));
+    const { result } = renderHook(() => useDiscovery(api, notices, 'vscode', 'gnome-terminal'));
     await waitFor(() => {
       expect(result.current.containers).toHaveLength(1);
     });
@@ -95,7 +95,7 @@ describe('useDiscovery', () => {
     api.start.mockResolvedValue({ ok: false, message: 'no such image' });
     const notices = stubNotices();
 
-    const { result } = renderHook(() => useDiscovery(api, notices, 'vscode'));
+    const { result } = renderHook(() => useDiscovery(api, notices, 'vscode', 'gnome-terminal'));
     await waitFor(() => {
       expect(result.current.containers).toHaveLength(1);
     });
@@ -122,7 +122,7 @@ describe('useDiscovery', () => {
     });
     const notices = stubNotices();
 
-    const { result } = renderHook(() => useDiscovery(api, notices, 'vscode'));
+    const { result } = renderHook(() => useDiscovery(api, notices, 'vscode', 'gnome-terminal'));
     await waitFor(() => {
       expect(result.current.containers).toHaveLength(2);
     });
@@ -143,7 +143,7 @@ describe('useDiscovery', () => {
   it('does not call start for a group whose members are all running', async () => {
     const api = fakeApi({ snapshot: snapshot({ containers: [running] }) });
     const notices = stubNotices();
-    const { result } = renderHook(() => useDiscovery(api, notices, 'vscode'));
+    const { result } = renderHook(() => useDiscovery(api, notices, 'vscode', 'gnome-terminal'));
     await waitFor(() => {
       expect(result.current.containers).toHaveLength(1);
     });
@@ -161,7 +161,7 @@ describe('useDiscovery', () => {
   it('paints an engine change immediately and re-reads', async () => {
     const api = fakeApi();
     const notices = stubNotices();
-    const { result } = renderHook(() => useDiscovery(api, notices, 'vscode'));
+    const { result } = renderHook(() => useDiscovery(api, notices, 'vscode', 'gnome-terminal'));
     await waitFor(() => {
       expect(result.current.snapshot).toBeDefined();
     });
@@ -191,7 +191,7 @@ describe('useDiscovery', () => {
     const api = fakeApi({ snapshot: snapshot({ containers: [workspace, db, lone] }) });
 
     const notices = stubNotices();
-    const { result } = renderHook(() => useDiscovery(api, notices, 'vscode'));
+    const { result } = renderHook(() => useDiscovery(api, notices, 'vscode', 'gnome-terminal'));
     await waitFor(() => {
       expect(result.current.groups).toHaveLength(2);
     });
@@ -202,7 +202,7 @@ describe('useDiscovery', () => {
   it('reports the engine as unreachable rather than pretending the list is complete', async () => {
     const api = fakeApi({ snapshot: unreachableSnapshot() });
     const notices = stubNotices();
-    const { result } = renderHook(() => useDiscovery(api, notices, 'vscode'));
+    const { result } = renderHook(() => useDiscovery(api, notices, 'vscode', 'gnome-terminal'));
 
     await waitFor(() => {
       expect(result.current.snapshot).toBeDefined();
@@ -223,7 +223,7 @@ describe('useDiscovery', () => {
     ) as unknown as typeof api.openInEditor;
     const notices = stubNotices();
 
-    const { result } = renderHook(() => useDiscovery(api, notices, 'vscode'));
+    const { result } = renderHook(() => useDiscovery(api, notices, 'vscode', 'gnome-terminal'));
     await waitFor(() => {
       expect(result.current.containers).toHaveLength(1);
     });
@@ -231,9 +231,10 @@ describe('useDiscovery', () => {
     await act(async () => {
       result.current.open(running as DevContainer);
       await vi.waitFor(() => {
-        expect(notices.rememberFailedUri).toHaveBeenCalledWith(
-          'vscode-remote://dev-container+abc/workspaces/webapp',
-        );
+        expect(notices.rememberFallback).toHaveBeenCalledWith({
+          label: 'Copy URI',
+          value: 'vscode-remote://dev-container+abc/workspaces/webapp',
+        });
       });
     });
     expect(notices.showError).toHaveBeenCalledWith('could not spawn code');

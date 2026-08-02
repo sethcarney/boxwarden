@@ -11,6 +11,7 @@ import {
   scanRootHint,
   sshAgentBadge,
   summariseProjects,
+  terminalBlockedReason,
   visiblePorts,
 } from './presenters.js';
 import { snapshot, unreachableSnapshot } from './viewmodels/test-api.js';
@@ -98,6 +99,50 @@ describe('openBlockedReason', () => {
     expect(openBlockedReason(devContainer(), false, 'Cursor')).toBe(
       'Cursor was not found on this machine.',
     );
+  });
+});
+
+describe('terminalBlockedReason', () => {
+  const running = devContainer();
+  const stopped = devContainer({
+    runtime: { state: 'exited', exitCode: 0, finishedAt: new Date('2026-07-27T10:00:00Z') },
+  });
+  const paused = devContainer({
+    runtime: { state: 'paused', startedAt: new Date('2026-07-27T09:00:00Z'), ports: [] },
+  });
+
+  it('is undefined when a shell can be opened', () => {
+    expect(terminalBlockedReason(running, true, 'GNOME Terminal')).toBeUndefined();
+  });
+
+  /**
+   * The state comes first, and that ordering is the point: naming a missing
+   * emulator for a stopped container would send the user to install something
+   * that would not have helped.
+   */
+  it('blames the container state before the emulator', () => {
+    expect(terminalBlockedReason(stopped, false, undefined)).toMatch(/running container/i);
+  });
+
+  /**
+   * A paused container still holds a process namespace, so `docker exec` is
+   * accepted and then blocks forever against frozen processes. Refusing beats
+   * a terminal that opens and hangs.
+   */
+  it('refuses a paused container, which docker exec would accept', () => {
+    expect(terminalBlockedReason(paused, true, 'GNOME Terminal')).toMatch(/running container/i);
+  });
+
+  it('names the emulator the user chose when it is missing', () => {
+    expect(terminalBlockedReason(running, false, 'Konsole')).toBe(
+      'Konsole was not found on this machine.',
+    );
+  });
+
+  it('blames nobody when nothing was found at all', () => {
+    // There is no name here and no install to suggest — a different sentence,
+    // not a missing word in the same one.
+    expect(terminalBlockedReason(running, false, undefined)).toMatch(/No terminal emulator/i);
   });
 });
 

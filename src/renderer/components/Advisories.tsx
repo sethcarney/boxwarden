@@ -1,5 +1,5 @@
-import { useCallback, useState } from 'react';
 import type { Advice } from '../../models/index.js';
+import { useCopyToClipboard } from '../viewmodels/useCopyToClipboard.js';
 
 /**
  * The setup advice, rendered.
@@ -76,26 +76,29 @@ function AdviceCard({ advice }: { readonly advice: Advice }) {
   );
 }
 
-/** One command, with the copy button that is the whole point of showing it. */
+/**
+ * One command, with the copy button that is the whole point of showing it.
+ *
+ * The clipboard write and its self-clearing "Copied" flash come from
+ * `useCopyToClipboard`, the same ViewModel the unbuilt-project list uses. This
+ * row grew its own copy of that state first, and it had the exact bug the hook
+ * exists to prevent: its `setTimeout` was never cancelled, so unmounting the
+ * advisory within the flash — which happens the moment the user fixes their
+ * setup and discovery succeeds — set state on a gone component.
+ */
 function CommandRow({ command }: { readonly command: string }) {
-  const [copied, setCopied] = useState(false);
-
-  const copy = useCallback(() => {
-    void navigator.clipboard.writeText(command).then(
-      () => {
-        setCopied(true);
-        // Reverts on its own. A button stuck reading "Copied" is ambiguous the
-        // second time the user needs it.
-        setTimeout(() => setCopied(false), 1_500);
-      },
-      () => setCopied(false),
-    );
-  }, [command]);
+  const { copied, copy } = useCopyToClipboard();
 
   return (
     <li>
       <code>{command}</code>
-      <button type="button" className="link" onClick={copy}>
+      <button
+        type="button"
+        className="link"
+        onClick={() => {
+          copy(command);
+        }}
+      >
         {copied ? 'Copied' : 'Copy'}
       </button>
     </li>
