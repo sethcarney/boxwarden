@@ -1,4 +1,5 @@
 import type {
+  ClaudeStatus,
   ContainerId,
   DevContainer,
   DockerEndpoint,
@@ -6,7 +7,12 @@ import type {
   EndpointProbe,
   EngineSelection,
 } from '../../models/index.js';
-import { ALL_ENGINES, engineIdFor, selectionIncludes } from '../../models/index.js';
+import {
+  ALL_ENGINES,
+  engineIdFor,
+  parseClaudeProcesses,
+  selectionIncludes,
+} from '../../models/index.js';
 import type { DockerBackend } from './backend.js';
 import { mapContainer, type InspectResponse, type InspectState } from './mapping.js';
 
@@ -213,6 +219,80 @@ const FAKE_PROBES: readonly EndpointProbe[] = [
   },
 ];
 
+/**
+ * Fake `top` responses, run through the REAL `parseClaudeProcesses` for the
+ * same reason the inspect fixtures run through the real `mapContainer`: the
+ * awkward cases need somewhere permanent to live, and a fake that returned
+ * ready-made `ClaudeStatus` values would exercise none of the parsing this
+ * feature is actually made of.
+ *
+ * Between them these cover every arm of `ClaudeStatus` in `bun run dev:fake`:
+ * a single session, two sessions, a Node process that is NOT Claude Code, an
+ * ordinary container, and a response the parser cannot read.
+ */
+const FAKE_PROCESS_TABLES: Readonly<Record<string, { Titles: string[]; Processes: string[][] }>> = {
+  // webapp — Docker's default `ps -ef` layout, one session.
+  a1b2c3d4e5f60000000000000000000000000000000000000000000000000001: {
+    Titles: ['UID', 'PID', 'PPID', 'C', 'STIME', 'TTY', 'TIME', 'CMD'],
+    Processes: [
+      ['node', '1', '0', '0', '09:02', '?', '00:00:00', '/bin/sh -c sleep infinity'],
+      [
+        'node',
+        '412',
+        '1',
+        '0',
+        '10:31',
+        'pts/0',
+        '00:00:04',
+        'node /usr/local/share/npm-global/lib/node_modules/@anthropic-ai/claude-code/cli.js',
+      ],
+    ],
+  },
+
+  // platform-app — Podman's layout (different titles, ELAPSED not STIME), two
+  // sessions, one of them started through the wrapper script on PATH.
+  a1b2c3d4e5f60000000000000000000000000000000000000000000000000003: {
+    Titles: ['USER', 'PID', 'PPID', '%CPU', 'ELAPSED', 'TTY', 'TIME', 'COMMAND'],
+    Processes: [
+      ['root', '1', '0', '0.000', '9h2m1.0s', '?', '00:00:00', '/usr/bin/sleep infinity'],
+      [
+        'node',
+        '221',
+        '1',
+        '0.310',
+        '1h12m33.0s',
+        'pts/0',
+        '00:00:11',
+        'node /home/node/.claude/local/node_modules/@anthropic-ai/claude-code/cli.js --continue',
+      ],
+      ['node', '907', '1', '0.020', '4m8.0s', 'pts/1', '00:00:01', '/usr/local/bin/claude'],
+    ],
+  },
+
+  // reporting-tool — Node, but not Claude Code. The false positive this
+  // feature would otherwise ship with.
+  a1b2c3d4e5f60000000000000000000000000000000000000000000000000004: {
+    Titles: ['UID', 'PID', 'PPID', 'C', 'STIME', 'TTY', 'TIME', 'CMD'],
+    Processes: [
+      ['node', '1', '0', '0', '11:40', '?', '00:00:02', 'node /workspaces/claude-notes/server.js'],
+      ['node', '55', '1', '0', '11:40', '?', '00:00:00', 'npm run watch'],
+    ],
+  },
+
+  // infra-scripts — a response the parser cannot read, so the "could not tell"
+  // badge is visible in dev instead of only in a test.
+  a1b2c3d4e5f60000000000000000000000000000000000000000000000000006: {
+    Titles: [],
+    Processes: [],
+  },
+};
+
+/** Anything else that is live: an ordinary process table with no session in it. */
+const FAKE_QUIET_TABLE = {
+  Titles: ['UID', 'PID', 'PPID', 'C', 'STIME', 'TTY', 'TIME', 'CMD'],
+  Processes: [['postgres', '1', '0', '0', '09:02', '?', '00:00:01', 'postgres']],
+};
+
 export class FakeDockerBackend implements DockerBackend {
   #containers: InspectResponse[];
   #selection: EngineSelection = ALL_ENGINES;
@@ -313,6 +393,27 @@ export class FakeDockerBackend implements DockerBackend {
       ExitCode: 0,
       FinishedAt: new Date().toISOString(),
     });
+  }
+
+  claudeStatus(ids: readonly ContainerId[]): Promise<ReadonlyMap<ContainerId, ClaudeStatus>> {
+    const statuses = new Map<ContainerId, ClaudeStatus>();
+
+    for (const id of ids) {
+      const fixture = this.#containers.find((container) => container.Id === id);
+      const state = fixture?.State?.Status;
+
+      // `top` only answers for a live container, and the fake has to be honest
+      // about that or the badge's most common arm never gets exercised.
+      if (state !== 'running' && state !== 'paused') {
+        statuses.set(id, { kind: 'not-applicable' });
+        continue;
+      }
+
+      const table = FAKE_PROCESS_TABLES[id] ?? FAKE_QUIET_TABLE;
+      statuses.set(id, parseClaudeProcesses(table.Titles, table.Processes));
+    }
+
+    return Promise.resolve(statuses);
   }
 
   #transition(id: ContainerId, state: InspectState): Promise<void> {

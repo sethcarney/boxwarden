@@ -23,6 +23,8 @@ unblocks the most.
 - Recovers the **WSL distribution** from bind-mount sources, so a path inside a
   distro is not displayed as a native Linux path.
 - A diagnostics screen naming every socket that was tried and why each failed.
+- **Flags Claude Code sessions running inside a container**, so Stop and "Stop
+  all" are not blind to an agent mid-task.
 - **Finds dev container projects that have never been built** by walking the
   filesystem for `devcontainer.json`, listing the ones no container claims, and
   offering to open the folder so the editor can prompt "Reopen in Container".
@@ -61,6 +63,9 @@ socket and no editor installed:
 - The AppleScript for Terminal.app and iTerm2 — in particular that iTerm2 3.x
   really does want `create window with default profile command` and not
   `do script`.
+- Claude Code detection against a real container. The parser is tested against
+  fixture `top` responses in both engines' column layouts, but no daemon has
+  returned a real one and no real `claude` process has been matched.
 
 Those are the first thing to do on a real machine, and until they pass the app
 should be considered unproven rather than working.
@@ -155,7 +160,24 @@ None of it is blocking for a tool you build yourself, and all of it is blocking
 for one you hand to somebody else. Note too that "it packages" is currently a
 claim about one Linux machine on one day — see the CI item below.
 
-## 7. Smaller things
+## 7. Claude Code presence — the follow-ups
+
+Presence detection ships annotating the Stop button. Two things were
+deliberately left out of v1, in this order:
+
+- **Confirm before stopping a container with a live session.** The annotation
+  is the honest v1 because this app has no modal today, and adding the first one
+  should not ride along with a detection nobody has watched against a real
+  daemon yet. Once it has been, the confirm is the point of the feature.
+- **Activity, not just presence.** Working vs. idle vs. waiting on a permission
+  prompt would mean parsing session transcripts under
+  `~/.claude/projects/**/*.jsonl` or the IDE lock files under `~/.claude/ide/`,
+  and locating the container's home directory first. Neither path is a versioned
+  interface. It stays a separate item on purpose: presence is cheap and stable,
+  activity is neither, and coupling them would put the stable half at the mercy
+  of the other.
+
+## 8. Smaller things
 
 - **Attached containers.** Containers attached to rather than created by the
   extension use a different authority (`attached-container+<hex of JSON>`).

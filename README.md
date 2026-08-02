@@ -19,6 +19,9 @@ your machine, reattaches your editor to them, and opens a shell inside them.
 - Groups Docker Compose projects, so stopping a workspace does not leave its
   database running.
 - Starts and stops them, individually or per project.
+- Flags containers with a **Claude Code session running inside**, and says so on
+  the Stop button — so stopping one out from under an agent mid-task is a
+  deliberate act rather than an accident.
 - Opens them in VS Code, VS Code Insiders, Cursor, or Windsurf — with a
   copyable URI fallback when launching fails.
 - Opens a shell inside a running container, in your own terminal emulator —

@@ -1,4 +1,5 @@
 import type {
+  ClaudeStatus,
   ContainerId,
   DevContainer,
   DockerEndpoint,
@@ -45,4 +46,14 @@ export interface DockerBackend {
    * the dockerode connection and never has to ask.
    */
   endpointFor(id: ContainerId): DockerEndpoint | undefined;
+
+  /**
+   * Read each container's process table and report whether Claude Code is in
+   * it. Batched, and never rejects — a container that has gone away between
+   * the caller's list and this call is one `unknown` entry, not a failed scan.
+   *
+   * Only the caller knows which ids are worth asking about; this does not
+   * filter by state, because it does not inspect. Ask about live containers.
+   */
+  claudeStatus(ids: readonly ContainerId[]): Promise<ReadonlyMap<ContainerId, ClaudeStatus>>;
 }

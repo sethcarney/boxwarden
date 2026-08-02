@@ -403,6 +403,64 @@ that evaporates on rebuild is worse than none. Compose members append their
 container name, since every service in a project shares one folder label. The
 map lives in `preferences.json` beside the engine selection and the scan roots.
 
+## Claude Code presence
+
+A card says what the container _is_. It also says, when it can, what is
+happening inside it — specifically whether a Claude Code session is running,
+how many, and how long each has been up. Stopping a container out from under a
+running agent is the failure this prevents, and "Stop all" on a compose group
+is where it matters most, because that button reaches services whose own card
+nobody looked at.
+
+The detection is one read-only Docker call, `GET /containers/{id}/top`, and the
+pure `parseClaudeProcesses` in `src/models/claude.ts` does everything else.
+Four constraints fall out of that API and are the whole difficulty of the
+feature:
+
+- **`top` answers only for a live container.** Created, exited, dead and
+  removing all error. Those map to a `not-applicable` arm, never to "no
+  session" — a stopped container has no process table, which is not the same as
+  an empty one.
+- **The column layout differs between engines.** Docker's default is `ps -ef`
+  (`UID PID PPID C STIME TTY TIME CMD`), Podman's is
+  `USER PID PPID %CPU ELAPSED TTY TIME COMMAND`. The response carries `Titles`
+  alongside `Processes`, and the parser finds every column **by title**.
+  Indexing produces a parser that works on its author's machine and mislabels
+  every session on someone else's.
+- **`STIME` and `ELAPSED` are not the same quantity.** One is a wall-clock start
+  time, the other a duration. They occupy separate fields on `ClaudeSession`,
+  and the UI says "since 10:31" or "up 1h12m" accordingly.
+- **The CLI is a Node process.** It appears as
+  `node …/@anthropic-ai/claude-code/cli.js`, so matching on a process named
+  `claude` misses the common case; matching any token containing "claude" fires
+  on an ordinary `/workspaces/claude-notes` checkout. The rule is the package
+  path, plus an executable whose basename is exactly `claude`.
+
+An engine layout the parser cannot read becomes `{ kind: 'unknown', reason }`
+and renders as a badge that says so. It deliberately does **not** collapse into
+"nothing running": the absence of a badge is how a card says stopping is safe,
+and "we could not tell" must not borrow that meaning.
+
+Scope is presence, not activity. Working vs. idle vs. waiting on a permission
+prompt would mean parsing session transcripts or the IDE lock files under the
+container's `~/.claude`, neither of which is a versioned interface, and both of
+which would need the container's home directory located first.
+
+### Why it is its own verb, on its own clock
+
+`claudeStatus(ids)` is batched and separate from `discover()` for the same
+reason `scanProjects` is: cadence. Discovery polls every 5s; a `top` per live
+container folded into it would multiply that poll's Docker traffic by the length
+of the list, to re-derive an answer that changes when a person starts an agent.
+`useClaudeStatus` runs at 15s instead, skips ticks while the window is hidden —
+the discovery poll does not, because the container list is what a user comes
+back to look at, whereas this exists to guard a click — and takes an immediate
+reading when the window is shown again.
+
+Ids are validated against the main process's own last container list before any
+Docker call, the same rule as `openInEditor` taking an id rather than a
+`DevContainer`.
+
 ## Why containers are never dropped
 
 A container whose label cannot be parsed still appears in the list — greyed,

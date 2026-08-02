@@ -4,6 +4,7 @@ import { homedir, platform } from 'node:os';
 import { promisify } from 'node:util';
 import Docker from 'dockerode';
 import type {
+  ClaudeStatus,
   ContainerId,
   ContainerRuntimeKind,
   DevContainer,
@@ -13,7 +14,12 @@ import type {
   EndpointProbe,
   EngineSelection,
 } from '../../models/index.js';
-import { ALL_ENGINES, selectionIncludes } from '../../models/index.js';
+import {
+  ALL_ENGINES,
+  classifyTopFailure,
+  parseClaudeProcesses,
+  selectionIncludes,
+} from '../../models/index.js';
 import type { DockerBackend } from './backend.js';
 import {
   MINIMUM_API_VERSION,
@@ -35,6 +41,26 @@ const execFileAsync = promisify(execFile);
  * than reaching for `any` at the call site.
  */
 type DockerOptions = Docker.DockerOptions & { agent?: http.Agent };
+
+/**
+ * GET /containers/{id}/top. @types/dockerode types `top()` as `any`, so the
+ * shape is declared here — as loosely as the wire actually delivers it, since
+ * the whole point of `parseClaudeProcesses` is to survive an engine that
+ * answers in a layout we have not seen.
+ */
+interface TopResponse {
+  readonly Titles?: unknown;
+  readonly Processes?: unknown;
+}
+
+/**
+ * Cap on how long a single `top` may take.
+ *
+ * Shorter than a discovery probe on purpose: this is a decoration on a card,
+ * polled in the background. A container on a wedged engine should leave the
+ * badge saying "could not tell" quickly rather than holding the batch open.
+ */
+const TOP_TIMEOUT_MS = 4_000;
 
 /** dockerode options for a domain endpoint. */
 function optionsFor(endpoint: DockerEndpoint): DockerOptions {
@@ -433,6 +459,42 @@ export class DockerodeBackend implements DockerBackend {
    */
   endpointFor(id: ContainerId): DockerEndpoint | undefined {
     return this.#endpointById.get(id);
+  }
+
+  /**
+   * The impure shell around `parseClaudeProcesses`, in the same shape as
+   * `inspect` -> `mapContainer`: make the call, hand the raw rows to the pure
+   * function, keep no logic here.
+   *
+   * Notably this does NOT call `#invalidate()` when a `top` fails, unlike
+   * start and stop. A `top` against a container that stopped a moment ago
+   * fails as a matter of course; throwing away every engine handle over it
+   * would make a background poll re-probe all the sockets on a schedule.
+   */
+  async claudeStatus(ids: readonly ContainerId[]): Promise<ReadonlyMap<ContainerId, ClaudeStatus>> {
+    const statuses = new Map<ContainerId, ClaudeStatus>();
+    if (ids.length === 0) return statuses;
+
+    // Concurrent: the calls are independent, and in series the whole batch
+    // would cost the slowest container's round trip times the list length.
+    const results = await Promise.all(
+      ids.map(async (id): Promise<readonly [ContainerId, ClaudeStatus]> => {
+        try {
+          const docker = await this.#ownerOf(id);
+          const response = (await withTimeout(
+            docker.getContainer(id).top() as Promise<TopResponse>,
+            TOP_TIMEOUT_MS,
+            'Reading the container process table',
+          )) as TopResponse | undefined;
+          return [id, parseClaudeProcesses(response?.Titles, response?.Processes)];
+        } catch (error) {
+          return [id, classifyTopFailure(error instanceof Error ? error.message : String(error))];
+        }
+      }),
+    );
+
+    for (const [id, status] of results) statuses.set(id, status);
+    return statuses;
   }
 }
 

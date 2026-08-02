@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import type { EngineId } from '../models/index.js';
+import type { ClaudeStatus, EngineId } from '../models/index.js';
 import { devContainer } from './test-fixtures.js';
 import {
+  claudeBadge,
+  claudeStopWarning,
   containerCountLabel,
   emptyListMessage,
   engineChip,
@@ -191,6 +193,118 @@ describe('ports', () => {
     expect(portLabel({ containerPort: 5432, protocol: 'tcp' }).text).toBe('5432 (not published)');
     expect(portLabel({ containerPort: 5432, protocol: 'tcp', hostPort: 15432 }).text).toBe(
       '15432 → 5432',
+    );
+  });
+});
+
+describe('claudeBadge', () => {
+  it('has no badge for a container with nothing running, or one not yet polled', () => {
+    expect(claudeBadge({ kind: 'none' })).toBeUndefined();
+    expect(claudeBadge({ kind: 'not-applicable' })).toBeUndefined();
+    expect(claudeBadge(undefined)).toBeUndefined();
+  });
+
+  it('names one session without a count, and says what stopping costs', () => {
+    const badge = claudeBadge({
+      kind: 'running',
+      sessions: [{ pid: 412, command: 'claude', elapsed: '1h12m33.0s' }],
+    });
+    expect(badge?.label).toBe('Claude');
+    expect(badge?.tone).toBe('running');
+    expect(badge?.title).toContain('A Claude Code session is running');
+    expect(badge?.title).toContain('Stopping the container ends it.');
+  });
+
+  it('counts more than one, and keeps every session in the title', () => {
+    const badge = claudeBadge({
+      kind: 'running',
+      sessions: [
+        { pid: 412, command: 'claude', elapsed: '1h12m33.0s' },
+        { pid: 907, command: 'claude', elapsed: '4m8.0s' },
+      ],
+    });
+    expect(badge?.label).toBe('Claude ×2');
+    expect(badge?.denseLabel).toBe('2');
+    expect(badge?.title).toContain('pid 412');
+    expect(badge?.title).toContain('pid 907');
+    expect(badge?.title).toContain('Stopping the container ends them.');
+  });
+
+  /**
+   * "up" and "since" are not interchangeable. Podman supplies an elapsed
+   * duration and Docker a start time, and printing the second as the first
+   * would report a session that began ten minutes ago as ten hours old.
+   */
+  it('says "up" for an elapsed duration and "since" for a start time', () => {
+    expect(
+      claudeBadge({ kind: 'running', sessions: [{ pid: 1, command: 'claude', elapsed: '4m8.0s' }] })
+        ?.title,
+    ).toContain('up 4m8.0s');
+
+    expect(
+      claudeBadge({
+        kind: 'running',
+        sessions: [{ pid: 1, command: 'claude', startTime: '10:31' }],
+      })?.title,
+    ).toContain('since 10:31');
+
+    expect(
+      claudeBadge({ kind: 'running', sessions: [{ pid: 1, command: 'claude' }] })?.title,
+    ).toContain('uptime not reported');
+  });
+
+  /**
+   * "Could not tell" must not render as "nothing running". The Stop button
+   * reads this, and an absent badge is the visual language for "safe".
+   */
+  it('shows an uncertain badge, with the reason, when the check failed', () => {
+    const badge = claudeBadge({ kind: 'unknown', reason: 'connect ENOENT /var/run/docker.sock' });
+    expect(badge?.label).toBe('Claude ?');
+    expect(badge?.denseLabel).toBe('?');
+    expect(badge?.tone).toBe('unknown');
+    expect(badge?.title).toContain('connect ENOENT');
+  });
+});
+
+describe('claudeStopWarning', () => {
+  it('says nothing when nothing is running', () => {
+    expect(claudeStopWarning([])).toBeUndefined();
+    expect(
+      claudeStopWarning([{ kind: 'none' }, undefined, { kind: 'not-applicable' }]),
+    ).toBeUndefined();
+  });
+
+  /**
+   * A "could not tell" is not a warning. Annotating every unreadable container
+   * would train the user to ignore the annotation, which costs more than the
+   * case it covers.
+   */
+  it('says nothing for a container it could not read', () => {
+    expect(claudeStopWarning([{ kind: 'unknown', reason: 'nope' }])).toBeUndefined();
+  });
+
+  /** The compose case: "Stop all" reaches services whose cards nobody read. */
+  it('aggregates across a group and pluralises', () => {
+    const one: readonly (ClaudeStatus | undefined)[] = [
+      { kind: 'running', sessions: [{ pid: 1, command: 'claude' }] },
+      { kind: 'none' },
+    ];
+    expect(claudeStopWarning(one)).toBe(
+      'A Claude Code session is running in here. Stopping ends it.',
+    );
+
+    const several: readonly (ClaudeStatus | undefined)[] = [
+      { kind: 'running', sessions: [{ pid: 1, command: 'claude' }] },
+      {
+        kind: 'running',
+        sessions: [
+          { pid: 2, command: 'claude' },
+          { pid: 3, command: 'claude' },
+        ],
+      },
+    ];
+    expect(claudeStopWarning(several)).toBe(
+      '3 Claude Code sessions are running in here. Stopping ends them.',
     );
   });
 });
