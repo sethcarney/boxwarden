@@ -32,6 +32,26 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Skills, from the lock file.
+#
+# The mdm feature (see devcontainer.json) installs the binary during the image
+# build, before the workspace is mounted, so a feature cannot restore skills —
+# this script is the first point at which the repo exists to read.
+#
+# Guarded on the lock file rather than run unconditionally, because this repo
+# does not commit one yet: with nothing to restore the command's behaviour is
+# undocumented, and this script runs under `set -e`, where a non-zero exit takes
+# the whole postCreate down after an otherwise successful build. So the step is
+# a no-op today and starts working on its own the moment someone adds skills and
+# commits skills-lock.json — no edit here required.
+# ---------------------------------------------------------------------------
+if [ -f skills-lock.json ]; then
+  mdm skills install
+else
+  echo "post-create: no skills-lock.json, skipping skills install"
+fi
+
+# ---------------------------------------------------------------------------
 # Dependencies. Bun is the package manager; see devcontainer.json for why it
 # is not the runtime.
 # ---------------------------------------------------------------------------

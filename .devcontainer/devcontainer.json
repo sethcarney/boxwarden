@@ -91,6 +91,38 @@
     "ghcr.io/anthropics/devcontainer-features/claude-code:1.0.5": {},
 
     // ---------------------------------------------------------------------
+    // mdm — the CLI that manages this repo's agent instruction files (CLAUDE.md
+    // and its equivalents for other agents) and restores the skills recorded in
+    // skills-lock.json.
+    //
+    // Declared as a feature rather than scripted into post-create.sh, which is
+    // where a tool distributed as a release binary otherwise ends up: a curl,
+    // an architecture switch, and a checksum step that gets skipped. The
+    // feature is already all three — it picks mdm-linux-x64 or mdm-linux-arm64
+    // from the detected architecture, verifies the download against the
+    // release's SHA256 checksums, and installs to /usr/local/bin/mdm, which is
+    // on PATH for every user rather than only `node`. The binary is statically
+    // linked, so nothing else has to enter the image; in particular there is no
+    // Go toolchain here and this does not add one.
+    //
+    // TWO pins, and they are not the same pin — note the contrast with the
+    // claude-code entry above. `:1.0.0` pins the FEATURE (its install script),
+    // the way every other entry in this file is pinned. `version` pins the mdm
+    // RELEASE that script fetches, which is exactly the lever claude-code does
+    // not expose: with it set, a rebuild months from now installs 1.9.1 rather
+    // than whatever is newest. Set it to "latest" only if tracking mdm's head
+    // is worth giving that up.
+    //
+    // Features install at image BUILD time, before the workspace is mounted, so
+    // this can only put the binary in place. Anything that has to read the repo
+    // — `mdm skills install` — must run as a lifecycle command instead; see
+    // post-create.sh.
+    // ---------------------------------------------------------------------
+    "ghcr.io/sethcarney/mdm/mdm:1.0.0": {
+      "version": "1.9.1"
+    },
+
+    // ---------------------------------------------------------------------
     // A display for Electron to draw into.
     //
     // Electron needs a window server, and a headless container has none. This
