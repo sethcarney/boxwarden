@@ -4,8 +4,8 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ComposeGroup } from './ComposeGroup.js';
 import { devContainer } from '../test-fixtures.js';
-import { asContainerId } from '../../domain/index.js';
-import type { DevContainer } from '../../domain/index.js';
+import { asContainerId } from '../../models/index.js';
+import type { DevContainer } from '../../models/index.js';
 
 const RUNNING = { state: 'running', startedAt: new Date(), ports: [] } as const;
 const EXITED = { state: 'exited', exitCode: 0, finishedAt: new Date() } as const;

@@ -17,6 +17,10 @@ unblocks the most.
 - Recovers the **WSL distribution** from bind-mount sources, so a path inside a
   distro is not displayed as a native Linux path.
 - A diagnostics screen naming every socket that was tried and why each failed.
+- **Finds dev container projects that have never been built** by walking the
+  filesystem for `devcontainer.json`, listing the ones no container claims, and
+  offering to open the folder so the editor can prompt "Reopen in Container".
+  Scan roots are configurable through the OS folder picker and persisted.
 - Polls every 5s; actions re-read from Docker rather than patching optimistically.
 
 ## Verified and unverified
@@ -141,6 +145,17 @@ claim about one Linux machine on one day — see the CI item below.
   database service lacks that label will not appear in the group, so "Stop all"
   will miss it. Fixing this means a second query filtered on
   `com.docker.compose.project` for projects already known.
+- **Building from boxwarden.** The unbuilt-projects panel offers to open a
+  folder and to _copy_ `devcontainer up`; it does not run it. Doing so means
+  streaming build output somewhere the user can watch it and read the
+  `postCreateCommand` first — a real feature, not a button.
+- **Unbuilt projects inside WSL.** `folderUri` emits `vscode-remote://wsl+…`
+  correctly and the Windows defaults never scan into a distro, because walking
+  `\\wsl.localhost\…` over 9P is slow. A user whose code lives in a distro has
+  to add the root by hand. Enumerating running distros from `WslStatus` and
+  offering them would be better.
+- **Watching for new projects.** The scan runs on open and on demand. A repo
+  cloned while the app is running does not appear until the user rescans.
 - **App-level tests.** `App.tsx` — polling, the busy set, group fan-out — has
   no test of its own; the pieces it composes are covered individually.
 - **Accessibility.** No keyboard shortcuts, no focus management, no screen

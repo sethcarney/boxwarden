@@ -1,8 +1,8 @@
-import type { DockerEnvironment } from '../../domain/index.js';
+import type { DockerEnvironment } from '../../models/index.js';
 import { describeTarget, explainFailure, runtimeLabel } from '../format.js';
 
 /**
- * The screen shown when Docker could not be reached.
+ * The evidence, shown when no container engine could be reached.
  *
  * It lists EVERY candidate that was tried, which is the whole reason
  * `DockerEnvironment.attempts` exists. Probing five sockets and reporting only
@@ -10,6 +10,12 @@ import { describeTarget, explainFailure, runtimeLabel } from '../format.js';
  * the user cannot tell whether Docker is missing, stopped, or listening on a
  * socket the app never looked at. Showing the list turns a support thread into
  * a glance.
+ *
+ * This panel is the DIAGNOSIS; the fix lives above it in <Advisories>, built
+ * from the same environment by src/domain/advice.ts. The split is worth
+ * keeping: a user who needs to be told to run `wsl --install` should not have
+ * to read six socket paths first, and a user debugging something unusual needs
+ * the socket paths and will not be helped by advice.
  */
 export function DockerUnavailable({ environment }: { readonly environment: DockerEnvironment }) {
   if (environment.api.ok) return null;
@@ -21,7 +27,7 @@ export function DockerUnavailable({ environment }: { readonly environment: Docke
 
   return (
     <section className="panel panel-error">
-      <h2>Can’t reach Docker</h2>
+      <h2>Can’t reach a container engine</h2>
       <p className="lede">{headline}</p>
 
       <details open={environment.attempts.length > 1}>

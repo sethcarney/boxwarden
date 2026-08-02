@@ -25,7 +25,7 @@ this repo so a reviewer can check the claim rather than take it on trust.
 | 11/12. WebView hardening                       | `webviewTag: false`, `will-attach-webview` prevented                           | `src/main/index.ts`                            |
 | 13. Limit navigation                           | `will-navigate` blocked except the dev server                                  | `src/main/index.ts`                            |
 | 14. Limit new windows                          | `setWindowOpenHandler` returns `deny` unconditionally                          | `src/main/index.ts`                            |
-| 15. `shell.openExternal` only on trusted input | Allow-list of four origins; never a renderer-chosen URL                        | `src/main/index.ts`                            |
+| 15. `shell.openExternal` only on trusted input | Closed origin allow-list; never a renderer-chosen URL                          | `src/main/index.ts`                            |
 | 16. Current Electron                           | Electron 43                                                                    | `package.json`                                 |
 | 17. Validate IPC senders                       | `isTrustedSender` compares the `WebContents` object                            | `src/main/ipc.ts`                              |
 
@@ -65,6 +65,23 @@ The same reasoning explains why `openInEditor` takes a **container id**, not a
 against a host path the renderer supplied. The main process looks up its own
 copy from the last scan instead.
 
+### The renderer never names a path
+
+The unbuilt-projects feature added four verbs, and all four keep filesystem
+paths on the main side of the bridge:
+
+- `openProject` takes a **`ProjectId`**, looked up in the main process's own
+  copy of the last scan — the same pattern as `openInEditor`, for the same
+  reason. Nothing is spawned against a path that arrived over IPC.
+- `addProjectRoot` takes **no argument at all**. The renderer can ask for the
+  OS folder picker to be shown; the user names the folder, in a dialog the
+  renderer cannot see or drive. A `addProjectRoot(path)` would let a
+  compromised renderer point a recursive walk at anything readable.
+- `removeProjectRoot` does accept a string, and that is fine because it can only
+  ever _narrow_ what is scanned.
+- `scanProjects` reads directory names and the `name` field of each config. It
+  reports what it could not read, and never sends file contents to the renderer.
+
 ### Launching an editor never goes through a shell
 
 `src/main/editor/launch.ts` uses `spawn` with an argv **array** and never
@@ -74,8 +91,18 @@ containers on the daemon. Through argv it is inert data; through a shell string
 it would be command injection.
 
 `shell.openExternal` is deliberately _not_ used for this — it would hand the
-URI to whatever is registered for the scheme. It is used only for the four
+URI to whatever is registered for the scheme. It is used only for the
 allow-listed documentation origins.
+
+That allow-list is a **closed set** and has to stay one. The setup advice
+(`src/models/advice.ts`) links to install instructions for every engine
+boxwarden supports, so each new vendor is one more origin in
+`ALLOWED_EXTERNAL_ORIGINS` — and the temptation on adding the next is to relax
+the check to "any https URL". Don't. Advisory text is built from probe results
+and container labels, both influenced by anyone who can create a container on
+the daemon, and an open allow-list turns a crafted label into a link the user
+is being invited to click. A link added to `advice.ts` without its origin
+added here renders and does nothing; check both files together.
 
 ### The one granted permission
 

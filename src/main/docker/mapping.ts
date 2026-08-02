@@ -6,8 +6,8 @@ import type {
   Health,
   MaybeHostPath,
   PortBinding,
-} from '../../domain/index.js';
-import { asContainerId, asContainerPath } from '../../domain/index.js';
+} from '../../models/index.js';
+import { asContainerId, asContainerPath } from '../../models/index.js';
 import { parseLocalFolder, withWslDistro, wslDistroFromMountSources } from './host-path.js';
 
 /**

@@ -1,4 +1,12 @@
-import type { ContainerId, DevContainer, DockerEnvironment } from '../../domain/index.js';
+import type {
+  ContainerId,
+  DevContainer,
+  DockerEndpoint,
+  DockerEnvironment,
+  EndpointProbe,
+  EngineSelection,
+} from '../../models/index.js';
+import { ALL_ENGINES, engineIdFor, selectionIncludes } from '../../models/index.js';
 import type { DockerBackend } from './backend.js';
 import { mapContainer, type InspectResponse, type InspectState } from './mapping.js';
 
@@ -150,36 +158,118 @@ function fixtures(now: number): InspectResponse[] {
   ];
 }
 
+/**
+ * THREE engines, not one — and one WSL distro that is missing socat.
+ *
+ * The fake used to report a single reachable daemon, which meant the engine
+ * picker and every WSL advisory were unreachable without a Windows machine in a
+ * broken state. Since those are exactly the screens that have to be right for a
+ * user whose setup does not work, the fixture now presents the awkward
+ * arrangement rather than the tidy one: a Docker Desktop pipe, a podman machine,
+ * and a distro holding containers boxwarden cannot see.
+ */
+const DOCKER_ENDPOINT: DockerEndpoint = {
+  transport: { transport: 'unix', socketPath: '/var/run/docker.sock (fake)' },
+  origin: { kind: 'manual', label: 'BOXWARDEN_FAKE_DOCKER' },
+};
+
+const PODMAN_MACHINE_ENDPOINT: DockerEndpoint = {
+  transport: { transport: 'npipe', pipeName: '//./pipe/podman-machine-default (fake)' },
+  origin: { kind: 'well-known', runtime: 'podman' },
+};
+
+const WSL_ENDPOINT: DockerEndpoint = {
+  transport: { transport: 'wsl', distro: 'dev', socketPath: '/run/user/1000/podman/podman.sock' },
+  origin: { kind: 'wsl', distro: 'dev', runtime: 'podman' },
+};
+
+const FAKE_ENDPOINTS: readonly DockerEndpoint[] = [
+  DOCKER_ENDPOINT,
+  PODMAN_MACHINE_ENDPOINT,
+  WSL_ENDPOINT,
+];
+
+const FAKE_PROBES: readonly EndpointProbe[] = [
+  {
+    ok: true,
+    endpoint: DOCKER_ENDPOINT,
+    serverVersion: '29.3.1 (fake)',
+    apiVersion: '1.51',
+    runtime: 'docker-engine',
+  },
+  {
+    ok: true,
+    endpoint: PODMAN_MACHINE_ENDPOINT,
+    serverVersion: '5.7.0 (fake)',
+    apiVersion: '1.44',
+    runtime: 'podman',
+  },
+  {
+    ok: true,
+    endpoint: WSL_ENDPOINT,
+    serverVersion: '5.7.0 (fake)',
+    apiVersion: '1.44',
+    runtime: 'podman',
+  },
+];
+
 export class FakeDockerBackend implements DockerBackend {
   #containers: InspectResponse[];
+  #selection: EngineSelection = ALL_ENGINES;
 
   constructor(now: number = Date.now()) {
     this.#containers = fixtures(now);
   }
 
-  probe(): Promise<DockerEnvironment> {
-    const endpoint = {
-      transport: { transport: 'unix', socketPath: '/var/run/docker.sock (fake)' },
-      origin: { kind: 'manual', label: 'BOXWARDEN_FAKE_DOCKER' },
-    } as const;
+  selection(): EngineSelection {
+    return this.#selection;
+  }
 
-    const probe = {
+  select(selection: EngineSelection): void {
+    this.#selection = selection;
+  }
+
+  probe(): Promise<DockerEnvironment> {
+    const selected = FAKE_PROBES.find((probe) =>
+      selectionIncludes(this.#selection, probe.endpoint.transport),
+    );
+    const api: EndpointProbe = selected ?? {
       ok: true,
-      endpoint,
+      endpoint: DOCKER_ENDPOINT,
       serverVersion: '29.3.1 (fake)',
       apiVersion: '1.51',
       runtime: 'docker-engine',
-    } as const;
+    };
 
     return Promise.resolve({
-      api: probe,
+      api,
       cli: { ok: true, binaryPath: '/usr/bin/docker (fake)', version: '29.3.1' },
-      attempts: [probe],
+      attempts: FAKE_PROBES,
+      // A distro with podman in it and no relay — the case that renders as a
+      // silently short container list on a real machine.
+      wsl: {
+        kind: 'ready',
+        distros: [
+          {
+            distro: 'dev',
+            hasSocat: true,
+            hasPodman: true,
+            socketPath: '/run/user/1000/podman/podman.sock',
+          },
+          { distro: 'legacy-ubuntu', hasSocat: false, hasPodman: true },
+        ],
+      },
     });
   }
 
   listDevContainers(): Promise<readonly DevContainer[]> {
     const mapped = this.#containers
+      // Round-robin across the fake engines, so switching the picker visibly
+      // changes the list instead of being a setting with no observable effect.
+      .filter((_container, index) => {
+        const endpoint = FAKE_ENDPOINTS[index % FAKE_ENDPOINTS.length];
+        return endpoint !== undefined && selectionIncludes(this.#selection, endpoint.transport);
+      })
       .map(mapContainer)
       .filter((value): value is DevContainer => value !== undefined)
       .sort((a, b) => {
@@ -187,6 +277,11 @@ export class FakeDockerBackend implements DockerBackend {
         return rank(a) - rank(b) || a.name.localeCompare(b.name);
       });
     return Promise.resolve(mapped);
+  }
+
+  /** The ids the picker offers, for anyone reading this fixture to write a test. */
+  static engineIds(): readonly string[] {
+    return FAKE_ENDPOINTS.map((endpoint) => engineIdFor(endpoint.transport));
   }
 
   /** Mutates the fixture so the UI's optimistic update has something real to land on. */

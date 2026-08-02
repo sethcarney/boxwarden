@@ -1,17 +1,34 @@
 import { ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron';
-import type { ContainerId, DevContainer } from '../domain/index.js';
+import type {
+  ContainerId,
+  DevContainer,
+  DevContainerProject,
+  DockerEnvironment,
+  EngineSelection,
+  ProjectId,
+  ProjectRoot,
+  ProjectScan,
+} from '../models/index.js';
+import {
+  adviseEnvironment,
+  enginesFrom,
+  hostPlatform,
+  parseEngineSelection,
+} from '../models/index.js';
 import { IPC } from '../shared/ipc.js';
 import type {
   ActionResult,
   DiscoverySnapshot,
   EditorOption,
   OpenInEditorResult,
+  ProjectRootsResult,
 } from '../shared/ipc.js';
 import type { DockerBackend } from './docker/backend.js';
 import { EDITOR_TARGETS, editorTarget } from './editor/targets.js';
 import { resolveEditor } from './editor/resolve.js';
 import { launchEditor } from './editor/launch.js';
-import { devContainerUri } from './editor/uri.js';
+import { devContainerUri, folderUri } from './editor/uri.js';
+import { scanForProjects } from './projects/scan.js';
 
 /**
  * Registering the handlers needs the backend and a way to recognise our own
@@ -30,6 +47,34 @@ export interface IpcContext {
    * See https://www.electronjs.org/docs/latest/tutorial/security
    */
   isTrustedSender(contents: WebContents): boolean;
+
+  /**
+   * Persist the engine choice. Optional so tests and the fake backend can skip
+   * it; a run without it simply forgets the selection on quit.
+   */
+  onSelectionChanged?(selection: EngineSelection): void;
+
+  /** Everything the project scan needs from outside this module. */
+  readonly projects: ProjectsContext;
+}
+
+/**
+ * The seams the unbuilt-project verbs reach the world through.
+ *
+ * `chooseFolder` is a function rather than a call to `dialog.showOpenDialog`
+ * inline for one reason worth stating: the folder picker must be parented to
+ * the app's own window, and this module deliberately knows nothing about
+ * windows — index.ts owns that, the same way it owns `isTrustedSender`.
+ */
+export interface ProjectsContext {
+  /** `process.platform`. Passed in, never read, so the path flavour is decided in one place. */
+  readonly platform: string;
+  /** The roots to walk, already resolved from preferences and platform defaults. */
+  roots(): readonly ProjectRoot[];
+  /** Persist a new root list. */
+  setRoots(roots: readonly string[]): void;
+  /** Ask the user for a folder. Resolves undefined when they cancel. */
+  chooseFolder(): Promise<string | undefined>;
 }
 
 export function registerIpcHandlers(context: IpcContext): void {
@@ -44,6 +89,14 @@ export function registerIpcHandlers(context: IpcContext): void {
    * copy instead.
    */
   const known = new Map<ContainerId, DevContainer>();
+
+  /**
+   * The last project scan, keyed by id — the filesystem's counterpart to
+   * `known`, and kept for exactly the same reason. `openProject` spawns an
+   * editor at a folder on disk; that folder has to be one boxwarden found
+   * itself, not a path that arrived over IPC.
+   */
+  const knownProjects = new Map<ProjectId, DevContainerProject>();
 
   /** Wraps a handler with the sender check and turns throws into typed failures. */
   function handle<T>(
@@ -63,30 +116,58 @@ export function registerIpcHandlers(context: IpcContext): void {
     });
   }
 
+  /**
+   * Everything derived from an environment, in one place.
+   *
+   * A helper rather than three inline copies because `discover` has three
+   * return paths — untrusted sender, unreachable engine, listing failed — and
+   * an advisory or an engine list missing from one of them would show up as a
+   * panel that flickers away on the exact scan where it mattered most.
+   */
+  function snapshotOf(
+    scannedAt: Date,
+    environment: DockerEnvironment,
+    containers: readonly DevContainer[],
+  ): DiscoverySnapshot {
+    const selection = context.backend.selection();
+    return {
+      scannedAt,
+      environment,
+      containers,
+      engines: enginesFrom(environment),
+      selection,
+      advice: adviseEnvironment({
+        platform: hostPlatform(process.platform),
+        environment,
+        selection,
+      }),
+    };
+  }
+
   ipcMain.handle(IPC.discover, async (event): Promise<DiscoverySnapshot> => {
     const scannedAt = new Date();
     if (!context.isTrustedSender(event.sender)) {
-      return { scannedAt, environment: await context.backend.probe(), containers: [] };
+      return snapshotOf(scannedAt, await context.backend.probe(), []);
     }
 
     const environment = await context.backend.probe();
     if (!environment.api.ok) {
       known.clear();
-      return { scannedAt, environment, containers: [] };
+      return snapshotOf(scannedAt, environment, []);
     }
 
     try {
       const containers = await context.backend.listDevContainers();
       known.clear();
       for (const container of containers) known.set(container.id, container);
-      return { scannedAt, environment, containers };
+      return snapshotOf(scannedAt, environment, containers);
     } catch (error) {
       // Reached the daemon, then failed to list. Surface it as an endpoint
       // failure rather than an empty list, which would read as "no dev
       // containers" and send the user looking in the wrong place.
-      return {
+      return snapshotOf(
         scannedAt,
-        environment: {
+        {
           ...environment,
           api: {
             ok: false,
@@ -97,10 +178,28 @@ export function registerIpcHandlers(context: IpcContext): void {
             },
           },
         },
-        containers: [],
-      };
+        [],
+      );
     }
   });
+
+  handle<ActionResult>(
+    IPC.selectEngine,
+    (raw) => {
+      // Parsed, never trusted. This value arrives from the renderer and is
+      // matched against endpoint identities in the backend; `parseEngineSelection`
+      // reduces anything unrecognised to "all engines" rather than letting an
+      // arbitrary string through to be compared.
+      const selection = parseEngineSelection(raw);
+      context.backend.select(selection);
+      context.onSelectionChanged?.(selection);
+      // The container-to-engine map was just dropped, so the ids the renderer
+      // holds are stale until it refreshes. It does that immediately.
+      known.clear();
+      return Promise.resolve({ ok: true });
+    },
+    (message) => ({ ok: false, message }),
+  );
 
   handle<ActionResult>(
     IPC.start,
@@ -198,5 +297,110 @@ export function registerIpcHandlers(context: IpcContext): void {
       }
     },
     (message) => ({ ok: false, code: 'launch-failed', message }),
+  );
+
+  // ---- Unbuilt projects ----
+
+  handle<ProjectScan>(
+    IPC.scanProjects,
+    async () => {
+      const scan = await scanForProjects({
+        roots: context.projects.roots(),
+        platform: context.projects.platform,
+      });
+      knownProjects.clear();
+      for (const project of scan.projects) knownProjects.set(project.id, project);
+      return scan;
+    },
+    // A failed scan reports its roots as unreadable rather than throwing, so
+    // reaching here means something unexpected. An empty scan still has to be a
+    // well-formed one: the renderer renders `roots` and `truncated`
+    // unconditionally, and a half-built object would break the panel that is
+    // supposed to explain the failure.
+    () => ({ scannedAt: new Date(), roots: [], projects: [], truncated: false, elapsedMs: 0 }),
+  );
+
+  handle<OpenInEditorResult>(
+    IPC.openProject,
+    async (rawId, rawEditorId) => {
+      const project = knownProjects.get(rawId as ProjectId);
+      if (project === undefined) {
+        return {
+          ok: false,
+          code: 'launch-failed',
+          message: 'That project is no longer in the last scan. Rescan and try again.',
+        };
+      }
+
+      // Unlike a built container there is no label to round-trip, so this is
+      // built from the parsed path — see `folderUri` for why that is sound here
+      // and emphatically not in `devContainerUri`.
+      const uri = folderUri(project.folder);
+
+      const target = editorTarget(String(rawEditorId));
+      if (target === undefined) {
+        return {
+          ok: false,
+          code: 'editor-not-found',
+          message: `Unknown editor: ${String(rawEditorId)}`,
+          uri,
+        };
+      }
+
+      const resolved = await resolveEditor(target);
+      if (!resolved.ok) {
+        return {
+          ok: false,
+          code: 'editor-not-found',
+          message: `Could not find ${target.displayName} on this machine.`,
+          uri,
+        };
+      }
+
+      try {
+        await launchEditor(resolved.binaryPath, target, uri);
+        return { ok: true, editorId: target.id, uri };
+      } catch (error) {
+        return {
+          ok: false,
+          code: 'launch-failed',
+          message: error instanceof Error ? error.message : String(error),
+          uri,
+        };
+      }
+    },
+    (message) => ({ ok: false, code: 'launch-failed', message }),
+  );
+
+  handle<ProjectRootsResult>(
+    IPC.addProjectRoot,
+    async () => {
+      const chosen = await context.projects.chooseFolder();
+      if (chosen === undefined) return { ok: true, cancelled: true };
+      // `roots()` is already the materialised list — defaults included — so
+      // appending to it is what stops a first customisation from silently
+      // replacing the defaults and losing the user every project they had.
+      // The chosen path comes from the OS picker, not from the renderer.
+      context.projects.setRoots([
+        ...new Set([...context.projects.roots().map((root) => root.path), chosen]),
+      ]);
+      return { ok: true, cancelled: false };
+    },
+    (message) => ({ ok: false, message }),
+  );
+
+  handle<ProjectRootsResult>(
+    IPC.removeProjectRoot,
+    (raw) => {
+      const path = String(raw);
+      context.projects.setRoots(
+        context.projects
+          .roots()
+          .map((root) => root.path)
+          .filter((existing) => existing !== path),
+      );
+      return Promise.resolve({ ok: true, cancelled: false });
+    },
+    (message) => ({ ok: false, message }),
   );
 }

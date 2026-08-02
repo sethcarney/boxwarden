@@ -138,6 +138,17 @@ badly:
 | `legacy-thing`   | Unparseable label → degraded row, exit code 137                        |
 | `infra-scripts`  | Paused, WSL UNC path                                                   |
 
+The fake also reports **three** reachable engines (a Docker socket, a podman
+machine pipe, and a podman inside a WSL distro) and a WSL status with one distro
+missing socat. The fixtures round-robin across those engines, so the engine
+picker visibly filters the list rather than being a setting with no observable
+effect.
+
+That is deliberately the awkward arrangement rather than the tidy one: the
+engine picker and every WSL advisory were otherwise unreachable without owning a
+Windows machine in a particular state of disrepair, and those are exactly the
+screens that have to be right for a user whose setup does not work.
+
 The main process logs a loud warning when this is on. A fake container list the
 user believes is real is the worst possible failure for this app.
 
@@ -147,7 +158,7 @@ The renderer has DOM and no Node; main and preload have the reverse. One config
 cannot express that, so:
 
 - `tsconfig.base.json` — strictness settings, shared
-- `tsconfig.node.json` — `src/main`, `src/preload`, `src/domain`, `src/shared`
+- `tsconfig.node.json` — `src/main`, `src/preload`, `src/models`, `src/shared`
 - `tsconfig.web.json` — `src/renderer`, plus the shared code
 - `tsconfig.json` — solution file, references both
 
@@ -161,9 +172,16 @@ _absent key_, not `undefined`. Hence the conditional spreads throughout
 
 ## Testing
 
-`vitest run`. The suite covers the pure layer only — label parsing, inspect
+`vitest run`. The suite covers the pure layer — label parsing, inspect
 mapping, URI construction, endpoint ordering, display formatting — so it needs
 neither a daemon nor a display and runs anywhere.
+
+The one impure exception is `src/main/projects/scan.test.ts`, which builds a
+tree of `.devcontainer` directories under `mkdtemp` and removes it afterwards.
+The rule the suite keeps is "no daemon and no display", not "no filesystem",
+and a directory walk is precisely the code whose bugs — a depth limit off by
+one, a `.devcontainer/<variant>/` silently dropped, `node_modules` walked into
+— appear nowhere but against a real filesystem.
 
 Functions that would otherwise read the clock take `now` as a parameter
 (`relativeTime`, `statusLabel`), and platform-dependent functions take
@@ -178,6 +196,13 @@ Component tests opt into jsdom per file with a docblock:
 
 Per-file rather than a glob because jsdom costs about a second of setup, and
 paying it on every mapping test would triple the suite's runtime for nothing.
+
+ViewModel tests get two fixtures of their own: `viewmodels/test-api.ts` (a
+`BoxwardenApi` whose every method is a `vi.fn`, plus snapshot and scan builders)
+and `viewmodels/test-notices.ts` (a recording `NoticesViewModel`). Build the
+stub **outside** the `renderHook` callback — a new object per render gives every
+callback a new identity and re-runs the poll effect, so the test sees four
+`discover` calls where the app makes one.
 
 `src/renderer/test-fixtures.ts` builds `DevContainer` values directly rather
 than running `mapContainer` over inspect JSON. That is deliberate: the mapper

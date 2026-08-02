@@ -232,14 +232,32 @@ You should get a window listing every container carrying the
 `devcontainer.local_folder` label, running ones first, compose projects framed
 as a group. If that is not what you see:
 
+Before working down this table, read the advice panels at the top of the
+window. They are generated from what discovery actually found and are more
+specific than anything here — including the exact command to run.
+
 | Symptom                                                     | What it means                                                                                                                              |
 | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| "Docker unavailable", with a list of sockets                | Nothing answered. The panel names every socket tried and why each failed — start there, it is the whole point of that screen.              |
-| Empty list, Docker fine                                     | You have no dev containers, or none are labelled. Ordinary containers are deliberately not listed.                                         |
+| "Can't reach a container engine", with a list of sockets    | Nothing answered. The panel names every socket tried and why each failed; the advice above it says what to install or start.               |
+| Empty list, engine fine                                     | You have no dev containers, or none are labelled. Ordinary containers are deliberately not listed.                                         |
+| Empty list, and the engine picker is set to one engine      | That is the selection doing its job. Switch it back to "All engines" — if the engine has stopped answering, an advisory says so.           |
+| On Windows, a WSL distro's containers are missing           | Almost always socat, the relay boxwarden needs to reach into a distro. The advisory names the distro and the install command.              |
 | Every editor shows "(not found)"                            | No editor CLI resolved. On macOS run "Shell Command: Install 'code' command in PATH"; see `src/main/editor/targets.ts` for what is probed. |
 | Open works, but VS Code offers to build a **new** container | The URI's host path does not match the label byte for byte. `bun run devcontainer:open -- --print` shows you what it should be.            |
 | A greyed, dashed row                                        | That container's label could not be parsed. The row shows the raw label and the reason; it is kept rather than dropped on purpose.         |
 | Podman, and nothing appears                                 | [development.md](./development.md#podman-and-rootless-docker-hosts).                                                                       |
+
+### Choosing an engine
+
+By default boxwarden connects to **every** container engine it can reach and
+merges their container lists, deduplicating by container id. On a machine with
+one engine you will never notice; on Windows, where a podman machine behind a
+named pipe plus a rootless podman inside a WSL distro is an ordinary setup, it
+is the difference between seeing your containers and not.
+
+Once two engines answer, an **Engine** picker appears in the header. Narrowing
+to one restricts the list, and start/stop/open with it. The choice is saved
+between runs.
 
 ## What has actually been verified
 
@@ -252,3 +270,11 @@ editor installed: discovery against a real daemon, whether the
 `vscode-remote://` URI reattaches rather than offering to build, and editor
 binary resolution on any OS. Signing, notarisation and auto-update are not
 configured at all. [roadmap.md](./roadmap.md) is the honest list.
+
+The engine picker and the setup advice are unit-tested and exercised against
+the fixtures, which is a real bar — the advice engine is pure, so every branch
+of it is covered — but the Windows-specific probes underneath them are not.
+`wsl --status` as the "is WSL installed" signal, and the exact behaviour of
+`wsl --list --quiet` on a machine with no distribution, have been reasoned
+about and not observed. Both are in `src/main/docker/wsl.ts` and both need a
+real Windows machine to confirm.

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { groupContainers, groupMembers } from './grouping.js';
 import { devContainer } from './test-fixtures.js';
-import { asContainerId } from '../domain/index.js';
-import type { DevContainer } from '../domain/index.js';
+import { asContainerId } from '../models/index.js';
+import type { DevContainer } from '../models/index.js';
 
 function named(name: string, project?: string): DevContainer {
   return devContainer({

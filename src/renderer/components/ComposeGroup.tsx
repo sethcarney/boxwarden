@@ -1,4 +1,4 @@
-import type { DevContainer } from '../../domain/index.js';
+import type { DevContainer } from '../../models/index.js';
 import { canStart, canStop } from '../format.js';
 import { groupCanStart, groupCanStop } from '../grouping.js';
 

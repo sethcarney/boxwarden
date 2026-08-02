@@ -4,7 +4,7 @@ import { access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { platform } from 'node:os';
 import { promisify } from 'node:util';
-import type { EditorDiscovery, EditorTarget, ResolvedEditor } from '../../domain/index.js';
+import type { EditorDiscovery, EditorTarget, ResolvedEditor } from '../../models/index.js';
 
 const execFileAsync = promisify(execFile);
 

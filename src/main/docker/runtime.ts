@@ -1,4 +1,4 @@
-import type { ContainerRuntimeKind } from '../../domain/index.js';
+import type { ContainerRuntimeKind } from '../../models/index.js';
 
 /**
  * Identify which container runtime answered, from its own /version response.

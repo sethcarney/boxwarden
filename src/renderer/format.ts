@@ -1,10 +1,12 @@
 import type {
   ContainerRuntimeKind,
+  DevContainerProject,
   DevContainerRuntime,
   DockerTransport,
   EndpointFailure,
+  EngineSummary,
   MaybeHostPath,
-} from '../domain/index.js';
+} from '../models/index.js';
 
 /** Pure display helpers. Kept out of the components so they can be tested without a DOM. */
 
@@ -144,6 +146,53 @@ export function describeTarget(transport: DockerTransport): string {
       return `ssh://${transport.host}`;
     case 'wsl':
       return `\\\\wsl.localhost\\${transport.distro}${transport.socketPath.replaceAll('/', '\\')}`;
+  }
+}
+
+/**
+ * One engine, as the picker lists it.
+ *
+ * The qualifier in brackets is what distinguishes two entries that would
+ * otherwise read identically — and they routinely do. A Windows machine running
+ * podman answers as "Podman 5.7.0" on both a named pipe and a WSL relay, and a
+ * picker offering that name twice is worse than no picker at all.
+ */
+export function engineOptionLabel(engine: EngineSummary): string {
+  const name = `${runtimeLabel(engine.runtime)} ${engine.serverVersion}`;
+  const where =
+    engine.transport.transport === 'wsl'
+      ? `WSL: ${engine.transport.distro}`
+      : describeTarget(engine.transport);
+  return `${name} (${where})`;
+}
+
+/**
+ * The `devcontainer` CLI invocation that builds a project, for the copy button.
+ *
+ * SHOWN, NEVER RUN — the same rule the setup advice follows, and for a stronger
+ * reason here. `devcontainer up` pulls images, executes `postCreateCommand`
+ * from a file in the repo, and can take ten minutes; a button that did it
+ * silently would be boxwarden running arbitrary code out of whatever the user
+ * last cloned. Copy-and-paste keeps them able to read it first, and leaves the
+ * build output somewhere they can watch it.
+ *
+ * A `wsl` project gets the `wsl -d` prefix because the CLI has to run INSIDE
+ * the distro: run from Windows against `\\wsl.localhost\...`, the bind mount is
+ * a 9P share and the container gets the wrong filesystem.
+ *
+ * Quoting is deliberately simple — double quotes, which both bash and
+ * PowerShell honour. A folder whose name contains a double quote is not
+ * handled, and would be visibly wrong rather than quietly wrong.
+ */
+export function devcontainerUpCommand(project: DevContainerProject): string {
+  const quote = (path: string): string => (/[\s"'$`\\&|;()<>]/.test(path) ? `"${path}"` : path);
+
+  switch (project.folder.kind) {
+    case 'posix':
+    case 'windows':
+      return `devcontainer up --workspace-folder ${quote(project.folder.path)}`;
+    case 'wsl':
+      return `wsl -d ${project.folder.distro} devcontainer up --workspace-folder ${quote(project.folder.path)}`;
   }
 }
 

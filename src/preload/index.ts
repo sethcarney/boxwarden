@@ -21,7 +21,10 @@ import type { BoxwardenApi } from '../shared/ipc.js';
  *     Anything else arrives as undefined on the far side.
  *
  * The methods are deliberately narrow — no generic "invoke any channel" escape
- * hatch. A renderer bug can misuse only these five verbs.
+ * hatch. A renderer bug can misuse only these ten verbs.
+ *
+ * Note what `addProjectRoot` does NOT take: a path. The renderer can ask for
+ * the folder picker to be shown, and cannot say which folder the answer is.
  */
 const api: BoxwardenApi = {
   discover: () => ipcRenderer.invoke(IPC.discover),
@@ -29,6 +32,11 @@ const api: BoxwardenApi = {
   stop: (id) => ipcRenderer.invoke(IPC.stop, id),
   listEditors: () => ipcRenderer.invoke(IPC.listEditors),
   openInEditor: (id, editorId) => ipcRenderer.invoke(IPC.openInEditor, id, editorId),
+  selectEngine: (selection) => ipcRenderer.invoke(IPC.selectEngine, selection),
+  scanProjects: () => ipcRenderer.invoke(IPC.scanProjects),
+  openProject: (id, editorId) => ipcRenderer.invoke(IPC.openProject, id, editorId),
+  addProjectRoot: () => ipcRenderer.invoke(IPC.addProjectRoot),
+  removeProjectRoot: (root) => ipcRenderer.invoke(IPC.removeProjectRoot, root),
 };
 
 contextBridge.exposeInMainWorld('boxwarden', api);

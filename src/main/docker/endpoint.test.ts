@@ -4,6 +4,7 @@ import {
   candidateEndpoints,
   classifyError,
   describeTransport,
+  isRelayCandidate,
   parseDockerHost,
   parseWslDistroList,
 } from './endpoint.js';
@@ -149,19 +150,44 @@ describe('parseWslDistroList', () => {
   });
 
   /**
-   * These already have a Windows named pipe of their own, so relaying into them
-   * would only rediscover the same containers. docker-desktop-data has no
-   * daemon in it at all.
+   * Parsing keeps every name; filtering is the caller's job. The diagnostics
+   * want the honest list — telling a user "no distributions" when `wsl -l`
+   * plainly shows two is worse than showing two they cannot use.
    */
-  it('skips distros that are already covered by a named pipe', () => {
+  it('keeps every name, including ones no relay will be built for', () => {
     expect(
       parseWslDistroList('dev\ndocker-desktop\ndocker-desktop-data\npodman-machine-default\n'),
-    ).toEqual(['dev']);
+    ).toEqual(['dev', 'docker-desktop', 'docker-desktop-data', 'podman-machine-default']);
   });
 
   it('returns nothing when no distro is running', () => {
     expect(parseWslDistroList('')).toEqual([]);
     expect(parseWslDistroList('\r\n\r\n')).toEqual([]);
+  });
+});
+
+describe('isRelayCandidate', () => {
+  /**
+   * These already have a Windows named pipe of their own, so relaying into them
+   * would only rediscover the same containers. docker-desktop-data has no
+   * daemon in it at all, so probing it can only ever waste a second on the way
+   * to failing.
+   */
+  it('rejects distros already covered by a named pipe', () => {
+    expect(isRelayCandidate('docker-desktop')).toBe(false);
+    expect(isRelayCandidate('docker-desktop-data')).toBe(false);
+    expect(isRelayCandidate('podman-machine-default')).toBe(false);
+    expect(isRelayCandidate('podman-machine-work')).toBe(false);
+  });
+
+  it('accepts a distro the developer made themselves', () => {
+    expect(isRelayCandidate('dev')).toBe(true);
+    expect(isRelayCandidate('Ubuntu-22.04')).toBe(true);
+  });
+
+  /** WSL distro names are case-insensitive to `wsl -d`, so the filter must be too. */
+  it('ignores case', () => {
+    expect(isRelayCandidate('Docker-Desktop')).toBe(false);
   });
 });
 
