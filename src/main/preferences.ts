@@ -1,12 +1,14 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { mkdir } from 'node:fs/promises';
-import type { EngineSelection } from '../models/index.js';
+import type { EngineSelection, UpdatePreferences } from '../models/index.js';
 import {
   ALL_ENGINES,
+  DEFAULT_UPDATE_PREFERENCES,
   parseEngineSelection,
   parseProjectRoots,
   parseStartupCommands,
+  parseUpdatePreferences,
 } from '../models/index.js';
 
 /**
@@ -46,11 +48,23 @@ export interface Preferences {
    * `projectRoots` where the difference is load-bearing.
    */
   readonly startupCommands: Readonly<Record<string, string>>;
+  /**
+   * Whether to look for a new release, when that last happened, and which
+   * version the user has already waved away.
+   *
+   * `lastCheckedAt` is a `Date` in memory and an ISO string on disk —
+   * `JSON.stringify` does that conversion for free and `parseUpdatePreferences`
+   * undoes it. Persisting it is what makes "daily" mean daily rather than
+   * "every launch": this app is closed most of the time, so an in-memory timer
+   * would ask GitHub again every time somebody opened the window.
+   */
+  readonly updates: UpdatePreferences;
 }
 
 export const DEFAULT_PREFERENCES: Preferences = {
   engineSelection: ALL_ENGINES,
   startupCommands: {},
+  updates: DEFAULT_UPDATE_PREFERENCES,
 };
 
 /**
@@ -71,6 +85,7 @@ export async function loadPreferences(path: string): Promise<Preferences> {
     return {
       engineSelection: parseEngineSelection(record['engineSelection']),
       startupCommands: parseStartupCommands(record['startupCommands']),
+      updates: parseUpdatePreferences(record['updates']),
       ...(projectRoots === undefined ? {} : { projectRoots }),
     };
   } catch {

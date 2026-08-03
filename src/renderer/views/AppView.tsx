@@ -1,6 +1,7 @@
 import { Advisories } from '../components/Advisories.js';
 import { DockerUnavailable } from '../components/DockerUnavailable.js';
 import { UnbuiltProjects } from '../components/UnbuiltProjects.js';
+import { UpdateBanner } from '../components/UpdateBanner.js';
 import { relativeTime } from '../format.js';
 import { containerCountLabel } from '../presenters.js';
 import type { AppViewModel } from '../viewmodels/index.js';
@@ -24,7 +25,7 @@ interface Props {
  * through a ViewModel field.
  */
 export function AppView({ vm }: Props) {
-  const { notices, theme, editors, terminals, discovery, projects, claude, now } = vm;
+  const { notices, theme, editors, terminals, discovery, projects, claude, update, now } = vm;
 
   if (!vm.bridgeAvailable) return <BridgeMissing />;
 
@@ -56,6 +57,23 @@ export function AppView({ vm }: Props) {
        */}
       <div className="content">
         {discovery.loading && <p className="empty">Looking for a container engine…</p>}
+
+        {/*
+         * Above the setup advice, and it is the only thing that goes above it.
+         * The advisories are about the machine's container engine and can be
+         * several paragraphs; a one-off "there is a newer boxwarden" pushed
+         * below them is one nobody scrolls to. `panel` is undefined whenever
+         * there is nothing to say — which is almost always — so this costs the
+         * screen nothing the rest of the time.
+         */}
+        {update.panel !== undefined && (
+          <UpdateBanner
+            panel={update.panel}
+            busy={update.busy}
+            onDismiss={update.dismiss}
+            onDisable={update.disable}
+          />
+        )}
 
         {/*
          * Above the diagnostics and above the list, and shown even when
@@ -127,6 +145,9 @@ export function AppView({ vm }: Props) {
         terminalId={terminals.terminalId}
         showTerminalPicker={terminals.anyAvailable}
         onChooseTerminal={terminals.chooseTerminal}
+        update={update.summary}
+        updateBusy={update.busy}
+        onUpdateAction={update.act}
       />
     </main>
   );

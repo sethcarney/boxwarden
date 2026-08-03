@@ -19,7 +19,7 @@ pure types both sides share.
 │  src/renderer/viewmodels/   state, commands, derivations   │
 │  src/renderer/presenters.ts pure string/flag derivations   │
 │  src/renderer/grouping.ts   pure compose folding           │
-│  reaches exactly ten functions on window.boxwarden         │
+│  reaches exactly eighteen functions on window.boxwarden    │
 └───────────────────────┬────────────────────────────────────┘
                         │ contextBridge, structured clone
 ┌───────────────────────┴────────────────────────────────────┐
@@ -32,7 +32,7 @@ pure types both sides share.
 │    docker/    endpoint discovery, dockerode, inspect→model │
 │    editor/    binary resolution, URI building, spawn       │
 │    projects/  the filesystem walk for unbuilt projects     │
-│    ipc.ts     the ten handlers, sender-validated           │
+│    ipc.ts     the eighteen handlers, sender-validated      │
 └────────────────────────────────────────────────────────────┘
 
   src/models/   pure types, no I/O — shared by all three
@@ -47,14 +47,16 @@ pure types both sides share.
 that touches the outside world lives in `src/main/` and is written as a thin
 shell around a pure function:
 
-| Impure edge                    | Pure core it wraps                         |
-| ------------------------------ | ------------------------------------------ |
-| `docker/client.ts` (dockerode) | `docker/mapping.ts`, `docker/host-path.ts` |
-| `docker/client.ts` (probing)   | `docker/endpoint.ts`                       |
-| `editor/launch.ts` (spawn)     | `editor/uri.ts`                            |
-| `editor/resolve.ts` (fs, exec) | `editor/targets.ts` (data)                 |
-| `projects/scan.ts` (fs walk)   | `models/project.ts`                        |
-| `ssh-agent.ts` (env, fs, exec) | `models/advice.ts`, `models/ssh-agent.ts`  |
+| Impure edge                      | Pure core it wraps                         |
+| -------------------------------- | ------------------------------------------ |
+| `docker/client.ts` (dockerode)   | `docker/mapping.ts`, `docker/host-path.ts` |
+| `docker/client.ts` (probing)     | `docker/endpoint.ts`                       |
+| `editor/launch.ts` (spawn)       | `editor/uri.ts`                            |
+| `editor/resolve.ts` (fs, exec)   | `editor/targets.ts` (data)                 |
+| `projects/scan.ts` (fs walk)     | `models/project.ts`                        |
+| `ssh-agent.ts` (env, fs, exec)   | `models/advice.ts`, `models/ssh-agent.ts`  |
+| `update/github.ts` (net)         | `models/update.ts`                         |
+| `update/check.ts` (clock, cache) | `models/update.ts`                         |
 
 That split is why the test suite needs no Docker daemon and no display: the
 cores are covered by unit tests, and the shells are small enough to read.
@@ -71,16 +73,18 @@ They are React hooks — the idiomatic ViewModel in a function-component
 codebase — and they hold every piece of state the UI has, every command it can
 issue, and every value derived from the two.
 
-`useAppViewModel()` composes six, kept apart because their lifetimes differ:
+`useAppViewModel()` composes eight, kept apart because their lifetimes differ:
 
-| Hook           | Owns                                                        | Cadence           |
-| -------------- | ----------------------------------------------------------- | ----------------- |
-| `useDiscovery` | snapshot, busy set, start/stop/open/terminal, engine choice | polled every 5s   |
-| `useProjects`  | scan, roots, unbuilt/built partition                        | on open, on ask   |
-| `useEditors`   | installed editors, the chosen one                           | read once         |
-| `useTerminals` | installed emulators, the chosen one, startup commands       | read once         |
-| `useNotices`   | the message bar and the copyable fallback                   | event-driven      |
-| `useTheme`     | layout + theme, persisted to localStorage                   | never touches IPC |
+| Hook              | Owns                                                        | Cadence           |
+| ----------------- | ----------------------------------------------------------- | ----------------- |
+| `useDiscovery`    | snapshot, busy set, start/stop/open/terminal, engine choice | polled every 5s   |
+| `useProjects`     | scan, roots, unbuilt/built partition                        | on open, on ask   |
+| `useEditors`      | installed editors, the chosen one                           | read once         |
+| `useTerminals`    | installed emulators, the chosen one, startup commands       | read once         |
+| `useNotices`      | the message bar and the copyable fallback                   | event-driven      |
+| `useClaudeStatus` | Claude Code presence per container                          | polled every 15s  |
+| `useUpdate`       | the release check, its banner and its off switch            | asked hourly      |
+| `useTheme`        | layout + theme, persisted to localStorage                   | never touches IPC |
 
 `useTerminals` owns the emulator list and the startup commands but not
 `openTerminal`, which lives in `useDiscovery` with the other container actions:
@@ -520,6 +524,56 @@ reading when the window is shown again.
 Ids are validated against the main process's own last container list before any
 Docker call, the same rule as `openInEditor` taking an id rather than a
 `DevContainer`.
+
+## Checking for a new boxwarden
+
+Once a day the main process asks GitHub for `/releases/latest`, compares it
+against `app.getVersion()`, and — if there is something newer — says which file
+this machine needs and how to install it. It does not download or install
+anything, and that is the design rather than a stage of it: `electron-updater`
+swaps the application in place and verifies a code signature to decide that is
+safe, and these builds are unsigned. See
+[roadmap](./roadmap.md#6-packaging--signing-notarisation-updates).
+
+The same shell-around-a-core split as everything else. `src/models/update.ts`
+is pure and holds all of it — semver precedence, the GitHub payload parser, the
+install-kind detection, the asset match and the per-platform instructions —
+while the shell is split in two: `src/main/update/github.ts` makes the request
+and is the only module here that imports Electron, and
+`src/main/update/check.ts` holds the daily gate, the cache and the dismissal —
+taking the fetch as a parameter, which is what lets it be tested without a
+network.
+
+Five things this feature will break on if they are forgotten:
+
+- **A prerelease sorts BELOW the release it leads to.** Get that backwards and
+  everyone on the final 1.2.0 is prompted to "update" to the candidate it
+  replaced.
+- **The install KIND decides the instructions, not the platform.** Linux ships
+  as a deb that apt replaces in place and as an AppImage the user overwrites by
+  hand. `detectInstallKind` reads the AppImage runtime's own `APPIMAGE`
+  variable and the install prefix, and answers `linux-unknown` rather than
+  guessing — telling somebody to `sudo apt install` a file they never
+  downloaded is worse than saying nothing.
+- **The x64 deb is `amd64`.** dpkg names packages with Debian's architecture
+  and electron-builder follows it, while the x64 AppImage beside it has no
+  architecture in its name at all. One token table covers both; a per-target
+  regex is how the deb ends up unmatched.
+- **Every URL in the response is checked against
+  `https://github.com/sethcarney/boxwarden/releases/`, not against
+  `github.com`.** `shell.openExternal` only checks the origin, so origin alone
+  would accept a link to any other repository on the site. The same parser
+  guards the copy remembered in `preferences.json`.
+- **A failed check is not "up to date".** They are separate arms of
+  `UpdateStatus` and they render differently, for the reason `ClaudeStatus`
+  keeps `unknown` apart from `none`: an app that reports a check it could not
+  complete as a clean bill of health is one nobody should believe the next
+  time.
+
+The check is skipped entirely when `app.isPackaged` is false, so development
+runs and CI never contact GitHub. `BOXWARDEN_FAKE_UPDATE=1` serves an invented
+release through the real folding, which is how the banner is worked on before
+any release exists.
 
 ## Why containers are never dropped
 

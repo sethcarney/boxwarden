@@ -8,6 +8,7 @@ import type {
   ProjectId,
   ProjectScan,
   TerminalId,
+  UpdateStatus,
 } from '../../models/index.js';
 import type {
   ActionResult,
@@ -105,6 +106,46 @@ export interface FakeApi extends BoxwardenApi {
   readonly getStartupCommands: Mock<() => Promise<Readonly<Record<string, string>>>>;
   setStartupCommand: Mock<(id: ContainerId, command: string) => Promise<ActionResult>>;
   readonly claudeStatus: Mock<(ids: readonly ContainerId[]) => Promise<ClaudeStatusMap>>;
+  readonly updateStatus: Mock<(force: boolean) => Promise<UpdateStatus>>;
+  readonly dismissUpdate: Mock<() => Promise<UpdateStatus>>;
+  readonly setUpdateChecks: Mock<(enabled: boolean) => Promise<UpdateStatus>>;
+}
+
+/**
+ * A release the fake bridge can offer.
+ *
+ * Built here rather than by running `parseRelease`, for the same reason
+ * `test-fixtures.ts` builds `DevContainer` values directly: the parser lives
+ * in the Model and the ViewModel tests have no business reaching through it to
+ * construct an input.
+ */
+export function updateAvailable(overrides: Partial<UpdateStatus> = {}): UpdateStatus {
+  return {
+    currentVersion: '1.1.0',
+    checkedAt: new Date('2026-08-01T12:00:00Z'),
+    outcome: {
+      kind: 'available',
+      release: {
+        version: '1.2.0',
+        tag: 'v1.2.0',
+        url: 'https://github.com/sethcarney/boxwarden/releases/tag/v1.2.0',
+        publishedAt: new Date('2026-08-01T09:00:00Z'),
+        assets: [],
+      },
+      asset: {
+        name: 'boxwarden_1.2.0_amd64.deb',
+        url: 'https://github.com/sethcarney/boxwarden/releases/download/v1.2.0/boxwarden_1.2.0_amd64.deb',
+        size: 95_000_000,
+      },
+      instructions: {
+        headline: 'Download the .deb and install it over the top.',
+        steps: ['Quit boxwarden first.'],
+        commands: ['sudo apt install ./boxwarden_1.2.0_amd64.deb'],
+      },
+      dismissed: false,
+    },
+    ...overrides,
+  };
 }
 
 export interface FakeApiOptions {
@@ -120,6 +161,8 @@ export interface FakeApiOptions {
    * whichever fixture ids the test happened to use.
    */
   readonly claude?: ClaudeStatus;
+  /** What `updateStatus` answers. Defaults to "looked, nothing newer". */
+  readonly update?: UpdateStatus;
 }
 
 export function fakeApi(options: FakeApiOptions = {}): FakeApi {
@@ -131,6 +174,11 @@ export function fakeApi(options: FakeApiOptions = {}): FakeApi {
   ];
   const startupCommands = options.startupCommands ?? {};
   const claude = options.claude ?? { kind: 'none' };
+  const update: UpdateStatus = options.update ?? {
+    currentVersion: '1.1.0',
+    checkedAt: new Date('2026-08-01T12:00:00Z'),
+    outcome: { kind: 'current' },
+  };
 
   return {
     discover: vi.fn<() => Promise<DiscoverySnapshot>>(() => Promise.resolve(current)),
@@ -167,6 +215,11 @@ export function fakeApi(options: FakeApiOptions = {}): FakeApi {
     ),
     claudeStatus: vi.fn<(ids: readonly ContainerId[]) => Promise<ClaudeStatusMap>>((ids) =>
       Promise.resolve(Object.fromEntries(ids.map((id) => [id, claude]))),
+    ),
+    updateStatus: vi.fn<(force: boolean) => Promise<UpdateStatus>>(() => Promise.resolve(update)),
+    dismissUpdate: vi.fn<() => Promise<UpdateStatus>>(() => Promise.resolve(update)),
+    setUpdateChecks: vi.fn<(enabled: boolean) => Promise<UpdateStatus>>(() =>
+      Promise.resolve(update),
     ),
   };
 }

@@ -97,7 +97,10 @@ artefact attached. Two things to add before pressing **Publish release**:
 - **Windows** — run the `Setup .exe`. Per-user, no admin rights. The build is
   unsigned, so SmartScreen interposes: _More info_ → _Run anyway_.
 
-There is no auto-update. Installing a later release over the top is the update.
+boxwarden checks for a newer release once a day and tells you how to install
+it. It does not install anything itself — the builds are unsigned, so it has
+no way to verify what it would be replacing itself with. Installing a later
+release over the top is the update.
 ```
 
 [running.md](./running.md#3-installing-it-on-your-computer) is the longer
@@ -193,8 +196,20 @@ All three are tracked in
   line above. The Windows equivalent is a code-signing certificate through the
   same `CSC_LINK` pair.
 
-- **Auto-update.** The manifests are published; nothing consumes them. Wiring
-  up `electron-updater` is a change to the app, not to this workflow.
+- **Auto-update.** The app checks for a new release and says how to install it
+  (`src/main/update/`); it does not download or swap anything, because
+  an unsigned in-place update cannot be verified. The `latest*.yml` manifests
+  are still published and still unread — they are what `electron-updater`
+  would consume on the day there is a signature to check. Wiring that up is a
+  change to the app, not to this workflow.
+
+  Two things here DO depend on this workflow, and breaking either one breaks
+  the update prompt rather than the release: the tag has to stay `v<version>`
+  (the check compares it against `package.json`), and the artefact filenames
+  have to keep their architecture spelling — `-arm64` on the dmg and the
+  AppImage, `_amd64` and `_arm64` on the deb. `pickAsset` in
+  `src/models/update.ts` matches on those, and a rename would leave users on a
+  banner that offers the release page instead of a file.
 
 - **ASAR integrity.** The fuse that would detect a tampered archive is off.
 

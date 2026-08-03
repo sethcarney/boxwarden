@@ -15,6 +15,8 @@ import type { TerminalsViewModel } from './useTerminals.js';
 import { useTerminals } from './useTerminals.js';
 import type { ThemeViewModel } from './useTheme.js';
 import { useTheme } from './useTheme.js';
+import type { UpdateViewModel } from './useUpdate.js';
+import { useUpdate } from './useUpdate.js';
 
 export interface AppViewModel {
   /**
@@ -31,16 +33,18 @@ export interface AppViewModel {
   readonly discovery: DiscoveryViewModel;
   readonly projects: ProjectsViewModel;
   readonly claude: ClaudeViewModel;
+  readonly update: UpdateViewModel;
 }
 
 /**
  * The root ViewModel: every piece of state the app renders, and every action it
  * can take, with no JSX anywhere beneath it.
  *
- * Composition rather than one large hook, because the seven below have
+ * Composition rather than one large hook, because the eight below have
  * genuinely different lifetimes — Docker is polled every five seconds, Claude
- * Code presence every fifteen, the filesystem is scanned on demand, the editor
- * and terminal lists are read once, and the theme never touches the bridge at
+ * Code presence every fifteen, GitHub is asked about a new release once a day,
+ * the filesystem is scanned on demand, the editor and terminal lists are read
+ * once, and the theme never touches the bridge at
  * all. Keeping them separate is what lets each be tested against a fake
  * `BoxwardenApi` without standing up the others.
  *
@@ -60,6 +64,9 @@ export function useAppViewModel(): AppViewModel {
   const discovery = useDiscovery(api, notices, editors.editorId, terminals.terminalId);
   const projects = useProjects(api, notices, editors.editorId, discovery.containers);
   const claude = useClaudeStatus(api, notices, discovery.containers);
+  // Takes `now` rather than reading the clock, so "published 2 days ago" ages
+  // on the same tick every other relative time in the app does.
+  const update = useUpdate(api, now);
 
   return {
     bridgeAvailable: api !== undefined,
@@ -71,5 +78,6 @@ export function useAppViewModel(): AppViewModel {
     discovery,
     projects,
     claude,
+    update,
   };
 }

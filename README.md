@@ -62,8 +62,10 @@ Windows, x64 and arm64 for each. Or build your own:
 bun run dist          # installers for the host OS, into release/
 ```
 
-The builds are **unsigned**, so each platform will interpose on first launch,
-and there is no auto-update.
+The builds are **unsigned**, so each platform will interpose on first launch.
+boxwarden checks GitHub once a day for a newer release and tells you how to
+install it on the platform you are on — it does not install anything itself,
+and the check can be turned off from the footer.
 [The running guide](docs/running.md#3-installing-it-on-your-computer) walks
 through both, and through uninstalling again;
 [the release guide](docs/releasing.md) covers cutting a new one.

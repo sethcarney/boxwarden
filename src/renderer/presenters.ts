@@ -22,10 +22,12 @@ import type {
   EngineSelection,
   PortBinding,
   SshAgentState,
+  UpdateInstructions,
+  UpdateStatus,
 } from '../models/index.js';
 import { projectName } from '../models/index.js';
 import type { DiscoverySnapshot } from '../shared/ipc.js';
-import { canExec, describeTarget, runtimeLabel } from './format.js';
+import { canExec, describeTarget, relativeTime, runtimeLabel } from './format.js';
 
 /**
  * Anything thrown, as a sentence.
@@ -367,4 +369,127 @@ export function claudeStopWarning(
   return sessions === 1
     ? 'A Claude Code session is running in here. Stopping ends it.'
     : `${String(sessions)} Claude Code sessions are running in here. Stopping ends them.`;
+}
+
+/**
+ * ---- The update prompt ----
+ *
+ * Two derivations, because the answer is shown in two places at once and they
+ * are not the same thing:
+ *
+ *   - `updatePanel` is the banner. It exists ONLY when there is a newer
+ *     release the user has not waved away, because a panel that is always on
+ *     screen is a panel nobody reads by the second week.
+ *   - `updateSummary` is the footer line, which is always there. It is also
+ *     the only place boxwarden says which version it is, which is worth having
+ *     on its own — "what am I running" is the first question in any bug report.
+ */
+
+export interface UpdatePanel {
+  readonly headline: string;
+  readonly detail: string;
+  /** Straight from the Model — the steps and commands for this install kind. */
+  readonly instructions: UpdateInstructions;
+  /**
+   * The one file this machine needs, when exactly one matched. Undefined sends
+   * the user to the release page to choose, which is the honest answer — see
+   * `pickAsset`. A label and a URL travel together so a View cannot render one
+   * without the other.
+   */
+  readonly download: { readonly label: string; readonly url: string } | undefined;
+  readonly releaseUrl: string;
+}
+
+/**
+ * The update banner, or nothing.
+ *
+ * `revealed` is what a dismissal does NOT do: "Not now" hides the banner and
+ * leaves the footer saying an update exists, and clicking that footer brings
+ * this back. A dismissal that could not be undone would be a trap — the user
+ * would have to wait for the NEXT release to see the instructions again.
+ */
+export function updatePanel(
+  status: UpdateStatus,
+  now: number,
+  revealed: boolean,
+): UpdatePanel | undefined {
+  if (status.outcome.kind !== 'available') return undefined;
+  const { release, asset, instructions, dismissed } = status.outcome;
+  if (dismissed && !revealed) return undefined;
+
+  const published =
+    release.publishedAt === undefined
+      ? ''
+      : ` It was published ${relativeTime(release.publishedAt, now)}.`;
+
+  return {
+    headline: `boxwarden ${release.version} is available`,
+    detail: `You are running ${status.currentVersion}.${published} boxwarden does not update itself — the builds are unsigned, so installing is left to you.`,
+    instructions,
+    download:
+      asset === undefined
+        ? undefined
+        : { label: `${asset.name}${formatSize(asset.size)}`, url: asset.url },
+    releaseUrl: release.url,
+  };
+}
+
+/** Bytes as the download dialog will show them, or nothing when GitHub did not say. */
+function formatSize(bytes: number | undefined): string {
+  if (bytes === undefined) return '';
+  const megabytes = bytes / (1024 * 1024);
+  return ` (${megabytes < 10 ? megabytes.toFixed(1) : String(Math.round(megabytes))} MB)`;
+}
+
+export interface UpdateSummary {
+  readonly label: string;
+  readonly title: string;
+}
+
+/**
+ * The footer line, for every arm of the status.
+ *
+ * The six arms produce six different sentences on purpose. "Up to date" and
+ * "could not check" must never look the same — one of them is a promise the
+ * app is in no position to make — and neither may borrow the silence that
+ * "checks are off" is entitled to.
+ */
+export function updateSummary(status: UpdateStatus, now: number): UpdateSummary {
+  const name = status.currentVersion === '' ? 'boxwarden' : `boxwarden ${status.currentVersion}`;
+  const checked =
+    status.checkedAt === undefined
+      ? 'boxwarden has not checked for a new release yet.'
+      : `Last checked ${relativeTime(status.checkedAt, now)}.`;
+  const clickToCheck = 'Click to check now.';
+
+  switch (status.outcome.kind) {
+    case 'unsupported':
+      return { label: `${name} · development build`, title: status.outcome.reason };
+
+    case 'disabled':
+      return {
+        label: `${name} · update checks off`,
+        title: `boxwarden is not contacting GitHub. Click to turn the daily check back on and look now.`,
+      };
+
+    case 'unchecked':
+      return { label: name, title: `${checked} ${clickToCheck}` };
+
+    case 'current':
+      return { label: `${name} · up to date`, title: `${checked} ${clickToCheck}` };
+
+    case 'failed':
+      return {
+        label: `${name} · update check failed`,
+        title: `${status.outcome.message} ${clickToCheck}`,
+      };
+
+    case 'available':
+      return {
+        label: `${name} · ${status.outcome.release.version} available`,
+        title: status.outcome.dismissed
+          ? `You said not now to ${status.outcome.release.version}. Click to see how to install it.`
+          : `${checked} Click to see how to install it.`,
+      };
+  }
 }
