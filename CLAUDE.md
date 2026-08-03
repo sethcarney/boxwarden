@@ -99,18 +99,19 @@ Docker daemon or a display, and why the shells stay small.
 
 ### The ViewModel layer
 
-`useAppViewModel()` composes seven, kept separate because their lifetimes
+`useAppViewModel()` composes nine, kept separate because their lifetimes
 genuinely differ:
 
-| Hook           | Owns                                                        | Cadence                    |
-| -------------- | ----------------------------------------------------------- | -------------------------- |
-| `useDiscovery` | snapshot, busy set, start/stop/open/terminal, engine choice | polled every 5s            |
-| `useProjects`  | scan, roots, unbuilt/built partition                        | on open, on ask            |
-| `useEditors`   | installed editors, the chosen one                           | read once                  |
-| `useTerminals` | installed emulators, the chosen one, startup commands       | read once                  |
-| `useNotices`   | the message bar and the copyable fallback                   | event-driven               |
-| `useUpdate`    | the release check: banner, footer line, dismiss, off switch | asked hourly, GitHub daily |
-| `useTheme`     | layout + theme, persisted to localStorage                   | never touches IPC          |
+| Hook            | Owns                                                        | Cadence                    |
+| --------------- | ----------------------------------------------------------- | -------------------------- |
+| `useDiscovery`  | snapshot, busy set, start/stop/open/terminal, engine choice | polled every 5s            |
+| `useProjects`   | scan, roots, unbuilt/built partition                        | on open, on ask            |
+| `useEditors`    | installed editors, the chosen one                           | read once                  |
+| `useTerminals`  | installed emulators, the chosen one, startup commands       | read once                  |
+| `useNotices`    | the message bar and the copyable fallback                   | event-driven               |
+| `useAdvisories` | which advice is hidden, and which screen is showing         | never touches IPC          |
+| `useUpdate`     | the release check: banner, footer line, dismiss, off switch | asked hourly, GitHub daily |
+| `useTheme`      | layout + theme, persisted to localStorage                   | never touches IPC          |
 
 Four conventions hold this together:
 
@@ -248,6 +249,37 @@ Two rules when adding to it:
   it renders and silently does nothing.
 
 Commands are shown, never run — they reboot machines and use `sudo`.
+
+### Hiding advice, and the setup page
+
+An advisory panel that is always on screen is one nobody reads on the day it
+matters, so a card can be **collapsed** (body folded away, per-run, default from
+severity — `error`/`warning` open, `info` folded) and **hidden** (off the main
+screen, persisted by `Advice.id` in `localStorage`). `src/renderer/advisories.ts`
+is the pure half; `useAdvisories` is the state.
+
+**Nothing is ever destroyed.** A hidden advisory is still computed, still
+counted in the header tooltip, and still listed in full on the second screen —
+`views/SetupView.tsx`, reachable from the header's nav whether or not anything
+is wrong. Three rules keep that true:
+
+- **`onHide` is only passed where the advisory survives it.** `<Advisories>`
+  takes `onHide` on the main screen and `onRestore` on the setup page's hidden
+  list; a Hide button on an already-hidden card would do nothing.
+- **A hidden id is kept even when nothing matches it this scan.** The condition
+  comes and goes (a distro is started, an engine restarted) and pruning on load
+  would un-hide it the first time the machine was briefly healthy.
+- **The header counts ACTIVE advice; the tooltip says how many are hidden.** A
+  count of zero on a tab holding four hidden warnings is the one lie available
+  here.
+
+`<EndpointAttempts>` is shared: in `<DockerUnavailable>` it is evidence for a
+failure and only renders when nothing answered; on the setup page it is a
+standing inventory shown while everything works, which is what answers "one of
+my two engines is missing — which socket did boxwarden not find?"
+
+Persisted in `localStorage`, not `preferences.json` — same reason as the layout:
+the main process makes no decision from it.
 
 ### SSH agent forwarding
 

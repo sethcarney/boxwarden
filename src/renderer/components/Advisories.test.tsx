@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
 import type { Advice } from '../../models/index.js';
 import { Advisories } from './Advisories.js';
 
@@ -71,10 +71,93 @@ describe('Advisories', () => {
    * boxwarden shows commands and does not run them. These reboot machines,
    * install system components and use sudo; an app that fires them from a
    * button press is not one to trust with a Docker socket.
+   *
+   * Pinned as the exact list rather than "no button says Run", so that a
+   * future control added next to a command has to be looked at.
    */
   it('never offers to run a command for the user', () => {
-    render(<Advisories advice={[advice()]} />);
+    render(<Advisories advice={[advice()]} onHide={vi.fn()} />);
     const buttons = screen.getAllByRole('button').map((button) => button.textContent);
-    expect(buttons).toEqual(['Copy']);
+    expect(buttons).toEqual(['WSL is not installed', 'Hide', 'Copy']);
+  });
+
+  describe('collapsing', () => {
+    /**
+     * A blocking error is why the user is looking at this window; folding it
+     * shut would put the fix behind a click. A note is true, worth having, and
+     * not why anyone opened the app.
+     */
+    it('opens what is blocking and folds away what is merely a note', () => {
+      render(
+        <Advisories
+          advice={[
+            advice({ id: 'a', severity: 'error', body: 'The blocking body.' }),
+            advice({ id: 'b', severity: 'info', body: 'The note body.' }),
+          ]}
+        />,
+      );
+      expect(screen.getByText('The blocking body.')).toBeDefined();
+      expect(screen.queryByText('The note body.')).toBeNull();
+    });
+
+    it('shows a folded body when the title is clicked, and folds it back', () => {
+      render(<Advisories advice={[advice({ severity: 'info', body: 'The note body.' })]} />);
+      const toggle = screen.getByRole('button', { name: 'WSL is not installed' });
+
+      expect(toggle.getAttribute('aria-expanded')).toBe('false');
+      fireEvent.click(toggle);
+      expect(screen.getByText('The note body.')).toBeDefined();
+      expect(toggle.getAttribute('aria-expanded')).toBe('true');
+
+      fireEvent.click(toggle);
+      expect(screen.queryByText('The note body.')).toBeNull();
+    });
+
+    /**
+     * Unmounted, not hidden with CSS. A collapsed advisory whose three copy
+     * buttons were still in the tab order would let a keyboard user land on
+     * controls nobody can see.
+     */
+    it('takes a folded advisory’s controls out of the tab order entirely', () => {
+      render(<Advisories advice={[advice({ severity: 'info' })]} />);
+      expect(screen.queryByText('Copy')).toBeNull();
+      expect(screen.queryByText('Install WSL (Microsoft)')).toBeNull();
+    });
+  });
+
+  describe('hiding', () => {
+    /**
+     * Hiding is only offered where the advisory survives it. The main screen
+     * passes `onHide` because the setup page is the other copy; the setup
+     * page's own hidden list passes `onRestore` instead.
+     */
+    it('offers no way to hide unless the caller says there is somewhere else to read it', () => {
+      render(<Advisories advice={[advice()]} />);
+      expect(screen.queryByText('Hide')).toBeNull();
+      expect(screen.queryByText('Show again')).toBeNull();
+    });
+
+    it('reports the id of the advisory the user put away', () => {
+      const onHide = vi.fn();
+      render(<Advisories advice={[advice({ id: 'docker-cli-missing' })]} onHide={onHide} />);
+      fireEvent.click(screen.getByText('Hide'));
+      expect(onHide).toHaveBeenCalledWith('docker-cli-missing');
+    });
+
+    it('offers to put a hidden advisory back', () => {
+      const onRestore = vi.fn();
+      render(<Advisories advice={[advice({ id: 'wsl-socat-missing' })]} onRestore={onRestore} />);
+      fireEvent.click(screen.getByText('Show again'));
+      expect(onRestore).toHaveBeenCalledWith('wsl-socat-missing');
+    });
+
+    /**
+     * Two lists of advice on one page (active and hidden) are two regions, and
+     * a screen reader user needs them told apart.
+     */
+    it('takes a name for the region so two lists can share a page', () => {
+      render(<Advisories advice={[advice()]} label="Advice hidden from the main screen" />);
+      expect(screen.getByLabelText('Advice hidden from the main screen')).toBeDefined();
+    });
   });
 });

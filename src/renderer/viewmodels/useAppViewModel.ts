@@ -1,5 +1,8 @@
 import { useMemo } from 'react';
+import type { Advice } from '../../models/index.js';
 import { getApi } from '../api.js';
+import type { AdvisoriesViewModel } from './useAdvisories.js';
+import { useAdvisories } from './useAdvisories.js';
 import type { ClaudeViewModel } from './useClaudeStatus.js';
 import { useClaudeStatus } from './useClaudeStatus.js';
 import { useClock } from './useClock.js';
@@ -18,6 +21,9 @@ import { useTheme } from './useTheme.js';
 import type { UpdateViewModel } from './useUpdate.js';
 import { useUpdate } from './useUpdate.js';
 
+/** Stable identity for "no advice yet", so the partition below memoises. */
+const EMPTY_ADVICE: readonly Advice[] = [];
+
 export interface AppViewModel {
   /**
    * False when `window.boxwarden` is missing, which means the preload script
@@ -33,6 +39,8 @@ export interface AppViewModel {
   readonly discovery: DiscoveryViewModel;
   readonly projects: ProjectsViewModel;
   readonly claude: ClaudeViewModel;
+  /** The setup advice, what the user has hidden of it, and which screen is showing. */
+  readonly advisories: AdvisoriesViewModel;
   readonly update: UpdateViewModel;
 }
 
@@ -40,11 +48,11 @@ export interface AppViewModel {
  * The root ViewModel: every piece of state the app renders, and every action it
  * can take, with no JSX anywhere beneath it.
  *
- * Composition rather than one large hook, because the eight below have
+ * Composition rather than one large hook, because the nine below have
  * genuinely different lifetimes — Docker is polled every five seconds, Claude
  * Code presence every fifteen, GitHub is asked about a new release once a day,
  * the filesystem is scanned on demand, the editor and terminal lists are read
- * once, and the theme never touches the bridge at
+ * once, and neither the theme nor the advisory state touches the bridge at
  * all. Keeping them separate is what lets each be tested against a fake
  * `BoxwardenApi` without standing up the others.
  *
@@ -64,6 +72,10 @@ export function useAppViewModel(): AppViewModel {
   const discovery = useDiscovery(api, notices, editors.editorId, terminals.terminalId);
   const projects = useProjects(api, notices, editors.editorId, discovery.containers);
   const claude = useClaudeStatus(api, notices, discovery.containers);
+  // After discovery, which is where the advice comes from. `EMPTY_ADVICE` and
+  // not a literal `[]`: the partition memoises on the array's identity, and a
+  // fresh empty array every render would recompute it on every poll.
+  const advisories = useAdvisories(discovery.snapshot?.advice ?? EMPTY_ADVICE);
   // Takes `now` rather than reading the clock, so "published 2 days ago" ages
   // on the same tick every other relative time in the app does.
   const update = useUpdate(api, now);
@@ -78,6 +90,7 @@ export function useAppViewModel(): AppViewModel {
     discovery,
     projects,
     claude,
+    advisories,
     update,
   };
 }

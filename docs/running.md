@@ -269,6 +269,13 @@ Before working down this table, read the advice panels at the top of the
 window. They are generated from what discovery actually found and are more
 specific than anything here — including the exact command to run.
 
+Each panel folds shut by clicking its title, and **Hide** takes one off this
+screen for good. Nothing is lost that way: the **Setup** tab in the header
+lists every advisory, hidden ones included, alongside the full list of sockets
+boxwarden tried on the last scan — which is the place to look when one of two
+engines is missing from an otherwise working app. "Show all again" there puts
+everything back.
+
 | Symptom                                                     | What it means                                                                                                                              |
 | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | "Can't reach a container engine", with a list of sockets    | Nothing answered. The panel names every socket tried and why each failed; the advice above it says what to install or start.               |
