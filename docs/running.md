@@ -233,8 +233,29 @@ build is unsigned, so SmartScreen will interpose — _More info_ → _Run anyway
 | Linux   | `sudo apt remove boxwarden`, or delete the AppImage |
 | Windows | Settings → Apps → boxwarden → Uninstall             |
 
-There is **no auto-update**. An installed build stays at the version you built
-until you build another one and install it over the top.
+### Updates
+
+boxwarden asks GitHub once a day whether a newer release exists. When there is
+one it says so, above the container list, with the exact file for the platform
+and install kind you are on and the command to install it — `sudo apt install
+./boxwarden_<version>_amd64.deb` for the deb, `chmod +x` for the AppImage, drag
+to Applications for the dmg, run the installer for Windows.
+
+It does **not** install anything itself, and it never will while the builds are
+unsigned: an app that replaces its own binary with a download it cannot verify
+is a worse deal than one that tells you to do it yourself.
+
+Two controls, both in the footer line that names your version:
+
+- **Not now** on the banner hides it for that version. The footer still says the
+  update exists, and clicking the footer brings the banner back.
+- **Stop checking for updates** turns the daily check off for good. It is the
+  only outbound network request boxwarden makes, so if you would rather it made
+  none, that is the switch. The footer then reads `update checks off`, and
+  clicking it turns them back on and looks straight away.
+
+The check is skipped entirely in a development build (`bun run dev`), where
+there is no released version to compare against.
 
 ---
 
@@ -287,8 +308,9 @@ the installers and the deb's control scripts have been inspected.
 Not verified, because the machine this was built on has no Docker socket and no
 editor installed: discovery against a real daemon, whether the
 `vscode-remote://` URI reattaches rather than offering to build, and editor
-binary resolution on any OS. Signing, notarisation and auto-update are not
-configured at all. [roadmap.md](./roadmap.md) is the honest list.
+binary resolution on any OS. Signing and notarisation are not configured at
+all, and the update check has never seen a real release — there are none yet.
+[roadmap.md](./roadmap.md) is the honest list.
 
 The engine picker and the setup advice are unit-tested and exercised against
 the fixtures, which is a real bar — the advice engine is pure, so every branch

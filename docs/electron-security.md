@@ -29,6 +29,7 @@ this repo so a reviewer can check the claim rather than take it on trust.
 | 16. Current Electron                           | Electron 43                                                                    | `package.json`                                 |
 | 17. Validate IPC senders                       | `isTrustedSender` compares the `WebContents` object                            | `src/main/ipc.ts`                              |
 | Spawning, generally                            | argv arrays only, never `shell: true`, for editors and terminals alike         | `src/main/{editor,terminal}/launch.ts`         |
+| Outbound network                               | One request, main process only, to a URL the renderer cannot name              | `src/main/update/github.ts`                    |
 
 Several of these are already Electron 43 defaults. They are written out anyway:
 a default that flips in a future major is the kind of regression nobody
@@ -158,6 +159,34 @@ and container labels, both influenced by anyone who can create a container on
 the daemon, and an open allow-list turns a crafted label into a link the user
 is being invited to click. A link added to `advice.ts` without its origin
 added here renders and does nothing; check both files together.
+
+### The one outbound request
+
+The daily update check (`src/main/update/github.ts`) is the only thing in this
+app that talks to the internet. Everything else is a local socket, a local
+filesystem walk or a spawned process. Four properties keep it narrow:
+
+- **The renderer cannot name the URL.** It is a constant in the models layer,
+  built from `UPDATE_REPOSITORY`. The one input that crosses the bridge is a
+  boolean saying "skip the daily gate", and even that cannot re-enable a check
+  the user turned off.
+- **It is made from the MAIN process, not the renderer.** The production CSP
+  keeps `connect-src 'none'`, and it stays that way — the page still has no
+  business making network requests, and this feature did not become a reason
+  to relax it.
+- **Every URL in the response is a prefix match away from being ignored.**
+  `RELEASE_URL_PREFIX` is `https://github.com/sethcarney/boxwarden/releases/`,
+  and `parseRelease` drops anything that does not start with it. The
+  `openExternal` allow-list checks the ORIGIN, so `github.com` alone would
+  accept a link to any other repository on the site: the release payload is
+  network data, and a link the user is invited to click has to be held to a
+  narrower rule than the one that lets the docs links through. The same parser
+  runs over the copy remembered in `preferences.json`, which is a file
+  anything on the machine can write.
+- **Nothing is downloaded and nothing is executed.** The download is a link
+  opened in the system browser; the install commands are shown with a copy
+  button, exactly like the setup advice and `devcontainer up`. There is no
+  in-place update to sign, verify or get wrong.
 
 ### The one granted permission
 

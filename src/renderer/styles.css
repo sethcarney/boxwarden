@@ -1151,6 +1151,119 @@ select {
   color: var(--accent);
 }
 
+/* ---------------------------------------------------------------- *
+ * Update banner
+ *
+ * The same furniture as an advisory — badge, heading, body, copyable
+ * commands — because it is the same kind of thing: something the app
+ * noticed, and the exact steps to act on it. It borrows
+ * `.advice-commands` outright rather than growing a second copy of
+ * that row.
+ *
+ * Accent-coloured rather than warning-coloured. A new version is good
+ * news; painting it the same amber as "your WSL distro has no socat"
+ * would put a broken setup and a released feature on the same footing.
+ * ---------------------------------------------------------------- */
+
+.update {
+  margin: 12px var(--gutter) 0;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+  padding: 12px 14px;
+}
+
+.update-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.update-head h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.update-badge {
+  flex: 0 0 auto;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: 4px;
+  padding: 2px 5px;
+}
+
+.update-body,
+.update-lead {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-dim);
+  max-width: 68ch;
+}
+
+.update-lead {
+  margin-top: 8px;
+  color: var(--text);
+}
+
+.update-steps {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-dim);
+  max-width: 68ch;
+}
+
+.update-links {
+  margin: 10px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 11.5px;
+}
+
+.update-links a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.update-links a:hover {
+  text-decoration: underline;
+}
+
+.update-actions {
+  margin: 8px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  font-size: 11.5px;
+}
+
+/* The version line in the footer. A button because it does something —
+   check now — but it must read as the status text it sits beside, not
+   as a call to action competing with the pickers. */
+/* Written as `button.foot-update` to outrank `button.link`, whose accent
+   colour and permanent underline would make one line of the footer shout. */
+button.foot-update {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-decoration: none;
+}
+
+button.foot-update:hover:not(:disabled) {
+  color: var(--text);
+  text-decoration: underline;
+}
+
 /* ---------- unbuilt projects ---------- */
 
 /* Visually quieter than a container card on purpose: these are folders, not

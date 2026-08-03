@@ -97,6 +97,37 @@ export type {
 export type { BinaryDiscovery, ResolvedBinary } from './discovery.js';
 
 export type {
+  InstallKind,
+  Release,
+  ReleaseAsset,
+  SemanticVersion,
+  UpdateFacts,
+  UpdateInstructions,
+  UpdateOutcome,
+  UpdatePreferences,
+  UpdateStatus,
+} from './update.js';
+export {
+  DEFAULT_UPDATE_PREFERENCES,
+  LATEST_RELEASE_API_URL,
+  RELEASE_URL_PREFIX,
+  UPDATE_CHECK_INTERVAL_MS,
+  UPDATE_REPOSITORY,
+  compareVersions,
+  detectInstallKind,
+  foldUpdateStatus,
+  isCheckDue,
+  isNewerVersion,
+  normaliseVersion,
+  parseRelease,
+  parseStoredRelease,
+  parseUpdatePreferences,
+  parseVersion,
+  pickAsset,
+  updateInstructions,
+} from './update.js';
+
+export type {
   ContainerCli,
   ContainerCliKind,
   KnownTerminalId,

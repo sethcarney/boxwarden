@@ -66,6 +66,14 @@ socket and no editor installed:
 - Claude Code detection against a real container. The parser is tested against
   fixture `top` responses in both engines' column layouts, but no daemon has
   returned a real one and no real `claude` process has been matched.
+- **The update check against a real release.** There are none yet, so nothing
+  has ever come back from `/releases/latest` — the parser, the version
+  comparison and the per-platform asset match are tested against fixture
+  payloads built from the artefact names in `releasing.md`. Two things can only
+  be confirmed by publishing: that those names are exactly what electron-builder
+  emits, and that `net.fetch` reaches api.github.com from a packaged app.
+  `BOXWARDEN_FAKE_UPDATE=1` shows the banner without a release, which proves
+  the UI and nothing about GitHub.
 
 Those are the first thing to do on a real machine, and until they pass the app
 should be considered unproven rather than working.
@@ -160,12 +168,18 @@ What is still missing is everything about _trusting_ the result:
 - **Windows signing.** Unsigned, so SmartScreen interposes.
 - **ASAR integrity.** `asar: true` is on; the integrity fuse that would detect
   a tampered archive is not.
-- **Auto-update.** None. `latest-linux.yml` and friends are now emitted _and
-  attached to the release_ — that part is done, and it had to be done first,
-  because the build that would need to find them is the one already installed.
-  Nothing consumes them: `electron-updater` is not wired up, and an installed
-  build stays where it is until someone replaces it. Until it is, "updates are
-  manual" is stated in the README, the running guide and the release notes.
+- **Auto-update.** boxwarden now **checks** — once a day, against
+  `/releases/latest` — and tells the user what to download and how to install
+  it for the platform and install kind they are on (`src/models/update.ts`,
+  `src/main/update/`). What it does not do is install anything, and
+  that half is blocked on the item above rather than on effort:
+  `electron-updater` swaps the application in place and verifies a code
+  signature to decide it is safe to, and there is no signature to verify.
+  Squirrel.Mac refuses an unsigned swap outright; everywhere else it would
+  replace a binary on the user's disk on the strength of an unverifiable
+  download, which is worse than the manual install it replaces. Sign first,
+  then wire it up — at which point `latest*.yml`, already attached to every
+  release, is what it reads.
 - **arm64 anything.** Every target builds both architectures and only the x64
   Linux build has ever been launched.
 

@@ -1,3 +1,4 @@
+import { UpdateBanner } from '../components/UpdateBanner.js';
 import { relativeTime } from '../format.js';
 import { containerCountLabel } from '../presenters.js';
 import type { AppViewModel } from '../viewmodels/index.js';
@@ -20,12 +21,13 @@ interface Props {
  * string needs an `if`, it belongs in `presenters.ts` and reaches this file
  * through a ViewModel field.
  *
- * The header, the notice bar and the footer are shared by both screens; the one
- * expression inside the scroller chooses between them. Which screen is showing
- * is a ViewModel field (`advisories.page`), not state kept here.
+ * The header, the notice bar, the update banner and the footer are shared by
+ * both screens; the one expression inside the scroller chooses between them.
+ * Which screen is showing is a ViewModel field (`advisories.page`), not state
+ * kept here.
  */
 export function AppView({ vm }: Props) {
-  const { notices, theme, editors, terminals, discovery, advisories, now } = vm;
+  const { notices, theme, editors, terminals, discovery, advisories, update, now } = vm;
 
   if (!vm.bridgeAvailable) return <BridgeMissing />;
 
@@ -64,6 +66,26 @@ export function AppView({ vm }: Props) {
        * scrolls together now, and the panel sits directly under the last card.
        */}
       <div className="content">
+        {/*
+         * Above both screens, and it is the only thing that goes above them.
+         * The setup advice is about the machine's container engine and can be
+         * several paragraphs; a one-off "there is a newer boxwarden" pushed
+         * below it is one nobody scrolls to. It sits here rather than inside
+         * `<ContainersView>` because it is about the app and not about either
+         * screen — a user reading the setup page is exactly the user who wants
+         * to know a newer build exists. `panel` is undefined whenever there is
+         * nothing to say — which is almost always — so this costs the screen
+         * nothing the rest of the time.
+         */}
+        {update.panel !== undefined && (
+          <UpdateBanner
+            panel={update.panel}
+            busy={update.busy}
+            onDismiss={update.dismiss}
+            onDisable={update.disable}
+          />
+        )}
+
         {advisories.page === 'setup' ? (
           <SetupView
             advisories={advisories}
@@ -87,6 +109,9 @@ export function AppView({ vm }: Props) {
         terminalId={terminals.terminalId}
         showTerminalPicker={terminals.anyAvailable}
         onChooseTerminal={terminals.chooseTerminal}
+        update={update.summary}
+        updateBusy={update.busy}
+        onUpdateAction={update.act}
       />
     </main>
   );
