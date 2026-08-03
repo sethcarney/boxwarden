@@ -1,15 +1,12 @@
-import { Advisories } from '../components/Advisories.js';
-import { DockerUnavailable } from '../components/DockerUnavailable.js';
-import { UnbuiltProjects } from '../components/UnbuiltProjects.js';
 import { relativeTime } from '../format.js';
 import { containerCountLabel } from '../presenters.js';
 import type { AppViewModel } from '../viewmodels/index.js';
 import { AppFooter } from './AppFooter.js';
 import { AppHeader } from './AppHeader.js';
 import { BridgeMissing } from './BridgeMissing.js';
-import { ContainerList } from './ContainerList.js';
-import { NoContainers } from './NoContainers.js';
+import { ContainersView } from './ContainersView.js';
 import { NoticeBar } from './NoticeBar.js';
+import { SetupView } from './SetupView.js';
 
 interface Props {
   readonly vm: AppViewModel;
@@ -22,11 +19,20 @@ interface Props {
  * callback it exposes. The rule for this file is that nothing computes — if a
  * string needs an `if`, it belongs in `presenters.ts` and reaches this file
  * through a ViewModel field.
+ *
+ * The header, the notice bar and the footer are shared by both screens; the one
+ * expression inside the scroller chooses between them. Which screen is showing
+ * is a ViewModel field (`advisories.page`), not state kept here.
  */
 export function AppView({ vm }: Props) {
-  const { notices, theme, editors, terminals, discovery, projects, claude, now } = vm;
+  const { notices, theme, editors, terminals, discovery, advisories, now } = vm;
 
   if (!vm.bridgeAvailable) return <BridgeMissing />;
+
+  const scannedLabel =
+    discovery.snapshot === undefined
+      ? undefined
+      : `scanned ${relativeTime(discovery.snapshot.scannedAt, now)}`;
 
   return (
     <main className="app">
@@ -35,6 +41,9 @@ export function AppView({ vm }: Props) {
         selection={discovery.snapshot?.selection}
         engine={discovery.engine}
         pickerDisabled={discovery.anyBusy}
+        page={advisories.page}
+        setup={advisories.badge}
+        onNavigate={advisories.navigate}
         onSelectEngine={discovery.selectEngine}
         onRefresh={discovery.refresh}
       />
@@ -55,69 +64,20 @@ export function AppView({ vm }: Props) {
        * scrolls together now, and the panel sits directly under the last card.
        */}
       <div className="content">
-        {discovery.loading && <p className="empty">Looking for a container engine…</p>}
-
-        {/*
-         * Above the diagnostics and above the list, and shown even when
-         * everything is working. Most of these advisories are about containers
-         * the user CANNOT see — a WSL distro with no relay into it produces a
-         * list that looks complete and is not — so hiding them behind a failure
-         * state would hide them exactly when they matter.
-         */}
-        {discovery.snapshot !== undefined && <Advisories advice={discovery.snapshot.advice} />}
-
-        {discovery.snapshot !== undefined && !discovery.dockerOk && (
-          <DockerUnavailable environment={discovery.snapshot.environment} />
+        {advisories.page === 'setup' ? (
+          <SetupView
+            advisories={advisories}
+            environment={discovery.snapshot?.environment}
+            scannedLabel={scannedLabel}
+          />
+        ) : (
+          <ContainersView vm={vm} />
         )}
-
-        {discovery.snapshot !== undefined &&
-          discovery.dockerOk &&
-          discovery.containers.length === 0 && <NoContainers message={discovery.emptyMessage} />}
-
-        <ContainerList
-          groups={discovery.groups}
-          layout={theme.view.layout}
-          editorId={editors.editorId}
-          editorName={editors.editorName}
-          editorAvailable={editors.editorAvailable}
-          terminalName={terminals.terminalName}
-          terminalAvailable={terminals.terminalAvailable}
-          startupCommandFor={terminals.startupCommandFor}
-          now={now}
-          isBusy={discovery.isBusy}
-          isGroupBusy={discovery.isGroupBusy}
-          claudeFor={claude.statusFor}
-          claudeForAll={claude.statusesFor}
-          onStart={discovery.start}
-          onStop={discovery.stop}
-          onOpen={discovery.open}
-          onOpenTerminal={discovery.openTerminal}
-          onStartupCommandChange={terminals.setStartupCommand}
-          onStartAll={discovery.startAll}
-          onStopAll={discovery.stopAll}
-        />
-
-        {/*
-         * Below the built containers, because a container you can open right
-         * now outranks a folder you would have to build first — but on the same
-         * screen, since the whole point is that "no dev containers found" is
-         * not the end of the story.
-         */}
-        <UnbuiltProjects
-          projects={projects}
-          editorName={editors.editorName}
-          editorAvailable={editors.editorAvailable}
-          now={now}
-        />
       </div>
 
       <AppFooter
         countLabel={containerCountLabel(discovery.containers.length)}
-        scannedLabel={
-          discovery.snapshot === undefined
-            ? undefined
-            : `scanned ${relativeTime(discovery.snapshot.scannedAt, now)}`
-        }
+        scannedLabel={scannedLabel}
         view={theme.view}
         onChangeView={theme.changeView}
         editors={editors.editors}

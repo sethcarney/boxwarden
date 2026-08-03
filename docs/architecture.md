@@ -71,16 +71,17 @@ They are React hooks — the idiomatic ViewModel in a function-component
 codebase — and they hold every piece of state the UI has, every command it can
 issue, and every value derived from the two.
 
-`useAppViewModel()` composes six, kept apart because their lifetimes differ:
+`useAppViewModel()` composes seven, kept apart because their lifetimes differ:
 
-| Hook           | Owns                                                        | Cadence           |
-| -------------- | ----------------------------------------------------------- | ----------------- |
-| `useDiscovery` | snapshot, busy set, start/stop/open/terminal, engine choice | polled every 5s   |
-| `useProjects`  | scan, roots, unbuilt/built partition                        | on open, on ask   |
-| `useEditors`   | installed editors, the chosen one                           | read once         |
-| `useTerminals` | installed emulators, the chosen one, startup commands       | read once         |
-| `useNotices`   | the message bar and the copyable fallback                   | event-driven      |
-| `useTheme`     | layout + theme, persisted to localStorage                   | never touches IPC |
+| Hook            | Owns                                                        | Cadence           |
+| --------------- | ----------------------------------------------------------- | ----------------- |
+| `useDiscovery`  | snapshot, busy set, start/stop/open/terminal, engine choice | polled every 5s   |
+| `useProjects`   | scan, roots, unbuilt/built partition                        | on open, on ask   |
+| `useEditors`    | installed editors, the chosen one                           | read once         |
+| `useTerminals`  | installed emulators, the chosen one, startup commands       | read once         |
+| `useNotices`    | the message bar and the copyable fallback                   | event-driven      |
+| `useAdvisories` | which advice is hidden, which screen is showing             | never touches IPC |
+| `useTheme`      | layout + theme, persisted to localStorage                   | never touches IPC |
 
 `useTerminals` owns the emulator list and the startup commands but not
 `openTerminal`, which lives in `useDiscovery` with the other container actions:
@@ -235,6 +236,45 @@ Two rules for anything added there:
 The commands are shown, never run. They reboot machines, install system
 components and use `sudo`; an app that fires those from a button press is not
 one to trust with a Docker socket.
+
+### Hiding an advisory, and the setup page
+
+An advisory panel that is always there is one nobody reads on the day it says
+something urgent. So a card can be folded shut, and it can be put away
+entirely — but **nothing is ever destroyed**, and that is the rule the whole
+feature rests on.
+
+- **Collapsing** folds the body away and leaves the title. Per-card, per-run,
+  and the default follows severity: `error` and `warning` start open because
+  they are why the user is looking at the window, `info` starts folded
+  (`renderer/advisories.ts`, `startsExpanded`).
+- **Hiding** takes the card off the main screen and persists, keyed on
+  `Advice.id`. The advisory is still computed, still counted in the header, and
+  still listed in full on the **setup page** — reachable from the header
+  whether or not anything is wrong.
+
+Three things follow, and each is pinned by a test:
+
+- **`onHide` is only passed where there is somewhere else to read it.** The
+  setup page's hidden list gets `onRestore` instead; a Hide button there would
+  be the one control in this app that does nothing.
+- **A hidden id is kept even when nothing matches it.** The condition behind an
+  advisory comes and goes — a distro is started, an engine restarted — and
+  pruning on load would un-hide it the first time the machine was briefly
+  healthy.
+- **The header counts active advisories and the tooltip accounts for the hidden
+  ones.** A count of zero on a tab hiding four warnings is the one lie this
+  feature could tell.
+
+The setup page also carries `<EndpointAttempts>`, the same socket list
+`<DockerUnavailable>` shows — but there it is evidence for a failure and only
+appears when nothing answered, while here it is a standing inventory shown
+while everything works. That is what answers "boxwarden found one of my two
+engines; which one did it miss?"
+
+Hiding lives in `localStorage` and not `preferences.json`, for the same reason
+the layout does: the main process makes no decision from it, so putting it in
+the preferences file would buy a sixteenth IPC verb nothing.
 
 ## SSH agent forwarding
 
