@@ -1,5 +1,8 @@
 import { useMemo } from 'react';
+import type { Advice } from '../../models/index.js';
 import { getApi } from '../api.js';
+import type { AdvisoriesViewModel } from './useAdvisories.js';
+import { useAdvisories } from './useAdvisories.js';
 import type { ClaudeViewModel } from './useClaudeStatus.js';
 import { useClaudeStatus } from './useClaudeStatus.js';
 import { useClock } from './useClock.js';
@@ -16,6 +19,9 @@ import { useTerminals } from './useTerminals.js';
 import type { ThemeViewModel } from './useTheme.js';
 import { useTheme } from './useTheme.js';
 
+/** Stable identity for "no advice yet", so the partition below memoises. */
+const EMPTY_ADVICE: readonly Advice[] = [];
+
 export interface AppViewModel {
   /**
    * False when `window.boxwarden` is missing, which means the preload script
@@ -31,6 +37,8 @@ export interface AppViewModel {
   readonly discovery: DiscoveryViewModel;
   readonly projects: ProjectsViewModel;
   readonly claude: ClaudeViewModel;
+  /** The setup advice, what the user has hidden of it, and which screen is showing. */
+  readonly advisories: AdvisoriesViewModel;
 }
 
 /**
@@ -60,6 +68,10 @@ export function useAppViewModel(): AppViewModel {
   const discovery = useDiscovery(api, notices, editors.editorId, terminals.terminalId);
   const projects = useProjects(api, notices, editors.editorId, discovery.containers);
   const claude = useClaudeStatus(api, notices, discovery.containers);
+  // After discovery, which is where the advice comes from. `EMPTY_ADVICE` and
+  // not a literal `[]`: the partition memoises on the array's identity, and a
+  // fresh empty array every render would recompute it on every poll.
+  const advisories = useAdvisories(discovery.snapshot?.advice ?? EMPTY_ADVICE);
 
   return {
     bridgeAvailable: api !== undefined,
@@ -71,5 +83,6 @@ export function useAppViewModel(): AppViewModel {
     discovery,
     projects,
     claude,
+    advisories,
   };
 }
