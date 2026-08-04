@@ -3,8 +3,8 @@ import type { Advice } from '../../models/index.js';
 import { getApi } from '../api.js';
 import type { AdvisoriesViewModel } from './useAdvisories.js';
 import { useAdvisories } from './useAdvisories.js';
-import type { ClaudeViewModel } from './useClaudeStatus.js';
-import { useClaudeStatus } from './useClaudeStatus.js';
+import type { ActivityViewModel } from './useContainerActivity.js';
+import { useContainerActivity } from './useContainerActivity.js';
 import { useClock } from './useClock.js';
 import type { DiscoveryViewModel } from './useDiscovery.js';
 import { useDiscovery } from './useDiscovery.js';
@@ -40,7 +40,8 @@ export interface AppViewModel {
   readonly terminals: TerminalsViewModel;
   readonly discovery: DiscoveryViewModel;
   readonly projects: ProjectsViewModel;
-  readonly claude: ClaudeViewModel;
+  /** What is running inside each container — a Claude session, an attached editor. */
+  readonly activity: ActivityViewModel;
   /** Which branch each container's workspace folder is on. */
   readonly git: GitViewModel;
   /** The setup advice, what the user has hidden of it, and which screen is showing. */
@@ -76,7 +77,7 @@ export function useAppViewModel(): AppViewModel {
   const terminals = useTerminals(api, notices);
   const discovery = useDiscovery(api, notices, editors.editorId, terminals.terminalId);
   const projects = useProjects(api, notices, editors.editorId, discovery.containers);
-  const claude = useClaudeStatus(api, notices, discovery.containers);
+  const activity = useContainerActivity(api, notices, discovery.containers);
   const git = useGitStatus(api, notices, discovery.containers);
   // After discovery, which is where the advice comes from. `EMPTY_ADVICE` and
   // not a literal `[]`: the partition memoises on the array's identity, and a
@@ -95,7 +96,7 @@ export function useAppViewModel(): AppViewModel {
     terminals,
     discovery,
     projects,
-    claude,
+    activity,
     git,
     advisories,
     update,

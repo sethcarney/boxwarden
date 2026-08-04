@@ -170,6 +170,49 @@ function commandCell(
 }
 
 /**
+ * Every command line in a `top` response, or why it could not be read.
+ *
+ * Shared with `editor-session.ts`, which asks a different question of the same
+ * table: whether an editor server is running in here. One reader rather than
+ * two because the awkward parts — a title list that has to be searched by name,
+ * a command column that has to be rejoined when it is last — are awkward in
+ * exactly the same way for both, and a second copy would drift on the day
+ * Podman changes a column heading.
+ */
+export function readCommandLines(
+  titles: unknown,
+  processes: unknown,
+):
+  | { readonly ok: true; readonly commands: readonly string[] }
+  | { readonly ok: false; readonly reason: string } {
+  if (!isStringArray(titles) || titles.length === 0) {
+    return {
+      ok: false,
+      reason: 'The container engine returned a process table with no column titles.',
+    };
+  }
+  if (!Array.isArray(processes)) {
+    return { ok: false, reason: 'The container engine returned a process table with no rows.' };
+  }
+
+  const command = columnIndex(titles, COMMAND_TITLES);
+  if (command === undefined) {
+    return {
+      ok: false,
+      reason: `No command column in the process table (columns: ${titles.join(', ')}).`,
+    };
+  }
+
+  const commands: string[] = [];
+  for (const row of processes) {
+    if (!isStringArray(row)) continue;
+    const text = commandCell(row, command, titles.length);
+    if (text !== undefined) commands.push(text);
+  }
+  return { ok: true, commands };
+}
+
+/**
  * Turn a `top` response into a status.
  *
  * `unknown` rather than a throw for every shape we cannot read: this runs on a
@@ -261,9 +304,21 @@ export function parseClaudeProcesses(titles: unknown, processes: unknown): Claud
  */
 const NO_PROCESS_TABLE = /not running|state improper|no such container|is not up|is paused/i;
 
+/**
+ * Whether a failed `top` means "this container has no process table" rather
+ * than "something went wrong".
+ *
+ * Shared with `editor-session.ts` for the same reason `readCommandLines` is:
+ * both features ask `top` the same question and both have to tell a stopped
+ * container apart from a broken call, and two copies of this regex would drift.
+ */
+export function hasNoProcessTable(message: string): boolean {
+  return NO_PROCESS_TABLE.test(message);
+}
+
 /** Classify a failed `top` call. The impure caller supplies the message. */
 export function classifyTopFailure(message: string): ClaudeStatus {
-  return NO_PROCESS_TABLE.test(message)
+  return hasNoProcessTable(message)
     ? { kind: 'not-applicable' }
     : { kind: 'unknown', reason: message };
 }

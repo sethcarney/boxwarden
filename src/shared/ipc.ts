@@ -4,6 +4,7 @@ import type {
   ContainerId,
   DevContainer,
   DockerEnvironment,
+  EditorAttachment,
   EditorId,
   EngineSelection,
   EngineSummary,
@@ -100,6 +101,26 @@ export type OpenInEditorResult =
 export type ClaudeStatusMap = Readonly<Record<ContainerId, ClaudeStatus>>;
 
 /**
+ * What is going on INSIDE a container, from one reading of its process table.
+ *
+ * Two answers in one object because they come from one `top` call: whether a
+ * Claude Code session is running, and whether an editor is attached. Splitting
+ * them into two verbs would double the Docker traffic of the poll to ask the
+ * same engine the same question twice.
+ *
+ * Both are things the Stop button needs to know, and both keep `unknown`
+ * distinct from `none` for the same reason — a card with no warning is a card
+ * saying stopping is safe.
+ */
+export interface ContainerActivity {
+  readonly claude: ClaudeStatus;
+  readonly editor: EditorAttachment;
+}
+
+/** Keyed by container id, with an absent key meaning "not asked" — see `ClaudeStatusMap`. */
+export type ContainerActivityMap = Readonly<Record<ContainerId, ContainerActivity>>;
+
+/**
  * Which branch each container's workspace folder is on, keyed by container id.
  *
  * Same shape and the same rule as `ClaudeStatusMap`: an ABSENT key means "not
@@ -177,7 +198,7 @@ export const IPC = {
   openTerminal: 'boxwarden:open-terminal',
   getStartupCommands: 'boxwarden:get-startup-commands',
   setStartupCommand: 'boxwarden:set-startup-command',
-  claudeStatus: 'boxwarden:claude-status',
+  containerActivity: 'boxwarden:container-activity',
   gitStatus: 'boxwarden:git-status',
   updateStatus: 'boxwarden:update-status',
   dismissUpdate: 'boxwarden:dismiss-update',
@@ -278,9 +299,12 @@ export interface BoxwardenApi {
   setStartupCommand(id: ContainerId, command: string): Promise<ActionResult>;
 
   /**
-   * ---- Claude Code presence ----
+   * ---- What is running inside ----
    *
-   * Whether a Claude Code session is running inside each of these containers.
+   * Whether a Claude Code session is running inside each of these containers,
+   * and whether an editor is attached to them. ONE verb and one `top` per
+   * container, because they are one reading of one process table — asking
+   * twice would double this poll's Docker traffic to learn nothing extra.
    *
    * Its own verb, and not a field on `DiscoverySnapshot`, for the reason
    * `scanProjects` is not in there either: CADENCE. Discovery polls every five
@@ -295,7 +319,7 @@ export interface BoxwardenApi {
    * per-container failure comes back as `{ kind: 'unknown' }`, which the UI
    * must keep distinct from `none` — the Stop button reads it.
    */
-  claudeStatus(ids: readonly ContainerId[]): Promise<ClaudeStatusMap>;
+  containerActivity(ids: readonly ContainerId[]): Promise<ContainerActivityMap>;
 
   /**
    * ---- Branch ----

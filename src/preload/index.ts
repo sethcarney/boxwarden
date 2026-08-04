@@ -55,7 +55,7 @@ const api: BoxwardenApi = {
   // An array crosses as a copy, so the main process cannot be handed a live
   // renderer object here — and it re-validates every id against its own last
   // container list regardless.
-  claudeStatus: (ids) => ipcRenderer.invoke(IPC.claudeStatus, [...ids]),
+  containerActivity: (ids) => ipcRenderer.invoke(IPC.containerActivity, [...ids]),
   // Ids, never folders. The main process reads `.git/HEAD` under paths its own
   // last scan produced; a folder sent from here would be the renderer choosing
   // which of the user's directories this process opens.

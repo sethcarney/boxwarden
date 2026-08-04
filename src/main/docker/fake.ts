@@ -1,5 +1,4 @@
 import type {
-  ClaudeStatus,
   ContainerId,
   DevContainer,
   DockerEndpoint,
@@ -10,9 +9,11 @@ import type {
 import {
   ALL_ENGINES,
   engineIdFor,
+  parseAttachedEditors,
   parseClaudeProcesses,
   selectionIncludes,
 } from '../../models/index.js';
+import type { ContainerActivity } from '../../shared/ipc.js';
 import type { DockerBackend } from './backend.js';
 import { mapContainer, type InspectResponse, type InspectState } from './mapping.js';
 
@@ -259,6 +260,11 @@ const FAKE_PROBES: readonly EndpointProbe[] = [
  * Between them these cover every arm of `ClaudeStatus` in `bun run dev:fake`:
  * a single session, two sessions, a Node process that is NOT Claude Code, an
  * ordinary container, and a response the parser cannot read.
+ *
+ * They now feed `parseAttachedEditors` as well, from the same rows: `webapp`
+ * carries a VS Code server AND its extension host, which is the two-processes
+ * one-editor case, and `reporting-tool`'s decoy Node process is the false
+ * positive both parsers have to refuse.
  */
 const FAKE_PROCESS_TABLES: Readonly<Record<string, { Titles: string[]; Processes: string[][] }>> = {
   // webapp — Docker's default `ps -ef` layout, one session.
@@ -275,6 +281,29 @@ const FAKE_PROCESS_TABLES: Readonly<Record<string, { Titles: string[]; Processes
         'pts/0',
         '00:00:04',
         'node /usr/local/share/npm-global/lib/node_modules/@anthropic-ai/claude-code/cli.js',
+      ],
+      // A VS Code window attached to this one: the server, plus the extension
+      // host that always sits under it. Two processes, ONE editor — which is
+      // the case `parseAttachedEditors` has to fold rather than count.
+      [
+        'node',
+        '96',
+        '1',
+        '0',
+        '09:03',
+        '?',
+        '00:00:07',
+        '/home/vscode/.vscode-server/bin/9f2c1ab/node /home/vscode/.vscode-server/bin/9f2c1ab/out/server-main.js --host=127.0.0.1 --port=0',
+      ],
+      [
+        'node',
+        '118',
+        '96',
+        '0',
+        '09:03',
+        '?',
+        '00:00:03',
+        '/home/vscode/.vscode-server/bin/9f2c1ab/node --ms-enable-electron-run-as-node /home/vscode/.vscode-server/bin/9f2c1ab/out/bootstrap-fork --type=extensionHost',
       ],
     ],
   },
@@ -425,8 +454,10 @@ export class FakeDockerBackend implements DockerBackend {
     });
   }
 
-  claudeStatus(ids: readonly ContainerId[]): Promise<ReadonlyMap<ContainerId, ClaudeStatus>> {
-    const statuses = new Map<ContainerId, ClaudeStatus>();
+  containerActivity(
+    ids: readonly ContainerId[],
+  ): Promise<ReadonlyMap<ContainerId, ContainerActivity>> {
+    const statuses = new Map<ContainerId, ContainerActivity>();
 
     for (const id of ids) {
       const fixture = this.#containers.find((container) => container.Id === id);
@@ -435,12 +466,20 @@ export class FakeDockerBackend implements DockerBackend {
       // `top` only answers for a live container, and the fake has to be honest
       // about that or the badge's most common arm never gets exercised.
       if (state !== 'running' && state !== 'paused') {
-        statuses.set(id, { kind: 'not-applicable' });
+        statuses.set(id, {
+          claude: { kind: 'not-applicable' },
+          editor: { kind: 'not-applicable' },
+        });
         continue;
       }
 
+      // Both parsers over one fixture table, exactly as the real backend runs
+      // them over one `top` response.
       const table = FAKE_PROCESS_TABLES[id] ?? FAKE_QUIET_TABLE;
-      statuses.set(id, parseClaudeProcesses(table.Titles, table.Processes));
+      statuses.set(id, {
+        claude: parseClaudeProcesses(table.Titles, table.Processes),
+        editor: parseAttachedEditors(table.Titles, table.Processes),
+      });
     }
 
     return Promise.resolve(statuses);

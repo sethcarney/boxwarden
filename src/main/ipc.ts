@@ -1,6 +1,5 @@
 import { ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron';
 import type {
-  ClaudeStatus,
   ContainerCli,
   ContainerId,
   DevContainer,
@@ -25,7 +24,8 @@ import {
 import { IPC } from '../shared/ipc.js';
 import type {
   ActionResult,
-  ClaudeStatusMap,
+  ContainerActivity,
+  ContainerActivityMap,
   DiscoverySnapshot,
   EditorOption,
   GitStatusMap,
@@ -630,8 +630,8 @@ export function registerIpcHandlers(context: IpcContext): void {
     (message) => ({ ok: false, message }),
   );
 
-  handle<ClaudeStatusMap>(
-    IPC.claudeStatus,
+  handle<ContainerActivityMap>(
+    IPC.containerActivity,
     async (rawIds) => {
       // Ids are validated against the main process's OWN last container list,
       // for the same reason openInEditor takes an id rather than a
@@ -644,7 +644,7 @@ export function registerIpcHandlers(context: IpcContext): void {
         .map((id) => known.get(id))
         .filter((container): container is DevContainer => container !== undefined);
 
-      const statuses: Record<ContainerId, ClaudeStatus> = {};
+      const statuses: Record<ContainerId, ContainerActivity> = {};
 
       // A container that is not live has no process table, and asking anyway
       // would spend a Docker round trip to be told so. Its state is already in
@@ -655,24 +655,35 @@ export function registerIpcHandlers(context: IpcContext): void {
       );
       const liveIds = new Set(live.map((container) => container.id));
       for (const container of containers) {
-        if (!liveIds.has(container.id)) statuses[container.id] = { kind: 'not-applicable' };
+        if (!liveIds.has(container.id)) {
+          statuses[container.id] = {
+            claude: { kind: 'not-applicable' },
+            editor: { kind: 'not-applicable' },
+          };
+        }
       }
 
       try {
-        const found = await context.backend.claudeStatus([...liveIds]);
+        const found = await context.backend.containerActivity([...liveIds]);
         for (const id of liveIds) {
+          const reason = 'The container engine did not answer for this container.';
           statuses[id] = found.get(id) ?? {
-            kind: 'unknown',
-            reason: 'The container engine did not answer for this container.',
+            claude: { kind: 'unknown', reason },
+            editor: { kind: 'unknown', reason },
           };
         }
       } catch (error) {
         // The backend is not supposed to reject. If it does, every live
-        // container gets "could not tell" rather than the silent "no session"
-        // an empty map would render as — the difference matters, because the
-        // Stop button reads this.
+        // container gets "could not tell" rather than the silent "nothing
+        // running" an empty map would render as — the difference matters,
+        // because the Stop button reads both of these.
         const reason = error instanceof Error ? error.message : String(error);
-        for (const id of liveIds) statuses[id] = { kind: 'unknown', reason };
+        for (const id of liveIds) {
+          statuses[id] = {
+            claude: { kind: 'unknown', reason },
+            editor: { kind: 'unknown', reason },
+          };
+        }
       }
 
       return statuses;
@@ -685,7 +696,7 @@ export function registerIpcHandlers(context: IpcContext): void {
   handle<GitStatusMap>(
     IPC.gitStatus,
     async (rawIds) => {
-      // Same validation as claudeStatus, and here it is load-bearing in a
+      // Same validation as containerActivity, and here it is load-bearing in a
       // different way: the thing being resolved from an id is a PATH ON THE
       // USER'S DISK that this process then opens. Ids not in `known` are
       // dropped, and no folder ever arrives over the bridge.

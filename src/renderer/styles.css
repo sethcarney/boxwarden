@@ -422,6 +422,19 @@ button.link {
   font-weight: 500;
 }
 
+/* An attached editor. Quieter than the Claude badge: stopping strands a window
+   rather than ending work, which is recoverable — the user reopens it. */
+.badge-editor-attached {
+  border-color: var(--border);
+  color: var(--text-dim);
+}
+
+.badge-editor-unknown {
+  border-color: var(--border);
+  color: var(--text-dim);
+  font-weight: 500;
+}
+
 /* A Stop that would end a live session. Annotated, not disabled — only the
    border changes, because the click is still allowed. */
 button.warn {
