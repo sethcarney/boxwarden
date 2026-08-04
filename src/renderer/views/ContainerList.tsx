@@ -1,4 +1,10 @@
-import type { ClaudeStatus, DevContainer, EditorId, GitStatus } from '../../models/index.js';
+import type {
+  ClaudeStatus,
+  DevContainer,
+  EditorAttachment,
+  EditorId,
+  GitStatus,
+} from '../../models/index.js';
 import { ComposeGroup } from '../components/ComposeGroup.js';
 import { ContainerCard } from '../components/ContainerCard.js';
 import type { ContainerGroup } from '../grouping.js';
@@ -21,6 +27,11 @@ interface Props {
   readonly claudeForAll: (
     containers: readonly DevContainer[],
   ) => readonly (ClaudeStatus | undefined)[];
+  /** Editor attachment per container, and per group for "Stop all". */
+  readonly editorFor: (id: DevContainer['id']) => EditorAttachment | undefined;
+  readonly editorsForAll: (
+    containers: readonly DevContainer[],
+  ) => readonly (EditorAttachment | undefined)[];
   /** The workspace branch, looked up per container. Undefined means "no answer yet". */
   readonly gitFor: (id: DevContainer['id']) => GitStatus | undefined;
   readonly onStart: (container: DevContainer) => void;
@@ -53,6 +64,8 @@ export function ContainerList({
   isGroupBusy,
   claudeFor,
   claudeForAll,
+  editorFor,
+  editorsForAll,
   gitFor,
   onStart,
   onStop,
@@ -80,6 +93,7 @@ export function ContainerList({
       // does not fit on it. The full label stays as the button's title.
       dense={layout === 'rows'}
       claude={claudeFor(container.id)}
+      editor={editorFor(container.id)}
       git={gitFor(container.id)}
       onStart={onStart}
       onStop={onStop}
@@ -101,6 +115,7 @@ export function ContainerList({
             containers={group.containers}
             busy={isGroupBusy(group)}
             claude={claudeForAll(group.containers)}
+            editors={editorsForAll(group.containers)}
             onStartAll={onStartAll}
             onStopAll={onStopAll}
           >

@@ -1,10 +1,17 @@
-import type { ClaudeStatus, DevContainer, EditorId, GitStatus } from '../../models/index.js';
+import type {
+  ClaudeStatus,
+  DevContainer,
+  EditorAttachment,
+  EditorId,
+  GitStatus,
+} from '../../models/index.js';
 import { canStart, canStop, hostPathLabel, statusLabel } from '../format.js';
 import {
   branchChip,
   cardTitle,
   claudeBadge,
-  claudeStopWarning,
+  editorBadge,
+  stopWarning,
   openBlockedReason,
   portLabel,
   sshAgentBadge,
@@ -47,6 +54,14 @@ interface Props {
    */
   readonly claude?: ClaudeStatus | undefined;
   /**
+   * Whether an editor is attached to this container.
+   *
+   * Absent while the first poll is outstanding, and NOT the same as
+   * `{ kind: 'none' }` — the same rule as `claude` above, and for the same
+   * reason: no badge on this card is how it says stopping costs nothing.
+   */
+  readonly editor?: EditorAttachment | undefined;
+  /**
    * Which branch the workspace folder is on.
    *
    * Absent while the first read is outstanding. Unlike `claude`, absent and
@@ -80,6 +95,7 @@ export function ContainerCard({
   now,
   dense = false,
   claude,
+  editor,
   git,
   onStart,
   onStop,
@@ -93,8 +109,9 @@ export function ContainerCard({
   const terminalBlocked = terminalBlockedReason(container, terminalAvailable, terminalName);
   const agent = sshAgentBadge(container.sshAgent);
   const badge = claudeBadge(claude);
+  const attached = editorBadge(editor);
   const branch = branchChip(git);
-  const stopWarning = claudeStopWarning([claude]);
+  const warning = stopWarning([claude], [editor]);
 
   return (
     <article className={`card${unresolved ? ' card-degraded' : ''}`}>
@@ -132,6 +149,15 @@ export function ContainerCard({
           {/* Shortened under `dense` to a bare count, with the full text kept
               in `title` — the same contract as the image row and the primary
               button. The session count, pids and uptimes are all in there. */}
+          {attached !== undefined && (
+            <span
+              className={`badge badge-editor badge-editor-${attached.tone}`}
+              title={attached.title}
+              aria-label={`${attached.label} attached`}
+            >
+              {dense ? attached.denseLabel : attached.label}
+            </span>
+          )}
           {badge !== undefined && (
             <span
               className={`badge badge-claude badge-claude-${badge.tone}`}
@@ -226,8 +252,8 @@ export function ContainerCard({
             type="button"
             // Annotated, not gated. Stopping a container with a live agent in
             // it stays one click — it just stops being an uninformed one.
-            className={stopWarning === undefined ? undefined : 'warn'}
-            title={stopWarning}
+            className={warning === undefined ? undefined : 'warn'}
+            title={warning}
             disabled={busy}
             onClick={() => {
               onStop(container);

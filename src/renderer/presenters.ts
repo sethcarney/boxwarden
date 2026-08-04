@@ -18,6 +18,7 @@ import type {
   ClaudeSession,
   ClaudeStatus,
   DevContainer,
+  EditorAttachment,
   EndpointProbe,
   EngineSelection,
   GitStatus,
@@ -27,7 +28,7 @@ import type {
   UpdateInstructions,
   UpdateStatus,
 } from '../models/index.js';
-import { projectName, shortCommit } from '../models/index.js';
+import { attachedEditorsIn, editorDisplayName, projectName, shortCommit } from '../models/index.js';
 import type { DiscoverySnapshot } from '../shared/ipc.js';
 import { canExec, describeTarget, relativeTime, runtimeLabel } from './format.js';
 
@@ -405,6 +406,11 @@ function describeSession(session: ClaudeSession): string {
 /**
  * The warning that annotates a Stop action, or nothing.
  *
+ * Two things can make stopping worse than the user expects, and they are not
+ * the same thing: a Claude Code session is ENDED by it, and an editor window is
+ * STRANDED by it. Both are folded here so the button has one tooltip rather
+ * than a race between two.
+ *
  * Annotates rather than gates: v1 puts the fact on the button's tooltip and
  * marks it, and leaves the click alone. A confirmation dialog is the right end
  * state, but this app has no modal today and adding the first one should wait
@@ -418,17 +424,79 @@ function describeSession(session: ClaudeSession): string {
  * boxwarden could not read would train the user to ignore the annotation, which
  * costs more than the case it covers.
  */
-export function claudeStopWarning(
-  statuses: readonly (ClaudeStatus | undefined)[],
+export function stopWarning(
+  claude: readonly (ClaudeStatus | undefined)[],
+  editors: readonly (EditorAttachment | undefined)[] = [],
 ): string | undefined {
-  const sessions = statuses.reduce(
+  const lines: string[] = [];
+
+  const sessions = claude.reduce(
     (total, status) => total + (status?.kind === 'running' ? status.sessions.length : 0),
     0,
   );
-  if (sessions === 0) return undefined;
-  return sessions === 1
-    ? 'A Claude Code session is running in here. Stopping ends it.'
-    : `${String(sessions)} Claude Code sessions are running in here. Stopping ends them.`;
+  if (sessions === 1) lines.push('A Claude Code session is running in here. Stopping ends it.');
+  if (sessions > 1) {
+    lines.push(`${String(sessions)} Claude Code sessions are running in here. Stopping ends them.`);
+  }
+
+  // Second, and separately worded: an agent is ENDED by stopping, whereas an
+  // editor window is stranded — it survives, pointed at something that no
+  // longer exists, and asks to reload into nothing. Telling the user which of
+  // those they are about to do is the whole point of the sentence.
+  const attached = attachedEditorsIn(editors);
+  if (attached.length > 0) {
+    const names = attached.map(editorDisplayName).join(' and ');
+    lines.push(
+      `${names} ${attached.length === 1 ? 'is' : 'are'} attached to this container. Stopping disconnects the window, which will sit there offering to reload — close it first to avoid that.`,
+    );
+  }
+
+  return lines.length === 0 ? undefined : lines.join('\n');
+}
+
+/**
+ * The editor chip, or nothing.
+ *
+ * Same three-way split as `claudeBadge`, and for the same reason: `unknown`
+ * shows, because this decorates a destructive button and "we could not tell"
+ * must not look like "nothing is attached".
+ */
+export interface EditorBadge {
+  readonly label: string;
+  readonly denseLabel: string;
+  readonly title: string;
+  readonly tone: 'attached' | 'unknown';
+}
+
+export function editorBadge(attachment: EditorAttachment | undefined): EditorBadge | undefined {
+  if (attachment === undefined) return undefined;
+
+  switch (attachment.kind) {
+    case 'not-applicable':
+    case 'none':
+      return undefined;
+
+    case 'unknown':
+      return {
+        label: 'Editor ?',
+        denseLabel: '?',
+        title: `Could not tell whether an editor is attached to this container: ${attachment.reason}`,
+        tone: 'unknown',
+      };
+
+    case 'attached': {
+      const names = attachment.editors.map(editorDisplayName).join(', ');
+      return {
+        label: names,
+        denseLabel: '⧉',
+        title: [
+          `${names} ${attachment.editors.length === 1 ? 'is' : 'are'} attached to this container.`,
+          'Detected from the editor server running inside it, which outlives the window by a few minutes — so this can linger briefly after you close one.',
+        ].join('\n'),
+        tone: 'attached',
+      };
+    }
+  }
 }
 
 /**

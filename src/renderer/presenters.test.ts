@@ -4,7 +4,8 @@ import { devContainer } from './test-fixtures.js';
 import {
   branchChip,
   claudeBadge,
-  claudeStopWarning,
+  editorBadge,
+  stopWarning,
   containerCountLabel,
   emptyListMessage,
   engineChip,
@@ -335,12 +336,10 @@ describe('claudeBadge', () => {
   });
 });
 
-describe('claudeStopWarning', () => {
+describe('stopWarning', () => {
   it('says nothing when nothing is running', () => {
-    expect(claudeStopWarning([])).toBeUndefined();
-    expect(
-      claudeStopWarning([{ kind: 'none' }, undefined, { kind: 'not-applicable' }]),
-    ).toBeUndefined();
+    expect(stopWarning([])).toBeUndefined();
+    expect(stopWarning([{ kind: 'none' }, undefined, { kind: 'not-applicable' }])).toBeUndefined();
   });
 
   /**
@@ -349,7 +348,7 @@ describe('claudeStopWarning', () => {
    * case it covers.
    */
   it('says nothing for a container it could not read', () => {
-    expect(claudeStopWarning([{ kind: 'unknown', reason: 'nope' }])).toBeUndefined();
+    expect(stopWarning([{ kind: 'unknown', reason: 'nope' }])).toBeUndefined();
   });
 
   /** The compose case: "Stop all" reaches services whose cards nobody read. */
@@ -358,9 +357,7 @@ describe('claudeStopWarning', () => {
       { kind: 'running', sessions: [{ pid: 1, command: 'claude' }] },
       { kind: 'none' },
     ];
-    expect(claudeStopWarning(one)).toBe(
-      'A Claude Code session is running in here. Stopping ends it.',
-    );
+    expect(stopWarning(one)).toBe('A Claude Code session is running in here. Stopping ends it.');
 
     const several: readonly (ClaudeStatus | undefined)[] = [
       { kind: 'running', sessions: [{ pid: 1, command: 'claude' }] },
@@ -372,9 +369,72 @@ describe('claudeStopWarning', () => {
         ],
       },
     ];
-    expect(claudeStopWarning(several)).toBe(
+    expect(stopWarning(several)).toBe(
       '3 Claude Code sessions are running in here. Stopping ends them.',
     );
+  });
+});
+
+describe('stopWarning and the editor', () => {
+  /**
+   * Worded differently from the Claude sentence on purpose: an agent is ENDED
+   * by stopping, an editor window is STRANDED — it survives, pointed at
+   * something that no longer exists.
+   */
+  it('says an attached window will be left offering to reload', () => {
+    const warning = stopWarning([], [{ kind: 'attached', editors: ['vscode'] }]);
+    expect(warning).toContain('VS Code');
+    expect(warning).toMatch(/reload/i);
+  });
+
+  it('names every attached editor', () => {
+    expect(stopWarning([], [{ kind: 'attached', editors: ['cursor', 'vscode'] }])).toContain(
+      'Cursor and VS Code',
+    );
+  });
+
+  it('carries both warnings at once, since Stop does both things', () => {
+    const warning = stopWarning(
+      [{ kind: 'running', sessions: [{ pid: 1, command: 'claude' }] }],
+      [{ kind: 'attached', editors: ['vscode'] }],
+    );
+    expect(warning).toContain('Claude Code session');
+    expect(warning).toContain('VS Code');
+  });
+
+  it('is undefined when nothing is attached and nothing is running', () => {
+    expect(stopWarning([{ kind: 'none' }], [{ kind: 'none' }])).toBeUndefined();
+    expect(stopWarning([], [{ kind: 'not-applicable' }, undefined])).toBeUndefined();
+  });
+
+  /** "Could not tell" is not "something is attached" — it must not invent a warning. */
+  it('does not warn on an unknown attachment', () => {
+    expect(stopWarning([], [{ kind: 'unknown', reason: 'engine went away' }])).toBeUndefined();
+  });
+});
+
+describe('editorBadge', () => {
+  it('names the attached editor', () => {
+    const badge = editorBadge({ kind: 'attached', editors: ['vscode'] });
+    expect(badge?.label).toBe('VS Code');
+    expect(badge?.tone).toBe('attached');
+    // The signal is the SERVER, which outlives the window by a few minutes.
+    // Saying so is what stops a lingering badge reading as a bug.
+    expect(badge?.title).toMatch(/outlives the window/i);
+  });
+
+  /**
+   * Shows, unlike the branch chip's `unknown`: this decorates a destructive
+   * button, so "we could not tell" must not look like "nothing is attached".
+   */
+  it('says so when it could not tell', () => {
+    expect(editorBadge({ kind: 'unknown', reason: 'x' })?.tone).toBe('unknown');
+  });
+
+  it('renders nothing for a container with no editor, or one not yet polled', () => {
+    expect(editorBadge({ kind: 'none' })).toBeUndefined();
+    expect(editorBadge({ kind: 'not-applicable' })).toBeUndefined();
+    expect(editorBadge(undefined)).toBeUndefined();
   });
 });
 

@@ -12,11 +12,21 @@ export type {
 } from './devcontainer.js';
 export { asContainerId, containerSettingsKey, displayStatus } from './devcontainer.js';
 
+export type { EditorAttachment, EditorFlavour } from './editor-session.js';
+export {
+  attachedEditorsIn,
+  classifyEditorTopFailure,
+  editorDisplayName,
+  parseAttachedEditors,
+} from './editor-session.js';
+
 export type { ClaudeSession, ClaudeStatus } from './claude.js';
 export {
   classifyTopFailure,
   looksLikeClaudeCode,
+  hasNoProcessTable,
   parseClaudeProcesses,
+  readCommandLines,
   sessionCount,
 } from './claude.js';
 

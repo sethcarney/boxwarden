@@ -3,6 +3,7 @@ import { vi } from 'vitest';
 import type {
   ClaudeStatus,
   ContainerId,
+  EditorAttachment,
   EditorId,
   EngineSelection,
   GitStatus,
@@ -14,7 +15,7 @@ import type {
 import type {
   ActionResult,
   BoxwardenApi,
-  ClaudeStatusMap,
+  ContainerActivityMap,
   DiscoverySnapshot,
   EditorOption,
   GitStatusMap,
@@ -107,7 +108,7 @@ export interface FakeApi extends BoxwardenApi {
   openTerminal: Mock<(id: ContainerId, terminalId: TerminalId) => Promise<OpenTerminalResult>>;
   readonly getStartupCommands: Mock<() => Promise<Readonly<Record<string, string>>>>;
   setStartupCommand: Mock<(id: ContainerId, command: string) => Promise<ActionResult>>;
-  readonly claudeStatus: Mock<(ids: readonly ContainerId[]) => Promise<ClaudeStatusMap>>;
+  readonly containerActivity: Mock<(ids: readonly ContainerId[]) => Promise<ContainerActivityMap>>;
   readonly gitStatus: Mock<(ids: readonly ContainerId[]) => Promise<GitStatusMap>>;
   readonly updateStatus: Mock<(force: boolean) => Promise<UpdateStatus>>;
   readonly dismissUpdate: Mock<() => Promise<UpdateStatus>>;
@@ -168,6 +169,8 @@ export interface FakeApiOptions {
    * whichever fixture ids the test happened to use.
    */
   readonly claude?: ClaudeStatus;
+  /** What `containerActivity` reports for the editor half, for the same reason. */
+  readonly editor?: EditorAttachment;
   /** What `gitStatus` answers for every id, for the same reason `claude` is one value. */
   readonly git?: GitStatus;
   /** What `updateStatus` answers. Defaults to "looked, nothing newer". */
@@ -183,6 +186,7 @@ export function fakeApi(options: FakeApiOptions = {}): FakeApi {
   ];
   const startupCommands = options.startupCommands ?? {};
   const claude = options.claude ?? { kind: 'none' };
+  const editor = options.editor ?? { kind: 'none' };
   const git = options.git ?? { kind: 'branch', branch: 'main' };
   const update: UpdateStatus = options.update ?? {
     currentVersion: '1.1.0',
@@ -224,8 +228,8 @@ export function fakeApi(options: FakeApiOptions = {}): FakeApi {
     setStartupCommand: vi.fn<(id: ContainerId, command: string) => Promise<ActionResult>>(() =>
       Promise.resolve({ ok: true }),
     ),
-    claudeStatus: vi.fn<(ids: readonly ContainerId[]) => Promise<ClaudeStatusMap>>((ids) =>
-      Promise.resolve(Object.fromEntries(ids.map((id) => [id, claude]))),
+    containerActivity: vi.fn<(ids: readonly ContainerId[]) => Promise<ContainerActivityMap>>(
+      (ids) => Promise.resolve(Object.fromEntries(ids.map((id) => [id, { claude, editor }]))),
     ),
     gitStatus: vi.fn<(ids: readonly ContainerId[]) => Promise<GitStatusMap>>((ids) =>
       Promise.resolve(Object.fromEntries(ids.map((id) => [id, git]))),

@@ -4,7 +4,6 @@ import { homedir, platform } from 'node:os';
 import { promisify } from 'node:util';
 import Docker from 'dockerode';
 import type {
-  ClaudeStatus,
   ContainerId,
   ContainerRuntimeKind,
   DevContainer,
@@ -16,10 +15,13 @@ import type {
 } from '../../models/index.js';
 import {
   ALL_ENGINES,
+  classifyEditorTopFailure,
   classifyTopFailure,
+  parseAttachedEditors,
   parseClaudeProcesses,
   selectionIncludes,
 } from '../../models/index.js';
+import type { ContainerActivity } from '../../shared/ipc.js';
 import type { DockerBackend } from './backend.js';
 import {
   MINIMUM_API_VERSION,
@@ -471,7 +473,8 @@ export class DockerodeBackend implements DockerBackend {
   }
 
   /**
-   * The impure shell around `parseClaudeProcesses`, in the same shape as
+   * The impure shell around `parseClaudeProcesses` and `parseAttachedEditors`,
+   * in the same shape as
    * `inspect` -> `mapContainer`: make the call, hand the raw rows to the pure
    * function, keep no logic here.
    *
@@ -480,14 +483,16 @@ export class DockerodeBackend implements DockerBackend {
    * fails as a matter of course; throwing away every engine handle over it
    * would make a background poll re-probe all the sockets on a schedule.
    */
-  async claudeStatus(ids: readonly ContainerId[]): Promise<ReadonlyMap<ContainerId, ClaudeStatus>> {
-    const statuses = new Map<ContainerId, ClaudeStatus>();
+  async containerActivity(
+    ids: readonly ContainerId[],
+  ): Promise<ReadonlyMap<ContainerId, ContainerActivity>> {
+    const statuses = new Map<ContainerId, ContainerActivity>();
     if (ids.length === 0) return statuses;
 
     // Concurrent: the calls are independent, and in series the whole batch
     // would cost the slowest container's round trip times the list length.
     const results = await Promise.all(
-      ids.map(async (id): Promise<readonly [ContainerId, ClaudeStatus]> => {
+      ids.map(async (id): Promise<readonly [ContainerId, ContainerActivity]> => {
         try {
           const docker = await this.#ownerOf(id);
           const response = (await withTimeout(
@@ -495,9 +500,22 @@ export class DockerodeBackend implements DockerBackend {
             TOP_TIMEOUT_MS,
             'Reading the container process table',
           )) as TopResponse | undefined;
-          return [id, parseClaudeProcesses(response?.Titles, response?.Processes)];
+          // ONE response, two questions. Both parsers are pure and neither
+          // knows about the other; what they share is the reading, which is
+          // the expensive part.
+          return [
+            id,
+            {
+              claude: parseClaudeProcesses(response?.Titles, response?.Processes),
+              editor: parseAttachedEditors(response?.Titles, response?.Processes),
+            },
+          ];
         } catch (error) {
-          return [id, classifyTopFailure(error instanceof Error ? error.message : String(error))];
+          const message = error instanceof Error ? error.message : String(error);
+          return [
+            id,
+            { claude: classifyTopFailure(message), editor: classifyEditorTopFailure(message) },
+          ];
         }
       }),
     );
