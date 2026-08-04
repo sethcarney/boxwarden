@@ -1,3 +1,9 @@
+// FIRST, and before anything that might reach a signature. Electron's
+// BoringSSL cannot infer a digest for an EC key where Node's OpenSSL can, and
+// every Sigstore and TUF verification in this app is built on the call that
+// relies on it — see src/main/crypto-compat.ts. Without this the whole
+// download-and-verify path refuses on every platform.
+import { installCryptoCompat } from './crypto-compat.js';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { BrowserWindow, app, dialog, session, shell, type WebContents } from 'electron';
@@ -73,6 +79,22 @@ const PLATFORM_DEFAULT_ROOTS = defaultProjectRoots(process.platform, homedir());
  */
 if (process.env['BOXWARDEN_SOFTWARE_RENDER'] === '1') {
   app.disableHardwareAcceleration();
+}
+
+/**
+ * Module scope, like the line above, and for a stricter version of the same
+ * reason: the dependencies this compensates for are imported by the update
+ * checker, so waiting for `whenReady` would be waiting until after the thing
+ * it protects could already have run.
+ *
+ * Logged when it fires, because a silent compatibility shim is one nobody
+ * remembers is there — and this one exists to be deleted, on the day it starts
+ * reporting that it was not needed.
+ */
+if (installCryptoCompat()) {
+  console.warn(
+    '[boxwarden] This runtime cannot infer a digest for EC keys; signature verification is running through the compatibility shim in crypto-compat.ts.',
+  );
 }
 
 function backendFromEnv(): DockerBackend {

@@ -35,6 +35,7 @@ bun run dist         # build + installers for the host OS, into release/
 bun run dist:mac / dist:linux / dist:win
 
 bun run check:release-version   # tag vs package.json — run before tagging, not part of `check`
+bun run check:sigstore          # can this machine reach Sigstore's trust root? diagnostic, not part of `check`
 
 bun run devcontainer:open   # devcontainer up, then attach an editor to it (scripts/devcontainer-open.mjs)
 ```
@@ -72,19 +73,20 @@ MODEL       src/models/                pure types and functions, imports nothing
    Anything that touches the outside world lives in `src/main/` as a thin shell
    around a pure core:
 
-   | Impure edge                       | Pure core it wraps                         |
-   | --------------------------------- | ------------------------------------------ |
-   | `docker/client.ts` (dockerode)    | `docker/mapping.ts`, `docker/host-path.ts` |
-   | `docker/client.ts` (probing)      | `docker/endpoint.ts`                       |
-   | `editor/launch.ts` (spawn)        | `editor/uri.ts`                            |
-   | `terminal/launch.ts` (spawn)      | `terminal/command.ts`                      |
-   | `discovery/resolve.ts` (fs, exec) | `editor/targets.ts`, `terminal/targets.ts` |
-   | `projects/scan.ts` (fs walk)      | `models/project.ts`                        |
-   | `git/status.ts` (fs reads)        | `models/git.ts`                            |
-   | `preferences.ts` (fs)             | `models/{engine,project,terminal}.ts`      |
-   | `ssh-agent.ts` (env, fs, exec)    | `models/advice.ts`, `models/ssh-agent.ts`  |
-   | `update/github.ts` (net)          | `models/update.ts`                         |
-   | `update/check.ts` (clock, cache)  | `models/update.ts`                         |
+   | Impure edge                       | Pure core it wraps                          |
+   | --------------------------------- | ------------------------------------------- |
+   | `docker/client.ts` (dockerode)    | `docker/mapping.ts`, `docker/host-path.ts`  |
+   | `docker/client.ts` (probing)      | `docker/endpoint.ts`                        |
+   | `editor/launch.ts` (spawn)        | `editor/uri.ts`                             |
+   | `terminal/launch.ts` (spawn)      | `terminal/command.ts`                       |
+   | `discovery/resolve.ts` (fs, exec) | `editor/targets.ts`, `terminal/targets.ts`  |
+   | `projects/scan.ts` (fs walk)      | `models/project.ts`                         |
+   | `git/status.ts` (fs reads)        | `models/git.ts`                             |
+   | `preferences.ts` (fs)             | `models/{engine,project,terminal}.ts`       |
+   | `ssh-agent.ts` (env, fs, exec)    | `models/advice.ts`, `models/ssh-agent.ts`   |
+   | `update/github.ts` (net)          | `models/update.ts`                          |
+   | `update/check.ts` (clock, cache)  | `models/update.ts`                          |
+   | `crypto-compat.ts` (patches node) | its own `wrapVerify`, `substituteDigestFor` |
 
 2. **A ViewModel renders nothing.** No module in `src/renderer/viewmodels/`
    imports `react-dom` or returns JSX. That is what lets the whole layer be
@@ -559,6 +561,23 @@ Six rules hold this together:
 - **The AppImage is the one in-place update, and only via a same-directory
   rename.** An AppImage is one file the user owns; a copy interrupted halfway
   would leave them with a truncated binary and no working boxwarden.
+- **A refusal to verify says nothing useful on purpose, so it says it to the
+  log instead.** "We could not check this" must not read as "this is forged",
+  which leaves the real cause with nowhere to go: the app is a Windows GUI
+  process with no console, and nothing downstream reads the `cause`. Both
+  failures are therefore `console.error`ed in `trust.ts`, and
+  `scripts/check-sigstore.mjs` asks the same question from the command line —
+  same library, same options, same cache directory — for a machine where
+  rebuilding the app is not the fastest way to find out.
+- **Electron's crypto cannot do this unaided, and `crypto-compat.ts` is why it
+  now can.** BoringSSL has no default digest for an EC key where OpenSSL infers
+  SHA-256, and every verification here — TUF metadata and the Sigstore bundle
+  alike — runs through `crypto.verify(undefined, …)`. Both libraries read a
+  throw as "this key did not sign it", so the failure arrives as
+  `root was signed by 0/3 keys` and reads like a tampered release. Untreated it
+  makes `downloadUpdate` refuse on EVERY platform, permanently. The shim is
+  installed first in `index.ts`, no-ops on a runtime that does not need it, and
+  is meant to be deleted the day tuf-js and sigstore-js name their digests.
 - **The trust root comes from TUF, not a vendored JSON.** Sigstore rotates keys;
   a pinned snapshot would silently turn every download into a failure on some
   Tuesday, and an update mechanism that disables itself is worse than none.
