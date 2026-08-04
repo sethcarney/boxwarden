@@ -1,4 +1,4 @@
-import { readFile, stat } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import type { GitStatus } from '../../models/index.js';
 import { parseGitDirPointer, parseGitHead } from '../../models/index.js';
@@ -8,6 +8,11 @@ import { parseGitDirPointer, parseGitHead } from '../../models/index.js';
  * host folder and read its HEAD. Every decision about what the bytes MEAN lives
  * in src/models/git.ts; this file only locates files and hands over their
  * contents, in the same shape as `inspect` -> `mapContainer`.
+ *
+ * It never asks a question about a path before opening it — no `stat` followed
+ * by a read. Attempting the read is the check, and the error code is the
+ * answer, so there is no window between the two in which the filesystem can
+ * change underneath.
  */
 
 /**
@@ -49,36 +54,34 @@ async function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
   }
 }
 
-/** Where a folder's git metadata lives, following the worktree indirection. */
-async function findGitDir(folder: string): Promise<string | undefined> {
-  let current = folder;
+/**
+ * One read, and its failure as data.
+ *
+ * The whole lookup is written in terms of this rather than `stat`-then-read,
+ * and deliberately so: asking whether a path is a directory and then opening it
+ * are two decisions about a filesystem that can change between them, which is
+ * the classic check-then-use race — and on a path the user's other tools are
+ * actively writing to (git switches branches by rewriting HEAD) the window is
+ * not theoretical. Attempting the read IS the check.
+ *
+ * The `code` is kept because one of them carries information the contents
+ * cannot: `EISDIR` on `.git` means it is a directory, which is how a broken
+ * checkout is told apart from a folder that simply has no repository.
+ */
+type ReadResult =
+  | { readonly ok: true; readonly contents: string }
+  | { readonly ok: false; readonly code: string | undefined };
 
-  for (let level = 0; level <= MAX_PARENTS; level += 1) {
-    const candidate = join(current, '.git');
-
-    try {
-      const entry = await stat(candidate);
-      if (entry.isDirectory()) return candidate;
-
-      if (entry.isFile()) {
-        // A worktree or submodule: the file names the real directory, possibly
-        // relative to the folder holding it.
-        const pointer = parseGitDirPointer(await readFile(candidate, 'utf8'));
-        if (pointer !== undefined) {
-          return isAbsolute(pointer) ? pointer : resolve(current, pointer);
-        }
-      }
-    } catch {
-      // No `.git` here (or it cannot be read) — that is the ordinary case for
-      // every level but the last, so keep walking rather than reporting it.
-    }
-
-    const parent = dirname(current);
-    if (parent === current) break;
-    current = parent;
+async function read(path: string): Promise<ReadResult> {
+  try {
+    return { ok: true, contents: await readFile(path, 'utf8') };
+  } catch (error) {
+    const code =
+      typeof error === 'object' && error !== null && 'code' in error
+        ? String(error.code)
+        : undefined;
+    return { ok: false, code };
   }
-
-  return undefined;
 }
 
 /**
@@ -97,16 +100,51 @@ export async function readGitStatus(folder: string): Promise<GitStatus> {
   }
 }
 
+/**
+ * Walk up looking for a checkout, and read its HEAD.
+ *
+ * Each level is at most two reads and no `stat`: `.git/HEAD` answers the
+ * ordinary case, and `.git` itself answers the worktree case. A level where
+ * both are absent is the ordinary state of every level but the last, so it
+ * walks on rather than reporting anything.
+ */
 async function readCheckout(folder: string): Promise<GitStatus> {
-  const gitDir = await findGitDir(folder);
-  if (gitDir === undefined) return { kind: 'none' };
+  let current = folder;
 
-  try {
-    return parseGitHead(await readFile(join(gitDir, 'HEAD'), 'utf8'));
-  } catch (error) {
-    return {
-      kind: 'unknown',
-      reason: `Could not read HEAD in ${gitDir}: ${error instanceof Error ? error.message : String(error)}`,
-    };
+  for (let level = 0; level <= MAX_PARENTS; level += 1) {
+    const gitDir = join(current, '.git');
+
+    // `.git` as a DIRECTORY, which is every checkout that is not a worktree.
+    const head = await read(join(gitDir, 'HEAD'));
+    if (head.ok) return parseGitHead(head.contents);
+
+    // `.git` as a FILE: the pointer git writes for a worktree or a submodule,
+    // possibly relative to the folder holding it.
+    const pointerFile = await read(gitDir);
+    if (pointerFile.ok) {
+      const pointer = parseGitDirPointer(pointerFile.contents);
+      if (pointer === undefined) {
+        return { kind: 'unknown', reason: `The .git file in ${current} is not a gitdir pointer.` };
+      }
+      const linked = isAbsolute(pointer) ? pointer : resolve(current, pointer);
+      const linkedHead = await read(join(linked, 'HEAD'));
+      return linkedHead.ok
+        ? parseGitHead(linkedHead.contents)
+        : { kind: 'unknown', reason: `Could not read HEAD in ${linked}.` };
+    }
+
+    // `.git` is there and is a directory, but its HEAD was not readable — a
+    // broken checkout, not "no repository here". Walking on from this would
+    // report the PARENT repository's branch for a folder that has its own,
+    // which is the one wrong answer available here.
+    if (pointerFile.code === 'EISDIR') {
+      return { kind: 'unknown', reason: `Could not read HEAD in ${gitDir}.` };
+    }
+
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
   }
+
+  return { kind: 'none' };
 }

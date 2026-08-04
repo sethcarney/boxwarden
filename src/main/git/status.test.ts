@@ -129,4 +129,24 @@ describe('readGitStatus', () => {
     const folder = await repo('code/corrupt', 'this is not a HEAD\n');
     await expect(readGitStatus(folder)).resolves.toMatchObject({ kind: 'unknown' });
   });
+
+  /**
+   * The one wrong answer available in the walk: a folder with its own broken
+   * `.git` sits inside a repository, and reporting the parent's branch for it
+   * would be a confident lie rather than a missing chip.
+   */
+  it('does not report the parent repository for a folder whose own .git is broken', async () => {
+    await mkdir(join(root, 'code/webapp/broken/.git'), { recursive: true });
+    await expect(readGitStatus(join(root, 'code/webapp/broken'))).resolves.toMatchObject({
+      kind: 'unknown',
+    });
+  });
+
+  it('reports a .git file that is not a gitdir pointer', async () => {
+    await mkdir(join(root, 'code/not-a-pointer'), { recursive: true });
+    await writeFile(join(root, 'code/not-a-pointer/.git'), 'ref: refs/heads/main\n', 'utf8');
+    await expect(readGitStatus(join(root, 'code/not-a-pointer'))).resolves.toMatchObject({
+      kind: 'unknown',
+    });
+  });
 });
