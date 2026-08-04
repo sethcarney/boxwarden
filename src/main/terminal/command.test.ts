@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TerminalTarget } from '../../models/index.js';
+import { asContainerPath } from '../../models/index.js';
 import {
   appleScriptString,
   containerExecArgv,
@@ -101,11 +102,11 @@ describe('containerShellScript', () => {
 
   it('execs rather than nesting, so one Ctrl-D closes the window', () => {
     expect(containerShellScript()).not.toMatch(/\bbash -l\s*$/);
-    expect(containerShellScript('echo hi')).toContain('exec bash -l');
+    expect(containerShellScript({ startupCommand: 'echo hi' })).toContain('exec bash -l');
   });
 
   it('runs the startup command before handing over to the interactive shell', () => {
-    const script = containerShellScript('bun run dev');
+    const script = containerShellScript({ startupCommand: 'bun run dev' });
     const startup = script.indexOf('bun run dev');
     expect(startup).toBeGreaterThanOrEqual(0);
     expect(startup).toBeLessThan(script.indexOf('exec bash -l'));
@@ -114,18 +115,71 @@ describe('containerShellScript', () => {
   it('does not background the startup command', () => {
     // Deliberate: a dev server should hold the window and show its output, and
     // interrupting it should land in a shell rather than close the terminal.
-    expect(containerShellScript('bun run dev')).not.toContain('&\n');
+    expect(containerShellScript({ startupCommand: 'bun run dev' })).not.toContain('&\n');
   });
 
   it('separates with a newline, not a semicolon, so a trailing comment cannot swallow the handover', () => {
-    expect(containerShellScript('echo hi # note')).toBe(
+    expect(containerShellScript({ startupCommand: 'echo hi # note' })).toBe(
       `echo hi # note\n${containerShellScript()}`,
     );
   });
 
   it('treats a blank or whitespace-only command as no command', () => {
-    expect(containerShellScript('')).toBe(containerShellScript());
-    expect(containerShellScript('   ')).toBe(containerShellScript());
+    expect(containerShellScript({ startupCommand: '' })).toBe(containerShellScript());
+    expect(containerShellScript({ startupCommand: '   ' })).toBe(containerShellScript());
+  });
+
+  /**
+   * `docker exec` starts in the image's WorkingDir, which for most base images
+   * is `/`. A terminal opened on a workspace has to land IN the workspace.
+   */
+  it('enters the workspace folder before anything else runs', () => {
+    const script = containerShellScript({
+      workspaceFolder: asContainerPath('/workspaces/webapp'),
+      startupCommand: 'bun run dev',
+    });
+
+    expect(script).toContain(`cd '/workspaces/webapp'`);
+    expect(script.indexOf('cd ')).toBeLessThan(script.indexOf('bun run dev'));
+    expect(script.indexOf('bun run dev')).toBeLessThan(script.indexOf('exec bash -l'));
+  });
+
+  it('says nothing about a folder the container did not name', () => {
+    expect(containerShellScript()).not.toContain('cd ');
+    expect(containerShellScript({ workspaceFolder: asContainerPath('  ') })).not.toContain('cd ');
+  });
+
+  /**
+   * The reason this is a `cd` and not `docker exec -w`: the third source of
+   * `workspaceFolder` is the `/workspaces/<basename>` convention, i.e. a guess.
+   * A `-w` at a path that does not exist makes the daemon refuse the exec, and
+   * an emulator closes the window of a command that exited — clicking Terminal
+   * would look like it did nothing. This degrades to the old behaviour instead,
+   * out loud.
+   */
+  it('carries on into a shell when the folder is not there, and says so', () => {
+    const script = containerShellScript({ workspaceFolder: asContainerPath('/workspaces/gone') });
+
+    expect(script).toContain('||');
+    expect(script).toContain('exec bash -l');
+    expect(script).toMatch(/boxwarden: could not enter/);
+  });
+
+  /**
+   * The path can come from a container label, so it is attacker-influenced by
+   * anyone who can create containers on the daemon — the same standing as the
+   * container id. It becomes shell code INSIDE the container, so it goes
+   * through the same quoting as everything else that does.
+   */
+  it('quotes a hostile workspace folder rather than interpolating it', () => {
+    const script = containerShellScript({ workspaceFolder: asContainerPath(HOSTILE) });
+
+    // Wrapped, not escaped: nothing between the quotes is interpreted, and the
+    // one quote inside is closed and reopened.
+    expect(script).toContain(posixQuoteOne(HOSTILE));
+    expect(script).not.toMatch(/^cd touch \/tmp\/pwned/m);
+    // The complaint carries the path too, and is quoted just the same.
+    expect(script).not.toContain(`rm -rf $HOME "x"\n`);
   });
 });
 
@@ -246,7 +300,7 @@ describe('containerExecArgv', () => {
     const argv = containerExecArgv({
       cli,
       containerId: CONTAINER_ID,
-      script: containerShellScript(HOSTILE),
+      script: containerShellScript({ startupCommand: HOSTILE }),
     });
     // Not split, not escaped, not interpreted: one element, passed through.
     expect(argv.filter((part) => part.includes('rm -rf $HOME'))).toHaveLength(1);
@@ -335,7 +389,7 @@ describe('terminalLaunch', () => {
   });
 
   it('keeps a hostile startup command inside the AppleScript literal', () => {
-    const script = containerShellScript(HOSTILE);
+    const script = containerShellScript({ startupCommand: HOSTILE });
     const launch = terminalLaunch(
       target({
         invocation: { kind: 'applescript', application: 'Terminal', dialect: 'terminal-app' },

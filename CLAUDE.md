@@ -365,6 +365,15 @@ purely in `src/main/terminal/command.ts` and spawned by `launch.ts`.
   the CLI, so leaving the choice to the CLI's default means "no such container"
   for one that is on screen. A WSL socket runs `wsl.exe -d <distro> --` and
   names the CLI bare, on the Linux side.
+- **The shell starts in the workspace folder.** `docker exec` starts in the
+  image's `WorkingDir`, which is usually `/`, so the script `cd`s to
+  `workspaceFolder` first and the startup command therefore runs from there.
+  It is a `cd` and NOT `docker exec -w` on purpose: `workspaceFolder`'s third
+  source is the `/workspaces/<basename>` convention, i.e. a guess, and a `-w`
+  at a path that does not exist makes the daemon refuse the exec — most
+  emulators then close the window instantly, so the button appears to do
+  nothing. A failed `cd` leaves the developer where they were before, with one
+  line on stderr saying so.
 - **`terminal/targets.ts` is a data table** of twelve emulators with three
   invocation styles: `argv` (safe, the default), `command-string`, and
   `applescript` (Terminal.app and iTerm2, which have no CLI at all). iTerm2 3.x
@@ -373,7 +382,8 @@ purely in `src/main/terminal/command.ts` and spawned by `launch.ts`.
   `appleScriptString` are pure, wrap rather than escape a denylist, and are
   tested against a deliberately hostile startup command. `spawn` is never given
   `shell: true` — the startup command is user-authored shell code meant to run
-  _inside_ the container.
+  _inside_ the container. The workspace folder goes through the same quoting for
+  a different reason: the user did not write it, a container label did.
 - **Startup commands are keyed by `containerSettingsKey`**, i.e. the host folder
   (plus container name for compose members), not the container id. A rebuild
   changes the id, and a setting that evaporates on rebuild is worse than none.
