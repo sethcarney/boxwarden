@@ -1,0 +1,81 @@
+name: scorecard
+
+# OpenSSF Scorecard: an outside reading of this repo's supply-chain posture,
+# published where anyone deciding whether to run a desktop app that talks to
+# their Docker socket can read it.
+#
+# Two things about how it is wired, both of which are easy to get subtly wrong:
+#
+#   - **`publish_results: true` is what makes the badge and the public API
+#     entry exist.** It works by way of the OIDC token below, which is why
+#     `id-token: write` is here and why this must run from a `push` on the
+#     default branch rather than from a `pull_request`. A fork's PR has no
+#     token, and a run that cannot publish still scores — it just scores into
+#     nowhere, which reads as "the check is set up" while nothing is recorded.
+#
+#   - **`persist-credentials: false` is a hard requirement of the action**, not
+#     a nicety. Scorecard reads the checkout to grade it; a checkout carrying a
+#     credential in `.git/config` is a finding about the thing doing the
+#     grading.
+#
+# The weekly schedule matters as much as the push trigger: most of what
+# Scorecard measures — whether the project is maintained, whether its
+# dependencies have known vulnerabilities, whether branch protection is still
+# on — changes without anyone touching a file here.
+#
+# What this workflow does NOT do is gate anything. The score is a report, and
+# it is deliberately not a required check: a dependency's CVE disclosed on a
+# Tuesday would otherwise block every unrelated PR until it was patched.
+# docs/supply-chain.md is where the score is interpreted.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Weekly, Monday. Scorecard's own hosted runs are weekly too; matching the
+    # cadence keeps the badge and this workflow from disagreeing for six days.
+    - cron: '0 10 * * 1'
+  workflow_dispatch:
+
+permissions: read-all
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    permissions:
+      # Uploading the SARIF into code scanning, so findings show up beside
+      # CodeQL's rather than only in a log.
+      security-events: write
+      # The OIDC token that `publish_results` signs its submission with.
+      id-token: write
+      contents: read
+      # Scorecard reads workflow run history to answer CI-Tests and Packaging.
+      actions: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run Scorecard
+        uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc # v2.4.4
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+
+      # The raw SARIF, kept briefly. When a check drops a point the log says
+      # which check; this file says which file and which line.
+      - name: Upload artefact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: scorecard-sarif
+          path: results.sarif
+          retention-days: 5
+
+      - name: Upload SARIF to code scanning
+        uses: github/codeql-action/upload-sarif@d1ba80a13dd99fba24a470575428917156a28b43 # v4.37.5
+        with:
+          sarif_file: results.sarif

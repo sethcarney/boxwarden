@@ -1,0 +1,80 @@
+version: 2
+
+# Two ecosystems, watched for different reasons.
+#
+# The npm tree is the obvious one. The GitHub Actions tree is the one that
+# matters more here: every action in .github/workflows is pinned to a full
+# commit SHA (see the note in check.yml), and a SHA does not float — which is
+# the point, and also means a security fix upstream reaches this repo only if
+# something opens the PR. Dependabot is that something. It rewrites both the
+# SHA and the `# vX.Y.Z` comment beside it, so the two cannot drift.
+
+updates:
+  # Bun, not npm: the lockfile is bun.lock, and the npm updater neither reads
+  # nor rewrites it. Pointed at the wrong ecosystem, Dependabot opens PRs that
+  # bump package.json and leave the lockfile behind — which CI then rejects,
+  # correctly, because check.yml installs with --frozen-lockfile.
+  - package-ecosystem: bun
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      # One PR for all non-breaking bumps. Majors stay separate: electron and
+      # react majors each need the app opened and looked at, and burying that
+      # in a twelve-package PR is how it gets rubber-stamped.
+      npm-minor-patch:
+        patterns:
+          - '*'
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # Electron majors land roughly every eight weeks and each one is a
+      # Chromium and Node bump underneath the app. That is a deliberate
+      # upgrade with the GUI open on a real machine — see docs/roadmap.md —
+      # not a PR to merge on a green tick. Minor and patch bumps (which is
+      # where Electron ships its security fixes) still come through.
+      - dependency-name: electron
+        update-types: ['version-update:semver-major']
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: ci
+      include: scope
+    groups:
+      # codeql-action/init, /analyze and /upload-sarif are three dependencies
+      # to Dependabot and one thing in reality — they must be pinned to the
+      # same SHA or the analysis and the upload disagree about the bundle. One
+      # PR always, majors included. scorecard.yml uses /upload-sarif too, so
+      # this group spans two workflow files.
+      codeql-action:
+        patterns:
+          - 'github/codeql-action*'
+      actions:
+        patterns:
+          - '*'
+        exclude-patterns:
+          - 'github/codeql-action*'
+        update-types:
+          - minor
+          - patch
+
+  # The dev container's own base image and features. Nothing in the app
+  # depends on these, but a stale base image is a stale Node, and the container
+  # is where every check in this repo actually runs.
+  - package-ecosystem: devcontainers
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: chore
+      include: scope

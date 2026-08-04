@@ -1,5 +1,7 @@
 # boxwarden
 
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/sethcarney/boxwarden/badge)](https://scorecard.dev/viewer/?uri=github.com/sethcarney/boxwarden)
+
 Local dev container management. A desktop app that lists the dev containers on
 your machine, reattaches your editor to them, and opens a shell inside them.
 
@@ -89,6 +91,7 @@ launching. [Details](docs/running.md#1-the-dev-container-from-the-command-line).
 | [Releasing](docs/releasing.md)                 | Cutting a version: the tag, the workflow, the draft                 |
 | [Architecture](docs/architecture.md)           | Process model, the two path spaces, why the raw label matters       |
 | [Electron security](docs/electron-security.md) | The upstream checklist and where each item lands here               |
+| [Supply chain](docs/supply-chain.md)           | Scorecard, signed releases, and the GitHub settings that bind them  |
 | [Development](docs/development.md)             | Commands, fixtures, the two TS projects, testing                    |
 | [Roadmap](docs/roadmap.md)                     | What is unproven, and what to build next                            |
 

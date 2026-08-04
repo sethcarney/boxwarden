@@ -174,8 +174,51 @@ export function shouldDescend(name: string): boolean {
  *
  * Replaces comments with spaces rather than removing them, so byte offsets in a
  * `JSON.parse` error still point at the right place in the original.
+ *
+ * Two passes, and the order is the whole reason there are two. Comments go
+ * first, because a trailing comma can be followed by one:
+ *
+ *     { "name": "api", // renamed
+ *     }
+ *
+ * Then the commas, over a document where every comment has already become
+ * whitespace. Both passes track string state, which is what the second one is
+ * for: `replace(/,(\s*[}\]])/g, ' $1')` also rewrites a `,}` that is two
+ * characters of somebody's `"name"`, and `project.property.test.ts` found that
+ * by generating one.
  */
 export function stripJsonc(source: string): string {
+  return elideTrailingCommas(elideComments(source));
+}
+
+/**
+ * Copy a string literal, opening quote onward, honouring escapes.
+ *
+ * Shared by both passes, since "where does this string end" is the one question
+ * they both have to get right — `"C:\\path\\"` must not read as unterminated.
+ * Returns the text copied and the index just past the closing quote.
+ */
+function copyStringLiteral(source: string, start: number): { text: string; next: number } {
+  let text = source.charAt(start);
+  let index = start + 1;
+
+  while (index < source.length) {
+    const inner = source.charAt(index);
+    text += inner;
+    index += 1;
+    if (inner === '\\' && index < source.length) {
+      text += source.charAt(index);
+      index += 1;
+      continue;
+    }
+    if (inner === '"') break;
+  }
+
+  return { text, next: index };
+}
+
+/** Pass one: line and block comments become spaces, newlines preserved. */
+function elideComments(source: string): string {
   let out = '';
   let index = 0;
 
@@ -183,20 +226,9 @@ export function stripJsonc(source: string): string {
     const char = source.charAt(index);
 
     if (char === '"') {
-      // Copy the string literal wholesale, honouring escapes.
-      out += char;
-      index += 1;
-      while (index < source.length) {
-        const inner = source.charAt(index);
-        out += inner;
-        index += 1;
-        if (inner === '\\' && index < source.length) {
-          out += source.charAt(index);
-          index += 1;
-          continue;
-        }
-        if (inner === '"') break;
-      }
+      const { text, next } = copyStringLiteral(source, index);
+      out += text;
+      index = next;
       continue;
     }
 
@@ -227,8 +259,43 @@ export function stripJsonc(source: string): string {
     index += 1;
   }
 
-  // Trailing commas, once comments are gone and cannot hide one.
-  return out.replace(/,(\s*[}\]])/g, ' $1');
+  return out;
+}
+
+/**
+ * Pass two: a comma whose next non-whitespace character closes the object or
+ * array becomes a space. Runs on the output of `elideComments`, so a comment
+ * between the comma and the brace has already become whitespace and cannot
+ * hide it.
+ */
+function elideTrailingCommas(source: string): string {
+  let out = '';
+  let index = 0;
+
+  while (index < source.length) {
+    const char = source.charAt(index);
+
+    if (char === '"') {
+      const { text, next } = copyStringLiteral(source, index);
+      out += text;
+      index = next;
+      continue;
+    }
+
+    if (char === ',') {
+      let ahead = index + 1;
+      while (ahead < source.length && /\s/.test(source.charAt(ahead))) ahead += 1;
+      const next = source.charAt(ahead);
+      out += next === '}' || next === ']' ? ' ' : char;
+      index += 1;
+      continue;
+    }
+
+    out += char;
+    index += 1;
+  }
+
+  return out;
 }
 
 /**

@@ -1,0 +1,36 @@
+# Default owner for everything.
+* @sethcarney
+
+# CODEOWNERS is what turns "Require a pull request before merging" into
+# "require a review from someone who knows this file". On its own the file only
+# requests reviewers; it is binding once "Require review from Code Owners" is
+# ticked in the branch protection rule (docs/supply-chain.md#github-side-setup).
+#
+# The paths below are called out separately because they are the ones where a
+# wrong change is a security bug rather than a broken feature. On a
+# single-maintainer repo they resolve to the same person as the default rule —
+# they earn their place the day a second contributor arrives, and cost nothing
+# until then.
+
+# Anything that builds a command line, a URI, or a spawn argv. The quoting in
+# terminal/command.ts is a security boundary, and editor/uri.ts must not
+# normalise the host path (see CLAUDE.md, "the raw label rule").
+/src/main/terminal/    @sethcarney
+/src/main/editor/      @sethcarney
+
+# The Electron hardening: webPreferences, CSP, permission handlers, the
+# external-origin allow-list, and IPC sender validation.
+/src/main/index.ts     @sethcarney
+/src/preload/          @sethcarney
+/src/shared/ipc.ts     @sethcarney
+
+# The environment rule: mapContainer reads exactly one variable out of
+# Config.Env and must never let the rest reach a snapshot or a log.
+/src/main/docker/      @sethcarney
+
+# CI, release, signing, and the supply-chain posture itself. A workflow change
+# is a change to what runs with this repo's token.
+/.github/              @sethcarney
+/SECURITY.md           @sethcarney
+/docs/supply-chain.md  @sethcarney
+/docs/electron-security.md @sethcarney

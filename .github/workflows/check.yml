@@ -27,9 +27,22 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      # Every third-party action in this repo is pinned to a full commit SHA
+      # with the tag in a trailing comment, here and in every other workflow.
+      # A tag is a moving pointer the action's owner can repoint at any time,
+      # so `@v5` is a standing grant of arbitrary code execution on a runner
+      # holding this repo's token. The SHA is the version; the comment is for
+      # humans, and Dependabot updates both together (.github/dependabot.yml).
+      #
+      # `persist-credentials: false` because nothing in this job pushes. Left
+      # on, checkout writes a token into .git/config where every later step —
+      # including anything a dependency's postinstall decides to run — can read
+      # it. bun install runs in this job, so that is not hypothetical.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: latest
 

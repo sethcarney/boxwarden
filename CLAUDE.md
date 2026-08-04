@@ -610,11 +610,13 @@ never` and upload workflow artefacts; one later job creates the release.
 - **`check:release-version` is not in `bun run check`.** Both of its assertions
   are false on an ordinary branch — no tag, and the placeholder version — so it
   would fail every PR. It runs once, on the tag.
-- **CI signs nothing, and says so.** `CSC_IDENTITY_AUTO_DISCOVERY: false` is set
-  deliberately: left unset, electron-builder searches an empty keychain and
-  reports the failure as a warning inside a green log, so an unsigned release
-  looks exactly like a signed one. The unsigned-install boilerplate in
+- **CI CODE-signs nothing, and says so.** `CSC_IDENTITY_AUTO_DISCOVERY: false`
+  is set deliberately: left unset, electron-builder searches an empty keychain
+  and reports the failure as a warning inside a green log, so an unsigned
+  release looks exactly like a signed one. The unsigned-install boilerplate in
   `releasing.md` goes into every release's notes until there is a certificate.
+  This is a **different thing** from the cosign signatures below, and neither
+  substitutes for the other.
 
 `publish:` in `electron-builder.yml` describes where an update _would_ come
 from, not how this repo publishes — it is what puts the right provider into the
@@ -622,11 +624,59 @@ from, not how this repo publishes — it is what puts the right provider into th
 nothing reads them yet, because the build that would need to find them is the
 one already installed.
 
+### Signing and provenance
+
+The `publish` job also signs, and the ordering is load-bearing: signatures are
+produced **before** `gh release create` and attached in the same call, so there
+is never a draft holding unsigned assets and no separate upload step that can
+silently fail. Then a fourth job generates SLSA provenance.
+
+- **One `<name>.sigstore.json` per artefact**, not the older `.sig` + `.pem`
+  pair — cosign v3 removed `--output-signature` and `--output-certificate` from
+  `sign-blob`. `.sigstore.json` is also one of the extensions Scorecard's
+  `Signed-Releases` check recognises; `.bundle` is not.
+- **`sha256sums.txt` is signed too**, and is generated before signing so it
+  covers the installers rather than the signatures over them. It is also the
+  subject list handed to the SLSA generator.
+- **Provenance comes from a reusable workflow, not a step.** The guarantee is
+  that it is produced somewhere the build cannot reach; a step in the build job
+  could write its own.
+- **That generator is the one action in this repo referenced by TAG, not SHA.**
+  It reads `github.action_ref` at runtime to pick its own binary release, and a
+  SHA resolves to nothing. It looks exactly like the mistake everything else
+  here is guarding against, which is why the comment beside it is long.
+
+## Supply chain
+
+`docs/supply-chain.md` is the full picture, including the GitHub-side settings
+that are not in any file. Four rules that touch code review:
+
+- **Every third-party action is pinned to a full commit SHA with a `# vX.Y.Z`
+  comment** — a tag is a pointer its owner can move, i.e. a standing grant of
+  code execution on a runner holding this repo's token. Dependabot rewrites the
+  SHA and the comment together. The SLSA generator is the single documented
+  exception above.
+- **Every workflow declares a top-level `permissions:`**, read-only, with
+  writes granted per job. `contents: write` lives only in the job that creates
+  the release.
+- **`*.property.test.ts` files are fast-check property tests**, sitting beside
+  the module they cover. They are not a second copy of the example tests: the
+  example test names the attack, the property test finds the case nobody named.
+  They already found one — `stripJsonc`'s trailing-comma pass was a regex over
+  the whole document and rewrote a `,}` that was inside a string. Scorecard's
+  `Fuzzing` check also detects them, by the `from 'fast-check'` import in any
+  `.ts` file.
+- **Adding a link to `advice.ts` still means adding its origin to
+  `ALLOWED_EXTERNAL_ORIGINS`.** Unchanged, and unrelated to any of the above —
+  it is listed here because it is the other closed set in this repo that fails
+  silently.
+
 ## Docs
 
 - `docs/architecture.md` — process model, path spaces, discovery, grouping (fuller version of the above)
 - `docs/development.md` — Podman/rootless setup, fixtures, testing/lint rationale
 - `docs/electron-security.md` — full security checklist and rationale
+- `docs/supply-chain.md` — Scorecard, signed releases, and the GitHub settings that bind them
 - `docs/running.md` — the three ways to run the app, troubleshooting table
 - `docs/releasing.md` — cutting a version: the tag, the workflow, the draft
 - `docs/roadmap.md` — what's unverified (no real Docker daemon or editor has touched this yet) and what's next
