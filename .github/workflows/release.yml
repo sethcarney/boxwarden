@@ -26,9 +26,18 @@ name: release
 #     human reading the notes and pressing a button. Everything up to that is
 #     mechanical; that part is not.
 #
-# What this does NOT do: sign, notarise, or auto-update. The macOS and Windows
-# builds are unsigned, which is a property of the artefacts and not of this
-# workflow — docs/releasing.md says what that means for whoever downloads
+# What this DOES sign is every artefact, with cosign, in the publish job below
+# — plus SLSA provenance in the job after it. That is what lets the app fetch
+# and verify its own download (src/models/download.ts).
+#
+# What it does NOT do is CODE-sign or notarise. The macOS and Windows builds
+# carry no Developer ID and no Authenticode certificate, which is a property of
+# the artefacts and not of this workflow: it is why Gatekeeper and SmartScreen
+# still interpose on first launch, and why boxwarden hands its verified
+# download to the OS installer instead of swapping its own application bundle.
+# The two kinds of signing answer different questions and neither substitutes
+# for the other — docs/supply-chain.md#what-signing-does-and-does-not-buy is the
+# long version, docs/releasing.md says what it means for whoever downloads
 # them, and docs/roadmap.md#6-packaging--signing-notarisation-updates tracks
 # closing it.
 

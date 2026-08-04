@@ -123,7 +123,11 @@ describe('useUpdate', () => {
     });
 
     it('turns checks back on when they are off, rather than forcing a check that cannot happen', async () => {
-      const off: UpdateStatus = { currentVersion: '1.1.0', outcome: { kind: 'disabled' } };
+      const off: UpdateStatus = {
+        currentVersion: '1.1.0',
+        download: { kind: 'idle' },
+        outcome: { kind: 'disabled' },
+      };
       const api = fakeApi({ update: off });
       const { result } = renderHook(() => useUpdate(api, NOW, NEVER));
 
@@ -171,5 +175,79 @@ describe('useUpdate', () => {
     const { result } = renderHook(() => useUpdate(undefined, NOW, NEVER));
     expect(result.current.panel).toBeUndefined();
     expect(result.current.summary.label).toBe('boxwarden');
+  });
+
+  describe('downloading', () => {
+    it('asks the main process to fetch, naming nothing', async () => {
+      const api = fakeApi({ update: updateAvailable() });
+      const { result } = renderHook(() => useUpdate(api, NOW, NEVER, NEVER));
+
+      await waitFor(() => {
+        expect(result.current.panel).toBeDefined();
+      });
+      act(() => {
+        result.current.download();
+      });
+
+      await waitFor(() => {
+        expect(api.downloadUpdate).toHaveBeenCalledTimes(1);
+      });
+      // No URL, no filename, no version: the whole point of the verb.
+      expect(api.downloadUpdate).toHaveBeenCalledWith();
+    });
+
+    /**
+     * The poll speeds up while bytes are moving and drops back afterwards.
+     * Without the fast cadence the progress bar would advance once an hour;
+     * without dropping back, an idle app would poll twice a second forever.
+     */
+    it('polls fast while a download is running and slowly when it is not', async () => {
+      const fetching = updateAvailable({
+        download: { kind: 'fetching', version: '1.2.0', progress: { receivedBytes: 1 } },
+      });
+      const api = fakeApi({ update: fetching });
+      renderHook(() => useUpdate(api, NOW, NEVER, 10));
+
+      await waitFor(() => {
+        expect(api.updateStatus.mock.calls.length).toBeGreaterThan(3);
+      });
+    });
+
+    it('leaves the poll slow while nothing is downloading', async () => {
+      const api = fakeApi({ update: updateAvailable() });
+      renderHook(() => useUpdate(api, NOW, NEVER, NEVER));
+
+      await waitFor(() => {
+        expect(api.updateStatus).toHaveBeenCalled();
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(api.updateStatus).toHaveBeenCalledTimes(1);
+    });
+
+    /**
+     * `installUpdate` answers an ActionResult, and a refusal has to land
+     * somewhere the user is looking — next to the button, in the download's own
+     * failed arm, rather than vanishing because the app did not quit.
+     */
+    it('reports a refused install beside the button', async () => {
+      const api = fakeApi({ update: updateAvailable() });
+      api.installUpdate.mockResolvedValue({ ok: false, message: 'nothing verified to install' });
+      const { result } = renderHook(() => useUpdate(api, NOW, NEVER, NEVER));
+
+      await waitFor(() => {
+        expect(result.current.panel).toBeDefined();
+      });
+      act(() => {
+        result.current.install();
+      });
+
+      await waitFor(() => {
+        expect(result.current.status.download).toEqual({
+          kind: 'failed',
+          version: '1.1.0',
+          message: 'nothing verified to install',
+        });
+      });
+    });
   });
 });

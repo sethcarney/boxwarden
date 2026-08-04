@@ -2,23 +2,35 @@
  * Whether a newer boxwarden has been published, and what the person running
  * this one has to do about it.
  *
- * There is no auto-update here, and that is a decision rather than a stop
- * gap. `electron-updater` downloads and swaps the application in place, which
- * requires a code signature it can verify — and this project signs nothing
- * (see docs/releasing.md). An unsigned in-place swap is the one update
- * mechanism worse than none: on macOS Squirrel refuses it outright, and
- * everywhere else it would replace a binary on the user's disk with whatever
- * came back from a network call that nobody can check. So boxwarden looks,
- * says what it found, and leaves the install to the user — the same rule the
- * setup advice and `devcontainer up` already follow: commands are SHOWN,
- * never run.
+ * boxwarden does not swap its own application bundle on macOS or Windows.
+ * `electron-updater` does exactly that, and it needs a CODE signature to
+ * decide the swap is safe — an Apple Developer ID, an Authenticode
+ * certificate. This project has neither, and until it does, Squirrel.Mac
+ * refuses the swap outright and everywhere else it would replace a binary on
+ * the user's disk on the strength of a download nothing checked.
+ *
+ * What it DOES do is the half that needs no certificate: fetch the one file
+ * this machine needs, verify it against `sha256sums.txt` and the Sigstore
+ * bundle the release workflow attaches, and hand it to the operating system's
+ * own installer — see src/models/download.ts. The artefacts ARE signed, with
+ * cosign, which is a different thing from code signing and does not substitute
+ * for it: cosign proves these bytes came out of this repository's release
+ * workflow, and Gatekeeper has never heard of it. Both statements are true at
+ * once and this file is careful to keep them apart, because "unsigned" said
+ * flatly is now wrong in one sense and right in the other.
+ *
+ * The one exception is the AppImage, which updates itself in place. Not
+ * because the rule bent — because an AppImage is a single file the user owns,
+ * with no installer to hand it to and no package manager to offend, so
+ * "replace the file" IS the install procedure and boxwarden can do it with the
+ * same verification a person would have to do by hand.
  *
  * That is also why this file is bigger than a version comparison. Telling
- * somebody "1.2.0 is available" is not the feature; telling them which file to
- * download for the machine they are on, and that Gatekeeper is about to refuse
- * it, is. Those instructions differ per platform AND per install kind — a
- * `.deb` is replaced by apt, an AppImage by overwriting a file — so the kind
- * is detected rather than guessed from the platform alone.
+ * somebody "1.2.0 is available" is not the feature; telling them which file
+ * their machine needs, and that Gatekeeper is about to refuse it, is. Those
+ * instructions differ per platform AND per install kind — a `.deb` is replaced
+ * by apt, an AppImage by overwriting a file — so the kind is detected rather
+ * than guessed from the platform alone.
  *
  * Pure, and imports nothing: the network call, the clock and `app.getVersion()`
  * live in the shell at src/main/update/check.ts.
@@ -33,6 +45,11 @@
  * response is checked against. Splitting them across two files is how you end
  * up trusting links from a repository you did not query.
  */
+// Type-only, and therefore erased: `download.ts` imports this module back for
+// `UPDATE_REPOSITORY` and `InstallKind`, and a value import in this direction
+// would make that a real cycle at runtime.
+import type { UpdateDownload } from './download.js';
+
 export const UPDATE_REPOSITORY = { owner: 'sethcarney', repo: 'boxwarden' } as const;
 
 /**
@@ -412,9 +429,14 @@ export interface UpdateInstructions {
  *
  * WRITING RULE, borrowed from advice.ts because it earns its keep twice over
  * here: every step says what to DO. And each platform's step about its
- * gatekeeper is not padding — the builds are unsigned, so macOS and Windows
- * both interpose on first launch, and a user who was not warned reads that as
- * "the update is malware" and stops updating.
+ * gatekeeper is not padding — the builds are not CODE-signed, so macOS and
+ * Windows both interpose on first launch, and a user who was not warned reads
+ * that as "the update is malware" and stops updating.
+ *
+ * These are the manual steps, and they stay reachable even now that boxwarden
+ * can fetch and verify the file itself: the download refuses on a release
+ * missing its signature, on an install kind whose artefact is ambiguous, and
+ * on any machine where the user would rather do it themselves.
  */
 export function updateInstructions(
   kind: InstallKind,
@@ -429,7 +451,7 @@ export function updateInstructions(
         steps: [
           quit,
           'Open the .dmg and drag boxwarden to Applications, replacing the copy already there.',
-          'The build is unsigned and un-notarised, so Gatekeeper refuses it on first launch: right-click the app in Applications and choose Open.',
+          'The build is not code-signed or notarised, so Gatekeeper refuses it on first launch: right-click the app in Applications and choose Open.',
         ],
         commands: [],
       };
@@ -440,7 +462,7 @@ export function updateInstructions(
         steps: [
           quit,
           'Run the installer. It installs per user, needs no admin rights, and replaces the version you have — there is nothing to uninstall first.',
-          'The build is unsigned, so SmartScreen interposes: More info → Run anyway.',
+          'The build is not code-signed, so SmartScreen interposes: More info → Run anyway.',
         ],
         commands: [],
       };
@@ -529,6 +551,21 @@ export interface UpdateStatus {
   /** When the last COMPLETED check happened. Absent until one has. */
   readonly checkedAt?: Date;
   readonly outcome: UpdateOutcome;
+  /**
+   * How far a download of the offered version has got.
+   *
+   * Required rather than optional, and always present even on the arms where
+   * downloading is impossible — `idle` says that plainly, and an absent field
+   * would leave the renderer distinguishing "nothing has been asked for" from
+   * "this build cannot ask" by the shape of the object rather than by reading
+   * the outcome beside it.
+   *
+   * It rides on the status rather than on a channel of its own because the two
+   * are one state machine: the file being fetched is the asset named by
+   * `outcome.asset`, and a download that outlived the offer it belongs to
+   * would be a progress bar for a version nobody is being shown.
+   */
+  readonly download: UpdateDownload;
 }
 
 export interface UpdateFacts {
@@ -544,6 +581,11 @@ export interface UpdateFacts {
   readonly release: Release | undefined;
   /** The version the user last said "not now" to. */
   readonly dismissedVersion?: string;
+  /**
+   * The download in progress, when there is one. Absent means `idle`, which is
+   * what every caller that has never started one passes.
+   */
+  readonly download?: UpdateDownload;
 }
 
 /**
@@ -553,10 +595,18 @@ export interface UpdateFacts {
  * data, so the shell around it does nothing but fetch and remember.
  */
 export function foldUpdateStatus(facts: UpdateFacts, checkedAt: Date): UpdateStatus {
-  const base = { currentVersion: facts.currentVersion, checkedAt };
+  const base = {
+    currentVersion: facts.currentVersion,
+    checkedAt,
+    // The download belongs to a version on offer. Folding a check that found
+    // none — or found one the running build already is — resets it, so a
+    // finished download of 1.2.0 stops being advertised the moment 1.2.0 is
+    // what is running.
+    download: facts.download ?? { kind: 'idle' as const },
+  };
 
   if (facts.release === undefined || !isNewerVersion(facts.release.version, facts.currentVersion)) {
-    return { ...base, outcome: { kind: 'current' } };
+    return { ...base, download: { kind: 'idle' }, outcome: { kind: 'current' } };
   }
 
   const asset = pickAsset(facts.release.assets, facts.installKind, facts.arch);

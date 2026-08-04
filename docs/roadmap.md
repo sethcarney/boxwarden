@@ -168,18 +168,30 @@ What is still missing is everything about _trusting_ the result:
 - **Windows signing.** Unsigned, so SmartScreen interposes.
 - **ASAR integrity.** `asar: true` is on; the integrity fuse that would detect
   a tampered archive is not.
-- **Auto-update.** boxwarden now **checks** — once a day, against
-  `/releases/latest` — and tells the user what to download and how to install
-  it for the platform and install kind they are on (`src/models/update.ts`,
-  `src/main/update/`). What it does not do is install anything, and
-  that half is blocked on the item above rather than on effort:
-  `electron-updater` swaps the application in place and verifies a code
-  signature to decide it is safe to, and there is no signature to verify.
-  Squirrel.Mac refuses an unsigned swap outright; everywhere else it would
-  replace a binary on the user's disk on the strength of an unverifiable
-  download, which is worse than the manual install it replaces. Sign first,
-  then wire it up — at which point `latest*.yml`, already attached to every
-  release, is what it reads.
+- **Auto-update.** boxwarden **checks** once a day against `/releases/latest`,
+  and now also **fetches and verifies** the artefact for the machine it is on:
+  SHA-256 against the release's `sha256sums.txt`, then the cosign bundle beside
+  the artefact against a TUF-fetched Sigstore trust root, with the certificate
+  pinned to `.github/workflows/release.yml@refs/tags/<tag>`
+  (`src/models/download.ts`, `src/main/update/`). Both checks are required; a
+  release missing either file is refused rather than downloaded with a weaker
+  one.
+
+  What it still does not do is swap the application bundle on macOS or Windows,
+  and that half remains blocked on the item above rather than on effort:
+  `electron-updater` verifies a CODE signature to decide the swap is safe, and
+  there is none. Squirrel.Mac refuses an unsigned swap outright. So the verified
+  file is handed to the OS installer instead, and the user finishes the install.
+
+  **The AppImage is the exception, and it updates itself in place today** —
+  replaced through a same-directory rename and relaunched — because an AppImage
+  is one file the user owns, with no installer to hand it to and no package
+  manager to offend. That needed no certificate and is done.
+
+  When there IS a certificate, the remaining work is macOS and Windows in-place
+  swaps, at which point `latest*.yml` — already attached to every release — is
+  what `electron-updater` would read.
+
 - **arm64 anything.** Every target builds both architectures and only the x64
   Linux build has ever been launched.
 

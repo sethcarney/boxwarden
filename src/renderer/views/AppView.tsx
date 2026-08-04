@@ -83,6 +83,9 @@ export function AppView({ vm }: Props) {
             busy={update.busy}
             onDismiss={update.dismiss}
             onDisable={update.disable}
+            onDownload={update.download}
+            onCancelDownload={update.cancelDownload}
+            onInstall={update.install}
           />
         )}
 

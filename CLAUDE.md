@@ -138,7 +138,7 @@ Four conventions hold this together:
   is an arm of `UpdateStatus` instead, so it renders where the answer would
   have.
 
-**The IPC surface is eighteen narrow verbs** — see `src/shared/ipc.ts` — all
+**The IPC surface is twenty-one narrow verbs** — see `src/shared/ipc.ts` — all
 declared as a `BoxwardenApi` interface consumed by the renderer without
 importing Electron. They fall into three groups by cadence:
 
@@ -150,7 +150,8 @@ importing Electron. They fall into three groups by cadence:
   `getStartupCommands`, `setStartupCommand`.
 - **Container processes, polled every 15s**: `claudeStatus`.
 - **The release check, asked hourly and answered from GitHub once a day**:
-  `updateStatus`, `dismissUpdate`, `setUpdateChecks`.
+  `updateStatus`, `dismissUpdate`, `setUpdateChecks`, `downloadUpdate`,
+  `cancelUpdateDownload`, `installUpdate`.
 
 Prefer looping over the existing verbs (e.g. `Promise.allSettled` for a compose
 group's "Start all") over adding new channels. The exceptions so far all earned
@@ -160,9 +161,13 @@ project verbs and `claudeStatus` are a _different cadence_ — folding
 `scanProjects` into `DiscoverySnapshot` would make the 5s poll pay for a
 filesystem walk sixty times an hour, and folding in `claudeStatus` would
 multiply its Docker traffic by the number of live containers. The update verbs
-clear two of the bars between them: `updateStatus` is the slowest cadence in
-the app (an HTTP request, daily), and the other two write preferences that
-outlive the call. **A new verb has to clear one of those three bars.** Lifecycle actions return failure as
+clear all three between them: `updateStatus` is the slowest cadence in the app
+(an HTTP request, daily); `dismissUpdate` and `setUpdateChecks` write
+preferences that outlive the call; and `downloadUpdate`, `cancelUpdateDownload`
+and `installUpdate` do something no combination of the others can, because a
+sandboxed renderer has no filesystem — and because the decision that a download
+is trustworthy must not live on the side of the bridge that renders network
+data. **A new verb has to clear one of those three bars.** Lifecycle actions return failure as
 `{ ok: false, message }` data rather than throwing — a thrown main-process
 error crosses IPC as an opaque string with the real message buried.
 
@@ -176,7 +181,13 @@ is not in the last scan.
 `addProjectRoot` takes **no argument** on purpose: the renderer can ask for the
 folder picker, and cannot say which folder the answer is. `dismissUpdate` is
 the same shape — the renderer says the user dismissed something, and the main
-process decides which version that was from its own last status.
+process decides which version that was from its own last status. So are the
+three download verbs, and they are the sharpest case of the rule: one fetches a
+file from the internet and one opens it with the operating system, and neither
+takes a URL, a filename or a version. The plan is built in the main process
+from a release payload whose every link was already checked against this
+repository, and the path handed to the OS is the single one that passed both the
+checksum and the signature.
 
 ### Two path spaces — the most error-prone part of this app
 
@@ -432,15 +443,59 @@ the one module that reaches the network, and it is the only one that imports
 Electron; `src/main/update/check.ts` holds the clock and the cache, takes the
 fetch as a parameter, and therefore has tests.
 
-**It does not install anything, and that is the design, not a stage of it.**
-`electron-updater` swaps the app in place and verifies a code signature to
-decide that is safe; these builds are unsigned, so there is nothing to verify.
-Squirrel.Mac refuses an unsigned swap outright, and everywhere else it would
-replace a binary on the user's disk on the strength of an unverifiable
-download. Commands are shown, never run — the same rule as the setup advice and
-`devcontainer up`.
+**It does not swap the application bundle, and that is the design, not a stage
+of it.** `electron-updater` does exactly that and verifies a CODE signature to
+decide it is safe; these builds have none — cosign is a different thing and does
+not substitute — so Squirrel.Mac refuses the swap outright and everywhere else
+it would overwrite a binary the OS never checked.
 
-Five things this feature breaks on if they are forgotten:
+### Fetching and verifying the download
+
+What it DOES do is the half that needs no certificate, in the pure
+`src/models/download.ts` plus shells in `src/main/update/`:
+
+1. **Plan** — resolve the artefact, its `<name>.sigstore.json` and
+   `sha256sums.txt` out of the release. All three are release ASSETS, held to
+   the same `RELEASE_URL_PREFIX` rule as everything else out of that payload,
+   never URLs built by concatenation.
+2. **Fetch** — stream to `userData/updates`, capped, with progress.
+3. **Verify** — SHA-256 against the manifest, then the Sigstore bundle against a
+   TUF-fetched trust root.
+4. **Apply** — `shell.openPath` and let the OS install. Except the AppImage.
+
+Six rules hold this together:
+
+- **A missing signature is a REFUSAL, never a downgrade to checksum-only.**
+  Otherwise an attacker who can add an asset to a release disables the signature
+  check by omitting one. Same for a missing `sha256sums.txt`.
+- **The certificate identity is the point.** Any workflow on GitHub can get a
+  cert from the same issuer, so a bundle that merely verifies proves nothing.
+  `signerIdentity` pins the SAN to
+  `.github/workflows/release.yml@refs/tags/<tag>` and the issuer to GitHub's
+  Actions token service. **That string is a contract with `release.yml`** —
+  renaming the workflow, or moving the signing step into a reusable one, makes
+  every installed copy refuse the next release.
+- **`safeAssetFileName` is an allow-list and refuses rather than sanitises.** The
+  name arrives over the network and becomes a path. Rewriting a hostile name
+  into a safe one produces a file that no longer matches its line in
+  `sha256sums.txt`, so the failure would surface as a bogus integrity error.
+  Spaces ARE allowed — `boxwarden Setup 1.2.0.exe` is real, and nothing on this
+  path goes through a shell — but the first and last characters must be
+  alphanumeric, which is what stops the trailing dot or space Windows strips
+  _after_ validation.
+- **`verifying` is a state of its own, and nothing is installable during it.**
+  That is the window in which the whole file is on disk and unvouched-for. A
+  file boxwarden wrote itself carries no `com.apple.quarantine` attribute, so
+  Gatekeeper's first-launch check does not fire — **this verification is the
+  only gate, not a second opinion.**
+- **The AppImage is the one in-place update, and only via a same-directory
+  rename.** An AppImage is one file the user owns; a copy interrupted halfway
+  would leave them with a truncated binary and no working boxwarden.
+- **The trust root comes from TUF, not a vendored JSON.** Sigstore rotates keys;
+  a pinned snapshot would silently turn every download into a failure on some
+  Tuesday, and an update mechanism that disables itself is worse than none.
+
+Five things the CHECK breaks on if they are forgotten:
 
 - **A prerelease sorts BELOW the release it leads to.** Backwards, and everyone
   on the final 1.2.0 is prompted to "update" to the candidate it replaced.
@@ -463,7 +518,10 @@ Five things this feature breaks on if they are forgotten:
 
 The check is skipped entirely when `app.isPackaged` is false, so `bun run dev`
 and CI never contact GitHub — which also means `BOXWARDEN_FAKE_UPDATE=1` is the
-only way to see the banner until a release exists.
+only way to see the banner until a release exists. The fixture drives the real
+`planDownload` over a fabricated release that carries its signature and checksum
+assets, and simulates the fetch, so the progress bar and the Install button can
+be worked on without a network — but it will not install anything.
 
 ### Layout and theme
 

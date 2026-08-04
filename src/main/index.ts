@@ -13,6 +13,7 @@ import { DockerodeBackend } from './docker/client.js';
 import { FakeDockerBackend } from './docker/fake.js';
 import { shutdownWslServices } from './docker/wsl.js';
 import { UpdateChecker } from './update/check.js';
+import { UpdateDownloader } from './update/download.js';
 import { fakeUpdatesFromEnv } from './update/fake.js';
 import { fetchLatestRelease } from './update/github.js';
 import { loadPreferences, savePreferences } from './preferences.js';
@@ -309,6 +310,33 @@ void app.whenReady().then(async () => {
     installKind: detectInstallKind(process.platform, process.env, process.execPath),
     arch: process.arch,
   };
+  /**
+   * The bytes half: fetch the artefact, verify it, hand it to the OS.
+   *
+   * Both paths live under `userData` rather than the system temp directory,
+   * and for two different reasons. The download has to survive a reboot — a
+   * verified installer the user has not run yet is not rubbish — and a temp
+   * directory is precisely the place other processes are entitled to write,
+   * which is the wrong neighbourhood for a file this app will later open.
+   * TUF's cache is separate from it so that sweeping old downloads can never
+   * take the trust root with it.
+   */
+  const downloads = new UpdateDownloader({
+    ...updateIdentity,
+    directory: join(app.getPath('userData'), 'updates'),
+    trustCachePath: join(app.getPath('userData'), 'sigstore'),
+    now: () => new Date(),
+    // Nothing to do: the renderer POLLS `updateStatus`, which reads the
+    // downloader's state directly, so a push would be a second delivery of
+    // something already arriving. The hook exists because a future
+    // `webContents.send` would go here, and a downloader that could not
+    // announce a change would have to be rewritten to add one.
+    onChange: () => undefined,
+    relaunch: () => {
+      app.relaunch();
+    },
+  });
+
   const updates =
     // BOXWARDEN_FAKE_UPDATE=1 serves a release that does not exist, through the
     // real folding — the counterpart to BOXWARDEN_FAKE_DOCKER, and for the same
@@ -324,7 +352,13 @@ void app.whenReady().then(async () => {
       persist: (next) => {
         persist({ ...preferences, updates: next });
       },
+      downloads,
     });
+
+  // At launch, not at exit: the sweep that runs on quit is the one that does
+  // not run when the app is killed, and leaving installers behind is the
+  // failure this whole path exists to avoid.
+  void downloads.sweep();
 
   registerIpcHandlers({
     backend,

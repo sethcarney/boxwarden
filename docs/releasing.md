@@ -107,12 +107,19 @@ retro-signed — the certificate is bound to the workflow run.
   cannot, which Ubuntu 24.04 needs. The `.AppImage` is for everywhere else:
   `chmod +x` and run it.
 - **Windows** — run the `Setup .exe`. Per-user, no admin rights. The build is
-  unsigned, so SmartScreen interposes: _More info_ → _Run anyway_.
+  not code-signed, so SmartScreen interposes: _More info_ → _Run anyway_.
 
-boxwarden checks for a newer release once a day and tells you how to install
-it. It does not install anything itself — the builds are unsigned, so it has
-no way to verify what it would be replacing itself with. Installing a later
-release over the top is the update.
+boxwarden checks for a newer release once a day. When there is one it offers to
+**fetch and verify** the artefact for the machine it is running on — against
+`sha256sums.txt` and the artefact's `.sigstore.json` bundle, whose certificate
+has to name this repository's release workflow at that release's tag — and then
+hands the verified file to the operating system's installer. It does not swap
+its own application bundle: that needs a CODE signature, which is the thing
+these builds still do not have. The AppImage is the one exception, because an
+AppImage is a single file the user owns and replacing it IS the install.
+
+A release missing its signature or its checksum manifest is refused rather than
+downloaded, and the browser link stays on screen throughout.
 
 ### Verify what you downloaded
 

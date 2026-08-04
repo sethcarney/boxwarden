@@ -353,36 +353,56 @@ describe('updatePanel', () => {
     expect(panel?.headline).toBe('boxwarden 1.2.0 is available');
     expect(panel?.detail).toContain('You are running 1.1.0.');
     expect(panel?.detail).toContain('published 2 days ago');
-    expect(panel?.download).toEqual({
+    expect(panel?.link).toEqual({
       label: 'boxwarden_1.2.0_amd64.deb (91 MB)',
       url: 'https://github.com/sethcarney/boxwarden/releases/download/v1.2.0/boxwarden_1.2.0_amd64.deb',
     });
   });
 
   /**
-   * The banner promises nothing the app can deliver. boxwarden ships unsigned,
-   * so it cannot swap its own binary — and a user who expects it to and finds
-   * it did not will simply stop reading the banner.
+   * The banner promises exactly what the app can deliver, which is now more
+   * than it was and still not everything: boxwarden fetches and verifies, and
+   * the user installs. It must not say "unsigned" — the artefacts ARE signed
+   * with cosign, which is what makes the verification possible — and it must
+   * not imply the app installs itself, because a user who expects that and
+   * finds otherwise stops reading the banner.
    */
-  it('says the app does not update itself', () => {
-    expect(updatePanel(updateAvailable(), NOW, false)?.detail).toContain(
-      'boxwarden does not update itself',
-    );
+  it('offers to fetch and verify, and still leaves the install to the user', () => {
+    const detail = updatePanel(updateAvailable(), NOW, false)?.detail ?? '';
+    expect(detail).toContain('fetch and verify');
+    expect(detail).toContain('still your click');
+    expect(detail).not.toContain('unsigned');
   });
 
   it('is nothing at all for every arm that is not an available update', () => {
     expect(
-      updatePanel({ currentVersion: '1.1.0', outcome: { kind: 'current' } }, NOW, false),
-    ).toBeUndefined();
-    expect(
-      updatePanel({ currentVersion: '1.1.0', outcome: { kind: 'unchecked' } }, NOW, false),
-    ).toBeUndefined();
-    expect(
-      updatePanel({ currentVersion: '1.1.0', outcome: { kind: 'disabled' } }, NOW, false),
+      updatePanel(
+        { currentVersion: '1.1.0', download: { kind: 'idle' }, outcome: { kind: 'current' } },
+        NOW,
+        false,
+      ),
     ).toBeUndefined();
     expect(
       updatePanel(
-        { currentVersion: '1.1.0', outcome: { kind: 'failed', message: 'offline' } },
+        { currentVersion: '1.1.0', download: { kind: 'idle' }, outcome: { kind: 'unchecked' } },
+        NOW,
+        false,
+      ),
+    ).toBeUndefined();
+    expect(
+      updatePanel(
+        { currentVersion: '1.1.0', download: { kind: 'idle' }, outcome: { kind: 'disabled' } },
+        NOW,
+        false,
+      ),
+    ).toBeUndefined();
+    expect(
+      updatePanel(
+        {
+          currentVersion: '1.1.0',
+          download: { kind: 'idle' },
+          outcome: { kind: 'failed', message: 'offline' },
+        },
         NOW,
         false,
       ),
@@ -408,7 +428,7 @@ describe('updatePanel', () => {
     >;
     const panel = updatePanel({ ...status, outcome }, NOW, false);
 
-    expect(panel?.download).toBeUndefined();
+    expect(panel?.link).toBeUndefined();
     expect(panel?.releaseUrl).toBe('https://github.com/sethcarney/boxwarden/releases/tag/v1.2.0');
   });
 });
@@ -418,7 +438,10 @@ describe('updateSummary', () => {
 
   it('always names the running version — the app says it nowhere else', () => {
     expect(
-      updateSummary({ currentVersion: '1.1.0', outcome: { kind: 'unchecked' } }, NOW).label,
+      updateSummary(
+        { currentVersion: '1.1.0', download: { kind: 'idle' }, outcome: { kind: 'unchecked' } },
+        NOW,
+      ).label,
     ).toBe('boxwarden 1.1.0');
   });
 
@@ -430,6 +453,7 @@ describe('updateSummary', () => {
     const failed = updateSummary(
       {
         currentVersion: '1.1.0',
+        download: { kind: 'idle' },
         outcome: { kind: 'failed', message: 'GitHub answered HTTP 500.' },
       },
       NOW,
@@ -440,7 +464,10 @@ describe('updateSummary', () => {
   });
 
   it('says when checks are off, so the setting can be found again', () => {
-    const off = updateSummary({ currentVersion: '1.1.0', outcome: { kind: 'disabled' } }, NOW);
+    const off = updateSummary(
+      { currentVersion: '1.1.0', download: { kind: 'idle' }, outcome: { kind: 'disabled' } },
+      NOW,
+    );
     expect(off.label).toBe('boxwarden 1.1.0 · update checks off');
     expect(off.title).toContain('turn the daily check back on');
   });
@@ -449,6 +476,7 @@ describe('updateSummary', () => {
     const current = updateSummary(
       {
         currentVersion: '1.1.0',
+        download: { kind: 'idle' },
         checkedAt: new Date('2026-08-03T09:00:00Z'),
         outcome: { kind: 'current' },
       },
@@ -473,6 +501,7 @@ describe('updateSummary', () => {
     const dev = updateSummary(
       {
         currentVersion: '0.0.0',
+        download: { kind: 'idle' },
         outcome: { kind: 'unsupported', reason: 'This is a development build.' },
       },
       NOW,

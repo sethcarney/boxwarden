@@ -128,6 +128,30 @@ export {
 } from './update.js';
 
 export type {
+  ApplyKind,
+  DownloadEntry,
+  DownloadPlan,
+  DownloadProgress,
+  DownloadRefusal,
+  SignerIdentity,
+  UpdateDownload,
+} from './download.js';
+export {
+  CHECKSUMS_ASSET_NAME,
+  DOWNLOAD_RETENTION_MS,
+  MAX_DOWNLOAD_BYTES,
+  SIGNING_ISSUER,
+  applyKindFor,
+  isRefusal,
+  parseChecksums,
+  planDownload,
+  safeAssetFileName,
+  signatureAssetName,
+  signerIdentity,
+  staleDownloads,
+} from './download.js';
+
+export type {
   ContainerCli,
   ContainerCliKind,
   KnownTerminalId,

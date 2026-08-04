@@ -569,11 +569,37 @@ Docker call, the same rule as `openInEditor` taking an id rather than a
 
 Once a day the main process asks GitHub for `/releases/latest`, compares it
 against `app.getVersion()`, and — if there is something newer — says which file
-this machine needs and how to install it. It does not download or install
-anything, and that is the design rather than a stage of it: `electron-updater`
-swaps the application in place and verifies a code signature to decide that is
-safe, and these builds are unsigned. See
+this machine needs and offers to fetch it.
+
+What it will not do is swap the application in place. `electron-updater` does
+exactly that and verifies a CODE signature to decide it is safe; these builds
+have none, so Squirrel.Mac would refuse the swap and everywhere else it would
+overwrite a binary the OS never checked. See
 [roadmap](./roadmap.md#6-packaging--signing-notarisation-updates).
+
+What it does instead is the half that needs no certificate, and it is a
+separate pure module — `src/models/download.ts`:
+
+1. **Plan.** Resolve the artefact, its `<name>.sigstore.json` bundle and
+   `sha256sums.txt` out of the release. Every one is a release ASSET held to the
+   same `RELEASE_URL_PREFIX` rule, never a URL built by string concatenation, and
+   the artefact's name has to survive `safeAssetFileName` before anything is
+   written. A release missing any of the three is REFUSED — not downgraded to a
+   weaker check, because an attacker who can add an asset could then disable the
+   signature check by omitting one.
+2. **Fetch.** Stream to `userData/updates`, capped, with progress.
+3. **Verify.** SHA-256 against the manifest, then the Sigstore bundle against a
+   TUF-fetched trust root, with a policy pinning the certificate to
+   `.github/workflows/release.yml@refs/tags/<tag>` and the GitHub Actions OIDC
+   issuer. Both are required; neither degrades to a warning.
+4. **Apply.** `shell.openPath` for the dmg, the NSIS installer and the deb — the
+   OS installs, boxwarden does not. For an AppImage, and only an AppImage,
+   replace the file at `$APPIMAGE` through a same-directory rename and relaunch.
+
+The reason the verification is strict rather than advisory: a file boxwarden
+writes itself carries no `com.apple.quarantine` attribute, so Gatekeeper's
+first-launch check does not fire the way it would on a browser download. There
+is no second gate behind this one.
 
 The same shell-around-a-core split as everything else. `src/models/update.ts`
 is pure and holds all of it — semver precedence, the GitHub payload parser, the

@@ -241,9 +241,21 @@ and install kind you are on and the command to install it — `sudo apt install
 ./boxwarden_<version>_amd64.deb` for the deb, `chmod +x` for the AppImage, drag
 to Applications for the dmg, run the installer for Windows.
 
-It does **not** install anything itself, and it never will while the builds are
-unsigned: an app that replaces its own binary with a download it cannot verify
-is a worse deal than one that tells you to do it yourself.
+It can also **fetch the file for you and check it**: the download is verified
+against the release's `sha256sums.txt` and against the cosign signature beside
+it, whose certificate has to name this repository's release workflow at that
+exact tag. Only then does the Install button appear, and all it does is hand the
+file to your operating system's installer — you still complete the install.
+
+What it does **not** do is replace its own application bundle, and it will not
+while the builds carry no CODE signature: Squirrel.Mac refuses an unsigned swap
+outright, and everywhere else it would mean overwriting a binary on the strength
+of a download the OS never checked. The one exception is the AppImage, which is
+a single file you own — there boxwarden replaces the file and relaunches, after
+the same two checks.
+
+If a release is missing its signature or its checksum manifest, boxwarden
+refuses to download it and points you at the release page instead.
 
 Two controls, both in the footer line that names your version:
 

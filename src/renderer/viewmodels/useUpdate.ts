@@ -15,8 +15,24 @@ import { useMounted } from './useMounted.js';
  */
 export const UPDATE_INTERVAL_MS = 60 * 60 * 1000;
 
+/**
+ * How often the renderer asks WHILE a download is running.
+ *
+ * A second cadence for the same verb, because the same call answers two
+ * questions at very different speeds: "has anybody published anything" changes
+ * daily, and "how many bytes have arrived" changes constantly. The fast one
+ * costs nothing extra — `updateStatus(false)` inside the daily window reads
+ * the main process's own memory and never touches the network — so this is a
+ * progress bar that moves, not a check that runs seven times a minute.
+ */
+export const DOWNLOAD_INTERVAL_MS = 500;
+
 /** Before the first answer. The version fills in as soon as one arrives. */
-const INITIAL: UpdateStatus = { currentVersion: '', outcome: { kind: 'unchecked' } };
+const INITIAL: UpdateStatus = {
+  currentVersion: '',
+  download: { kind: 'idle' },
+  outcome: { kind: 'unchecked' },
+};
 
 export interface UpdateViewModel {
   readonly status: UpdateStatus;
@@ -34,6 +50,15 @@ export interface UpdateViewModel {
   readonly dismiss: () => void;
   /** "Stop checking" — persisted, and reversible from the footer. */
   readonly disable: () => void;
+  /** Fetch and verify the offered artefact. Takes nothing; see `BoxwardenApi`. */
+  readonly download: () => void;
+  readonly cancelDownload: () => void;
+  /**
+   * Hand the verified file to the OS installer. On most platforms this is the
+   * last thing the app does, so it reports only a failure — a success has
+   * nothing left to render.
+   */
+  readonly install: () => void;
 }
 
 /**
@@ -58,6 +83,7 @@ export function useUpdate(
   now: number,
   /** A parameter for the same reason `useClaudeStatus` takes one: tests. */
   intervalMs: number = UPDATE_INTERVAL_MS,
+  downloadIntervalMs: number = DOWNLOAD_INTERVAL_MS,
 ): UpdateViewModel {
   const [status, setStatus] = useState<UpdateStatus>(INITIAL);
   const [busy, setBusy] = useState(false);
@@ -97,6 +123,16 @@ export function useUpdate(
   const poll = useRef(run);
   poll.current = run;
 
+  /**
+   * True while bytes are moving or being checked.
+   *
+   * `verifying` is in here as well as `fetching` because the check runs over a
+   * hundred megabytes and takes a visible moment: a poll that dropped back to
+   * hourly the instant the last byte landed would leave "verifying…" on screen
+   * until the user clicked something.
+   */
+  const active = status.download.kind === 'fetching' || status.download.kind === 'verifying';
+
   useEffect(() => {
     // Asked once on open. The main process answers from its own memory unless
     // a day has passed, so this is not a check on every launch — it is how the
@@ -107,13 +143,16 @@ export function useUpdate(
     // exists to prevent.
     void poll.current((bridge) => bridge.updateStatus(false));
 
-    const timer = setInterval(() => {
-      void poll.current((bridge) => bridge.updateStatus(false));
-    }, intervalMs);
+    const timer = setInterval(
+      () => {
+        void poll.current((bridge) => bridge.updateStatus(false));
+      },
+      active ? downloadIntervalMs : intervalMs,
+    );
     return () => {
       clearInterval(timer);
     };
-  }, [api, intervalMs]);
+  }, [api, intervalMs, downloadIntervalMs, active]);
 
   const act = useCallback(() => {
     setRevealed(true);
@@ -134,6 +173,56 @@ export function useUpdate(
     void run((bridge) => bridge.setUpdateChecks(false));
   }, [run]);
 
+  const download = useCallback(() => {
+    void run((bridge) => bridge.downloadUpdate());
+  }, [run]);
+
+  const cancelDownload = useCallback(() => {
+    void run((bridge) => bridge.cancelUpdateDownload());
+  }, [run]);
+
+  /**
+   * Install, and report only a failure.
+   *
+   * Not routed through `run`, because `run` expects a status back and this
+   * verb answers an `ActionResult` — for a good reason: on macOS, Windows and
+   * the AppImage the app quits milliseconds later, so there is no status to
+   * return and no renderer left to show it. A refusal, though, means nothing
+   * happened at all, and that has to land somewhere the user is looking. It
+   * lands in the download's own `failed` arm, next to the button.
+   */
+  const install = useCallback(() => {
+    if (api === undefined) return;
+    setBusy(true);
+    void (async () => {
+      try {
+        const result = await api.installUpdate();
+        if (!result.ok && mounted.current) {
+          setStatus((current) => ({
+            ...current,
+            download: {
+              kind: 'failed',
+              version:
+                current.download.kind === 'idle'
+                  ? current.currentVersion
+                  : current.download.version,
+              message: result.message,
+            },
+          }));
+        }
+      } catch (error) {
+        if (mounted.current) {
+          setStatus((current) => ({
+            ...current,
+            outcome: { kind: 'failed', message: errorMessage(error) },
+          }));
+        }
+      } finally {
+        if (mounted.current) setBusy(false);
+      }
+    })();
+  }, [api, mounted]);
+
   return {
     status,
     panel: updatePanel(status, now, revealed),
@@ -142,5 +231,8 @@ export function useUpdate(
     act,
     dismiss,
     disable,
+    download,
+    cancelDownload,
+    install,
   };
 }

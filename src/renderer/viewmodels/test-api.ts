@@ -109,6 +109,9 @@ export interface FakeApi extends BoxwardenApi {
   readonly updateStatus: Mock<(force: boolean) => Promise<UpdateStatus>>;
   readonly dismissUpdate: Mock<() => Promise<UpdateStatus>>;
   readonly setUpdateChecks: Mock<(enabled: boolean) => Promise<UpdateStatus>>;
+  readonly downloadUpdate: Mock<() => Promise<UpdateStatus>>;
+  readonly cancelUpdateDownload: Mock<() => Promise<UpdateStatus>>;
+  readonly installUpdate: Mock<() => Promise<ActionResult>>;
 }
 
 /**
@@ -123,6 +126,7 @@ export function updateAvailable(overrides: Partial<UpdateStatus> = {}): UpdateSt
   return {
     currentVersion: '1.1.0',
     checkedAt: new Date('2026-08-01T12:00:00Z'),
+    download: { kind: 'idle' },
     outcome: {
       kind: 'available',
       release: {
@@ -177,6 +181,7 @@ export function fakeApi(options: FakeApiOptions = {}): FakeApi {
   const update: UpdateStatus = options.update ?? {
     currentVersion: '1.1.0',
     checkedAt: new Date('2026-08-01T12:00:00Z'),
+    download: { kind: 'idle' },
     outcome: { kind: 'current' },
   };
 
@@ -221,5 +226,12 @@ export function fakeApi(options: FakeApiOptions = {}): FakeApi {
     setUpdateChecks: vi.fn<(enabled: boolean) => Promise<UpdateStatus>>(() =>
       Promise.resolve(update),
     ),
+    // All three answer with the SAME status the poll does, so a test that
+    // wants to see a download progress has to say so with `options.update`.
+    // A fake that invented a `fetching` state would let a ViewModel test pass
+    // against a transition the main process never makes.
+    downloadUpdate: vi.fn<() => Promise<UpdateStatus>>(() => Promise.resolve(update)),
+    cancelUpdateDownload: vi.fn<() => Promise<UpdateStatus>>(() => Promise.resolve(update)),
+    installUpdate: vi.fn<() => Promise<ActionResult>>(() => Promise.resolve({ ok: true })),
   };
 }
