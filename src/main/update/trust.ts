@@ -1,6 +1,7 @@
 import { getTrustedRoot } from '@sigstore/tuf';
 import { toTrustMaterial } from '@sigstore/verify';
 import type { TrustMaterial } from '@sigstore/verify';
+import { verificationAvailable } from '../crypto-compat.js';
 
 /**
  * Who boxwarden is willing to believe signed something.
@@ -94,6 +95,19 @@ async function load(options: TrustOptions): Promise<TrustMaterial> {
       // same question without a rebuild.
       console.error('[boxwarden] Sigstore trust root: refresh failed:', error);
       console.error('[boxwarden] Sigstore trust root: cached fallback failed:', cachedError);
+
+      // "We could not reach it" and "this build cannot check signatures at all"
+      // are different findings, and until this check existed they were reported
+      // as the same one — which sent a whole afternoon after DNS, proxies and
+      // certificates while the fault was in the runtime's crypto. A build whose
+      // primitive is broken fails identically whatever the network is doing, so
+      // it has to be asked separately. See src/main/crypto-compat.ts.
+      if (!verificationAvailable()) {
+        throw new Error(
+          'This build of boxwarden cannot check signatures: its runtime refuses to verify without being told which digest to use, so no download can be vouched for. The release page has the file and the commands to verify it by hand.',
+          { cause: cachedError },
+        );
+      }
       // Deliberately its own sentence, and deliberately not phrased as a
       // failed verification. "We could not check this" and "this is not what
       // it claims to be" are different findings, and merging them would tell

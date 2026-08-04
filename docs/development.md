@@ -253,7 +253,16 @@ cause nowhere to go, because the app is a GUI process — on Windows with no
 attached console at all — and nothing between `trust.ts` and the renderer reads
 the error's `cause`.
 
-Two things answer it:
+**First, though: is it the runtime?** Electron links BoringSSL, which — unlike
+Node's OpenSSL — will not infer a digest for an EC key, and every verification
+in this app goes through the digest-less `crypto.verify(undefined, …)` that
+`@tufjs/models` and `@sigstore/core` both make. `src/main/crypto-compat.ts`
+compensates for that and is installed before anything else in `index.ts`; the
+script below tests the primitive before it tests the network, so a runtime that
+cannot verify at all says so in the first three lines rather than looking like
+a blocked CDN.
+
+Two things answer the rest:
 
 ```bash
 bun run check:sigstore     # or: node scripts/check-sigstore.mjs --cache <path>
