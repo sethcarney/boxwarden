@@ -3,6 +3,7 @@ import type { TerminalTarget } from '../../models/index.js';
 import { asContainerPath } from '../../models/index.js';
 import {
   appleScriptString,
+  LOGIN_BOOTSTRAP,
   containerExecArgv,
   containerShellScript,
   daemonUrl,
@@ -93,23 +94,25 @@ describe('escapeForWindowsTerminal', () => {
 });
 
 describe('containerShellScript', () => {
-  it('prefers bash and falls back to sh, because dash reads as a broken terminal', () => {
-    const script = containerShellScript();
-    expect(script).toContain('command -v bash');
-    expect(script).toContain('exec bash -l');
-    expect(script).toContain('exec sh -l');
+  /**
+   * INTERACTIVE, not login: `LOGIN_BOOTSTRAP` already ran this script under
+   * `bash -lc`, so the profile is sourced once and what remains for the shell
+   * the developer types into is ~/.bashrc. `$BASH` lands in whichever shell the
+   * bootstrap chose without asking twice.
+   */
+  it('hands over to an interactive shell, the one the bootstrap already chose', () => {
+    expect(containerShellScript()).toContain('exec "${BASH:-sh}" -i');
   });
 
   it('execs rather than nesting, so one Ctrl-D closes the window', () => {
-    expect(containerShellScript()).not.toMatch(/\bbash -l\s*$/);
-    expect(containerShellScript({ startupCommand: 'echo hi' })).toContain('exec bash -l');
+    expect(containerShellScript({ startupCommand: 'echo hi' })).toMatch(/^exec /m);
   });
 
   it('runs the startup command before handing over to the interactive shell', () => {
     const script = containerShellScript({ startupCommand: 'bun run dev' });
     const startup = script.indexOf('bun run dev');
     expect(startup).toBeGreaterThanOrEqual(0);
-    expect(startup).toBeLessThan(script.indexOf('exec bash -l'));
+    expect(startup).toBeLessThan(script.indexOf('exec "${BASH:-sh}"'));
   });
 
   it('does not background the startup command', () => {
@@ -141,7 +144,7 @@ describe('containerShellScript', () => {
 
     expect(script).toContain(`cd '/workspaces/webapp'`);
     expect(script.indexOf('cd ')).toBeLessThan(script.indexOf('bun run dev'));
-    expect(script.indexOf('bun run dev')).toBeLessThan(script.indexOf('exec bash -l'));
+    expect(script.indexOf('bun run dev')).toBeLessThan(script.indexOf('exec "${BASH:-sh}"'));
   });
 
   it('says nothing about a folder the container did not name', () => {
@@ -161,7 +164,7 @@ describe('containerShellScript', () => {
     const script = containerShellScript({ workspaceFolder: asContainerPath('/workspaces/gone') });
 
     expect(script).toContain('||');
-    expect(script).toContain('exec bash -l');
+    expect(script).toContain('exec "${BASH:-sh}" -i');
     expect(script).toMatch(/boxwarden: could not enter/);
   });
 
@@ -240,7 +243,8 @@ describe('containerExecArgv', () => {
       'vscode',
       CONTAINER_ID,
       'sh',
-      '-lc',
+      '-c',
+      LOGIN_BOOTSTRAP,
       'exec sh -l',
     ]);
   });
@@ -300,7 +304,8 @@ describe('containerExecArgv', () => {
       '-it',
       CONTAINER_ID,
       'sh',
-      '-lc',
+      '-c',
+      LOGIN_BOOTSTRAP,
       'exec sh -l',
     ]);
   });
@@ -323,7 +328,8 @@ describe('containerExecArgv', () => {
       '-it',
       CONTAINER_ID,
       'sh',
-      '-lc',
+      '-c',
+      LOGIN_BOOTSTRAP,
       'exec sh -l',
     ]);
   });
@@ -354,7 +360,8 @@ describe('containerExecArgv', () => {
       '-it',
       CONTAINER_ID,
       'sh',
-      '-lc',
+      '-c',
+      LOGIN_BOOTSTRAP,
       'exec sh -l',
     ]);
   });
@@ -368,6 +375,61 @@ describe('containerExecArgv', () => {
     // Not split, not escaped, not interpreted: one element, passed through.
     expect(argv.filter((part) => part.includes('rm -rf $HOME'))).toHaveLength(1);
     expect(argv.at(-1)).toContain(HOSTILE);
+  });
+});
+
+describe('LOGIN_BOOTSTRAP', () => {
+  const cli = { kind: 'docker', binaryPath: '/usr/bin/docker' } as const;
+
+  /**
+   * THE BUG. `sh -lc` made a LOGIN shell out of /bin/sh, which on every
+   * Debian-based dev container image is dash, so dash sourced profile files
+   * written for bash. dash's `echo` interprets backslash escapes where bash's
+   * does not, so an ordinary prompt definition was emitted as raw escape
+   * sequences and a bell before the real shell ever started.
+   */
+  it('never makes a login shell out of sh, which is dash', () => {
+    const argv = containerExecArgv({ cli, containerId: CONTAINER_ID, script: 'exec sh -l' });
+
+    // The literal that caused it. `sh` is invoked, but never as a login shell.
+    expect(argv).not.toContain('-lc');
+    expect(argv[argv.indexOf('sh') + 1]).toBe('-c');
+  });
+
+  it('runs the script under a login BASH when the container has one', () => {
+    expect(LOGIN_BOOTSTRAP).toContain('command -v bash');
+    expect(LOGIN_BOOTSTRAP).toContain('exec bash -lc "$0"');
+  });
+
+  /**
+   * The fallback is the old behaviour, and it is safe precisely where it
+   * applies: on an image with no bash, dash IS the shell those profile files
+   * were written for.
+   */
+  it('still gives a login shell to an image that has no bash', () => {
+    expect(LOGIN_BOOTSTRAP).toContain('exec sh -lc "$0"');
+  });
+
+  /**
+   * The script rides as the operand that POSIX turns into `$0`, so it stays
+   * its own argv element. That is what keeps a user-authored startup command
+   * from needing a second layer of quoting — the layer most likely to be got
+   * wrong.
+   */
+  it('passes the script as its own argument rather than interpolating it', () => {
+    const script = containerShellScript({ startupCommand: HOSTILE });
+    const argv = containerExecArgv({ cli, containerId: CONTAINER_ID, script });
+
+    expect(argv.at(-1)).toBe(script);
+    expect(argv.at(-2)).toBe(LOGIN_BOOTSTRAP);
+    // The bootstrap is a constant: nothing the user or a label can influence
+    // reaches it.
+    expect(LOGIN_BOOTSTRAP).not.toContain(HOSTILE);
+  });
+
+  it('keeps the bootstrap in front of the container id, so it is the command', () => {
+    const argv = containerExecArgv({ cli, containerId: CONTAINER_ID, script: 'x' });
+    expect(argv.indexOf(CONTAINER_ID)).toBeLessThan(argv.indexOf(LOGIN_BOOTSTRAP));
   });
 });
 

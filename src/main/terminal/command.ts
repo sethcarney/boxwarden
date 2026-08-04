@@ -119,7 +119,15 @@ export function containerShellScript(
     readonly startupCommand?: string;
   } = {},
 ): string {
-  const handover = 'if command -v bash > /dev/null 2>&1; then exec bash -l; else exec sh -l; fi';
+  // INTERACTIVE, not login. The login environment is already established by
+  // `LOGIN_BOOTSTRAP`, which ran this script under `bash -lc`; what is left for
+  // the shell the developer types into is `~/.bashrc` — the prompt, the
+  // aliases, the completions. Asking for `-l` again would source the profile a
+  // second time, which is how PATH ends up with every entry twice.
+  //
+  // `$BASH` is set by bash and unset by dash, so this lands in whichever shell
+  // the bootstrap actually chose without asking a second time.
+  const handover = 'exec "${BASH:-sh}" -i';
   const lines: string[] = [];
 
   const folder = options.workspaceFolder?.trim();
@@ -139,6 +147,48 @@ export function containerShellScript(
   lines.push(handover);
   return lines.join('\n');
 }
+
+/**
+ * Hand the script to a LOGIN BASH, never to a login `sh`.
+ *
+ * ## The bug this exists for
+ *
+ * `sh -lc <script>` — what this used to run — makes a LOGIN shell out of
+ * `/bin/sh`, which on every Debian-based dev container image is **dash**. A
+ * login shell sources `/etc/profile`, `/etc/profile.d/*` and `~/.profile`, and
+ * in a dev container those files are written for bash: prompt definitions,
+ * `PROMPT_COMMAND`, nvm's loader, a developer's own dotfiles.
+ *
+ * dash runs them anyway, and gets one thing importantly wrong: its `echo`
+ * interprets backslash escapes, where bash's does not. So a perfectly ordinary
+ * prompt line comes out as garbage the moment the terminal opens —
+ *
+ *     \]\u@devcontainer\[\]:\[\]\w\[\]$(parse_git_branch)\[\]\$
+ *
+ * — the `\033[…` colour codes consumed as real escapes, the `\[`/`\]` prompt
+ * markers left as text, and any `\a` in a title sequence ringing the system
+ * bell. Then `exec bash -l` took over and the session was fine, which is what
+ * made it look cosmetic rather than like a shell running the wrong files.
+ *
+ * ## What this does instead
+ *
+ * `sh -c <bootstrap> <script>` — POSIX makes the operand after the command
+ * string `$0`, so the script arrives as a positional parameter rather than
+ * interpolated into another string. No second layer of quoting exists to get
+ * wrong, which matters because that script contains a user-authored startup
+ * command.
+ *
+ * The bootstrap then execs `bash -lc "$0"`, so the profile is sourced ONCE, by
+ * the shell it was written for. The startup command inherits that environment —
+ * strictly better than before, where it ran under a login dash and could miss
+ * anything `~/.profile` put on PATH.
+ *
+ * The `sh -lc` fallback survives for an image with no bash at all. It is the
+ * old behaviour, and on such an image dash IS the shell the profile was written
+ * for, so the failure mode above cannot arise.
+ */
+export const LOGIN_BOOTSTRAP =
+  'if command -v bash > /dev/null 2>&1; then exec bash -lc "$0"; else exec sh -lc "$0"; fi';
 
 /**
  * `DOCKER_HOST`-style URL for a transport, as the CLI spells it.
@@ -213,7 +263,10 @@ export function containerExecArgv(options: {
   // after the id is the command to run, so a flag there would be an argument
   // to `sh` instead.
   const asUser = user === undefined || user === '' ? [] : ['-u', user];
-  const exec = ['exec', '-it', ...asUser, containerId, 'sh', '-lc', script];
+  // `sh -c <bootstrap> <script>`: the script is the operand that becomes `$0`,
+  // so it crosses as its own argv element and is never interpolated into
+  // another shell string. See LOGIN_BOOTSTRAP for why `sh` is not given `-l`.
+  const exec = ['exec', '-it', ...asUser, containerId, 'sh', '-c', LOGIN_BOOTSTRAP, script];
 
   if (transport?.transport === 'wsl') {
     return ['wsl.exe', '-d', transport.distro, '--', cli.kind, ...flags, ...exec];

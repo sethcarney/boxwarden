@@ -371,6 +371,20 @@ purely in `src/main/terminal/command.ts` and spawned by `launch.ts`.
   the CLI, so leaving the choice to the CLI's default means "no such container"
   for one that is on screen. A WSL socket runs `wsl.exe -d <distro> --` and
   names the CLI bare, on the Linux side.
+- **`sh` is never a LOGIN shell, because `/bin/sh` is dash.** The exec is
+  `sh -c <bootstrap> <script>`, and the bootstrap execs `bash -lc "$0"`. Giving
+  `sh` a `-l` makes dash source `/etc/profile` and `~/.profile`, which in a dev
+  container are written for bash — and dash's `echo` interprets backslash
+  escapes where bash's does not, so a prompt definition came out as raw escape
+  sequences and a system bell before the real shell started. The script rides as
+  the operand POSIX turns into `$0`, so it stays its own argv element and a
+  user-authored startup command never needs a second layer of quoting. The
+  `sh -lc` fallback survives only for an image with no bash, where dash IS the
+  shell those files were written for.
+- **The handover is `exec "${BASH:-sh}" -i`, interactive rather than login.**
+  The profile was sourced once by the bootstrap's `bash -lc`; asking for `-l`
+  again is how PATH ends up with every entry twice. `$BASH` is set by bash and
+  unset by dash, so it lands in whichever shell the bootstrap chose.
 - **The shell enters as the container's `remoteUser`, not as the image's user.**
   `docker exec` without `-u` becomes whoever the IMAGE says, which for most dev
   container base images is root — while VS Code attaches as `remoteUser`. Same
