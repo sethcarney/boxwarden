@@ -352,6 +352,48 @@ button.link {
   white-space: nowrap;
 }
 
+/*
+ * The workspace branch.
+ *
+ * Quiet by design: it sits beside the container's name, where it identifies a
+ * checkout rather than warning about one. Colour goes through variables like
+ * everything else — an `rgba(255,255,255,…)` glaze here would vanish on the
+ * light theme.
+ *
+ * `max-width` in ch rather than px because what has to fit is a branch NAME —
+ * `feature/some-long-description` truncates, and the whole thing stays in the
+ * `title`.
+ */
+.branch-chip {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  max-width: 22ch;
+  font-size: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: help;
+}
+
+.branch-chip-icon {
+  flex: 0 0 auto;
+  opacity: 0.75;
+}
+
+/* No branch is checked out, which is a state worth telling apart from a branch
+   whose name happens to look like a hash. */
+.branch-chip-detached {
+  border-style: dashed;
+}
+
 /* ---------- Claude Code presence ---------- */
 
 .badge {
@@ -583,6 +625,12 @@ button.warn:hover:not(:disabled) {
 .list[data-layout='rows'] .badge {
   padding: 1px 6px;
   font-size: 10px;
+}
+
+/* One line per container: the name gets the room, and the branch keeps enough
+   to be recognised. The full name is in `title` either way. */
+.list[data-layout='rows'] .branch-chip {
+  max-width: 14ch;
 }
 
 .list[data-layout='rows'] .card-meta {

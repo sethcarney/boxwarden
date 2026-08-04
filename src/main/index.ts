@@ -12,6 +12,8 @@ import type { DockerBackend } from './docker/backend.js';
 import { DockerodeBackend } from './docker/client.js';
 import { FakeDockerBackend } from './docker/fake.js';
 import { shutdownWslServices } from './docker/wsl.js';
+import { fakeGitStatus } from './git/fake.js';
+import { readGitStatus } from './git/status.js';
 import { UpdateChecker } from './update/check.js';
 import { UpdateDownloader } from './update/download.js';
 import { fakeUpdatesFromEnv } from './update/fake.js';
@@ -378,6 +380,14 @@ void app.whenReady().then(async () => {
           startupCommands: withStartupCommand(preferences.startupCommands, key, command),
         });
       },
+    },
+    git: {
+      platform: process.platform,
+      // Gated on the CONTAINER fixtures, not a switch of its own: the fixture
+      // branches are keyed by the fixture containers' folders, so a real
+      // container list can never pick one up. The loud warning is already
+      // printed by `backendFromEnv`.
+      status: process.env['BOXWARDEN_FAKE_DOCKER'] === '1' ? fakeGitStatus : readGitStatus,
     },
     projects: {
       platform: process.platform,

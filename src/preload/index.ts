@@ -21,7 +21,7 @@ import type { BoxwardenApi } from '../shared/ipc.js';
  *     Anything else arrives as undefined on the far side.
  *
  * The methods are deliberately narrow — no generic "invoke any channel" escape
- * hatch. A renderer bug can misuse only these eighteen verbs, and every one
+ * hatch. A renderer bug can misuse only these twenty-two verbs, and every one
  * that acts on a container or a project takes an ID: the main process resolves
  * that to its own copy rather than acting on data the renderer supplied.
  *
@@ -56,6 +56,10 @@ const api: BoxwardenApi = {
   // renderer object here — and it re-validates every id against its own last
   // container list regardless.
   claudeStatus: (ids) => ipcRenderer.invoke(IPC.claudeStatus, [...ids]),
+  // Ids, never folders. The main process reads `.git/HEAD` under paths its own
+  // last scan produced; a folder sent from here would be the renderer choosing
+  // which of the user's directories this process opens.
+  gitStatus: (ids) => ipcRenderer.invoke(IPC.gitStatus, [...ids]),
   updateStatus: (force) => ipcRenderer.invoke(IPC.updateStatus, force),
   // No version argument — the main process dismisses whatever it last offered.
   dismissUpdate: () => ipcRenderer.invoke(IPC.dismissUpdate),

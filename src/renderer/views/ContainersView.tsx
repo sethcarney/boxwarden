@@ -20,7 +20,7 @@ interface Props {
  * the ACTIVE ones, with a Hide button that moves a card to the other screen.
  */
 export function ContainersView({ vm }: Props) {
-  const { theme, editors, terminals, discovery, projects, claude, advisories, now } = vm;
+  const { theme, editors, terminals, discovery, projects, claude, git, advisories, now } = vm;
 
   return (
     <>
@@ -61,6 +61,7 @@ export function ContainersView({ vm }: Props) {
         isGroupBusy={discovery.isGroupBusy}
         claudeFor={claude.statusFor}
         claudeForAll={claude.statusesFor}
+        gitFor={git.statusFor}
         onStart={discovery.start}
         onStop={discovery.stop}
         onOpen={discovery.open}

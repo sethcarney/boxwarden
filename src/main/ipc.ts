@@ -7,6 +7,7 @@ import type {
   DevContainerProject,
   DockerEnvironment,
   EngineSelection,
+  GitStatus,
   ProjectId,
   ProjectRoot,
   ProjectScan,
@@ -19,6 +20,7 @@ import {
   enginesFrom,
   hostPlatform,
   parseEngineSelection,
+  readableHostFolder,
 } from '../models/index.js';
 import { IPC } from '../shared/ipc.js';
 import type {
@@ -26,6 +28,7 @@ import type {
   ClaudeStatusMap,
   DiscoverySnapshot,
   EditorOption,
+  GitStatusMap,
   OpenInEditorResult,
   OpenTerminalResult,
   ProjectRootsResult,
@@ -79,6 +82,9 @@ export interface IpcContext {
   /** Where the per-container startup commands are read from and written to. */
   readonly terminals: TerminalsContext;
 
+  /** How a workspace folder's checkout is read. A seam so the fixtures can fake it. */
+  readonly git: GitContext;
+
   /**
    * The daily release check.
    *
@@ -98,6 +104,18 @@ export interface TerminalsContext {
   startupCommands(): Readonly<Record<string, string>>;
   /** `key` is a `containerSettingsKey` derived here, never a renderer-supplied string. */
   setStartupCommand(key: string, command: string): void;
+}
+
+/**
+ * Reading a checkout, behind a seam for the same reason the folder picker is:
+ * so that the fixture run can answer without touching the disk, and so this
+ * module holds no filesystem code of its own.
+ */
+export interface GitContext {
+  /** `process.platform`. Passed in for the same reason `ProjectsContext` takes it. */
+  readonly platform: string;
+  /** Never rejects; every failure is a `GitStatus` arm. */
+  status(folder: string): Promise<GitStatus>;
 }
 
 /**
@@ -652,6 +670,82 @@ export function registerIpcHandlers(context: IpcContext): void {
         // Stop button reads this.
         const reason = error instanceof Error ? error.message : String(error);
         for (const id of liveIds) statuses[id] = { kind: 'unknown', reason };
+      }
+
+      return statuses;
+    },
+    () => ({}),
+  );
+
+  // ---- Branch ----
+
+  handle<GitStatusMap>(
+    IPC.gitStatus,
+    async (rawIds) => {
+      // Same validation as claudeStatus, and here it is load-bearing in a
+      // different way: the thing being resolved from an id is a PATH ON THE
+      // USER'S DISK that this process then opens. Ids not in `known` are
+      // dropped, and no folder ever arrives over the bridge.
+      const requested = Array.isArray(rawIds) ? rawIds : [];
+      const containers = requested
+        .filter((id): id is ContainerId => typeof id === 'string')
+        .map((id) => known.get(id))
+        .filter((container): container is DevContainer => container !== undefined);
+
+      const platform = hostPlatform(context.git.platform);
+      const statuses: Record<ContainerId, GitStatus> = {};
+
+      // One read per FOLDER, not per container. Every service in a compose
+      // project carries the same `devcontainer.local_folder`, so a five-service
+      // workspace would otherwise stat the same `.git` five times a poll to
+      // arrive at one answer.
+      const pending = new Map<string, Promise<GitStatus>>();
+      const folders = new Map<ContainerId, string>();
+
+      for (const container of containers) {
+        const folder = readableHostFolder(container.localFolder, platform);
+        if (folder === undefined) {
+          statuses[container.id] =
+            container.localFolder.kind === 'unresolved'
+              ? {
+                  kind: 'unknown',
+                  reason:
+                    'The devcontainer.local_folder label could not be parsed, so there is no folder to read a branch from.',
+                }
+              : {
+                  kind: 'unknown',
+                  reason:
+                    'That folder is on a different operating system from the one boxwarden is running on, so its checkout cannot be read from here.',
+                };
+          continue;
+        }
+        folders.set(container.id, folder);
+        if (!pending.has(folder)) pending.set(folder, context.git.status(folder));
+      }
+
+      const read = new Map(
+        await Promise.all(
+          [...pending].map(async ([folder, work]): Promise<readonly [string, GitStatus]> => {
+            try {
+              return [folder, await work];
+            } catch (error) {
+              // The seam is not supposed to reject. If it does, this is one
+              // folder's "could not tell" rather than a failed batch — the
+              // other cards' branches are still good.
+              return [
+                folder,
+                { kind: 'unknown', reason: error instanceof Error ? error.message : String(error) },
+              ];
+            }
+          }),
+        ),
+      );
+
+      for (const [id, folder] of folders) {
+        statuses[id] = read.get(folder) ?? {
+          kind: 'unknown',
+          reason: 'That folder was not read this time round.',
+        };
       }
 
       return statuses;

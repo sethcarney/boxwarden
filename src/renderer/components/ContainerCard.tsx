@@ -1,6 +1,7 @@
-import type { ClaudeStatus, DevContainer, EditorId } from '../../models/index.js';
+import type { ClaudeStatus, DevContainer, EditorId, GitStatus } from '../../models/index.js';
 import { canStart, canStop, hostPathLabel, statusLabel } from '../format.js';
 import {
+  branchChip,
   cardTitle,
   claudeBadge,
   claudeStopWarning,
@@ -45,6 +46,14 @@ interface Props {
    * it can omit.
    */
   readonly claude?: ClaudeStatus | undefined;
+  /**
+   * Which branch the workspace folder is on.
+   *
+   * Absent while the first read is outstanding. Unlike `claude`, absent and
+   * `{ kind: 'none' }` render identically — nothing here gates an action, so
+   * there is no meaning attached to the chip being missing.
+   */
+  readonly git?: GitStatus | undefined;
   readonly onStart: (container: DevContainer) => void;
   readonly onStop: (container: DevContainer) => void;
   readonly onOpen: (container: DevContainer) => void;
@@ -71,6 +80,7 @@ export function ContainerCard({
   now,
   dense = false,
   claude,
+  git,
   onStart,
   onStop,
   onOpen,
@@ -83,6 +93,7 @@ export function ContainerCard({
   const terminalBlocked = terminalBlockedReason(container, terminalAvailable, terminalName);
   const agent = sshAgentBadge(container.sshAgent);
   const badge = claudeBadge(claude);
+  const branch = branchChip(git);
   const stopWarning = claudeStopWarning([claude]);
 
   return (
@@ -91,6 +102,22 @@ export function ContainerCard({
         <div className="card-title">
           <StatusDot runtime={container.runtime} />
           <h2>{cardTitle(container)}</h2>
+          {/* Beside the name rather than in the meta list below it: the branch
+              is the second thing a person needs to identify a checkout, and the
+              meta list is the part the rows layout hides. Long branch names are
+              ellipsised by the stylesheet and kept whole in `title`. */}
+          {branch !== undefined && (
+            <span
+              className={`branch-chip branch-chip-${branch.tone}`}
+              title={branch.title}
+              aria-label={branch.label}
+            >
+              <span className="branch-chip-icon" aria-hidden="true">
+                ⎇
+              </span>
+              {branch.text}
+            </span>
+          )}
           {/* Nothing at all for `absent` — see the note on sshAgentBadge. */}
           {agent !== undefined && (
             <span

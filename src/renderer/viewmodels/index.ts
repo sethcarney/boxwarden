@@ -16,6 +16,9 @@ export { REFRESH_INTERVAL_MS, useDiscovery } from './useDiscovery.js';
 export type { ClaudeViewModel } from './useClaudeStatus.js';
 export { CLAUDE_INTERVAL_MS, useClaudeStatus } from './useClaudeStatus.js';
 
+export type { GitViewModel } from './useGitStatus.js';
+export { GIT_INTERVAL_MS, useGitStatus } from './useGitStatus.js';
+
 export type { AdvisoriesViewModel, AppPage } from './useAdvisories.js';
 export { useAdvisories } from './useAdvisories.js';
 

@@ -20,13 +20,14 @@ import type {
   DevContainer,
   EndpointProbe,
   EngineSelection,
+  GitStatus,
   PortBinding,
   SshAgentState,
   UpdateDownload,
   UpdateInstructions,
   UpdateStatus,
 } from '../models/index.js';
-import { projectName } from '../models/index.js';
+import { projectName, shortCommit } from '../models/index.js';
 import type { DiscoverySnapshot } from '../shared/ipc.js';
 import { canExec, describeTarget, relativeTime, runtimeLabel } from './format.js';
 
@@ -266,6 +267,64 @@ export function portLabel(port: PortBinding): { readonly text: string; readonly 
     text: `${String(port.hostPort)} → ${String(port.containerPort)}`,
     title: `${port.hostIp ?? '0.0.0.0'}:${String(port.hostPort)} → ${String(port.containerPort)}`,
   };
+}
+
+/**
+ * The branch chip, or nothing.
+ *
+ * Four `GitStatus` arms collapse to two outcomes, and the pairing is not the
+ * same one `claudeBadge` makes:
+ *
+ *   - `branch` / `detached` -> a chip
+ *   - `none` / `unknown` / not yet polled -> nothing
+ *
+ * `unknown` renders NOTHING here, where the Claude badge renders a question
+ * mark, and the difference is deliberate. That badge guards a click: a card
+ * with no badge is a card saying stopping is safe, so "we could not tell" has
+ * to be visible. A branch guards nothing — and its `unknown` arm is the
+ * ordinary state of every card on a machine where the folders are not visible
+ * (boxwarden running in its own dev container, a WSL path seen from macOS, a
+ * daemon over SSH). A question mark on every card, forever, on a machine where
+ * nothing is wrong is noise, and noise is how a chip stops being read. The
+ * reason is not lost: it is in `GitStatus`, and the folder row already says
+ * whether the path could be parsed at all.
+ */
+export interface BranchChip {
+  readonly text: string;
+  readonly title: string;
+  /** For the accessible name, since "4f2c1ab" alone does not say what it is. */
+  readonly label: string;
+  readonly tone: 'branch' | 'detached';
+}
+
+export function branchChip(status: GitStatus | undefined): BranchChip | undefined {
+  if (status === undefined) return undefined;
+
+  switch (status.kind) {
+    case 'none':
+    case 'unknown':
+      return undefined;
+
+    case 'branch':
+      return {
+        text: status.branch,
+        title: `The workspace folder is on branch ${status.branch}.`,
+        label: `Branch ${status.branch}`,
+        tone: 'branch',
+      };
+
+    case 'detached': {
+      const short = shortCommit(status.commit);
+      return {
+        text: short,
+        // The full id, because seven characters is a thing to search for and
+        // forty is the thing to paste.
+        title: `The workspace folder has a detached HEAD at ${status.commit} — no branch is checked out.`,
+        label: `Detached HEAD at ${short}`,
+        tone: 'detached',
+      };
+    }
+  }
 }
 
 /**
