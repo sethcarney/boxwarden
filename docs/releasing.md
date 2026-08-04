@@ -57,32 +57,44 @@ diff nobody can see.
 
 ### 4. Wait for the workflow
 
-Three jobs, in this order:
+Four jobs, in this order:
 
-| Job       | Runs on              | What it does                                                                                 |
-| --------- | -------------------- | -------------------------------------------------------------------------------------------- |
-| `verify`  | ubuntu               | `bun run check`, then `check:release-version` — the tag must equal `v<package.json version>` |
-| `build`   | macos/ubuntu/windows | `bun run dist:<os> -- --publish never`, then uploads the installers as workflow artefacts    |
-| `publish` | ubuntu               | Collects all three platforms' artefacts and creates **one draft release** with them attached |
+| Job          | Runs on              | What it does                                                                                                                                   |
+| ------------ | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `verify`     | ubuntu               | `bun run check`, then `check:release-version` — the tag must equal `v<package.json version>`                                                   |
+| `build`      | macos/ubuntu/windows | `bun run dist:<os> -- --publish never`, then uploads the installers as workflow artefacts                                                      |
+| `publish`    | ubuntu               | Collects all three platforms' artefacts, writes `sha256sums.txt`, cosign-signs everything, creates **one draft release** with the lot attached |
+| `provenance` | (reusable workflow)  | SLSA Build L3 provenance for the same set, attached to the draft as `multiple.intoto.jsonl`                                                    |
 
 `verify` exists because a tag can point at any commit, including one that never
 went through a pull request — `check.yml` gates `main`, it does not gate this.
 `build` does not publish, because three jobs each creating "the" release race
 each other and the loser quietly makes a second draft.
 
+`publish` signs **before** it creates the release, in the same job, so the draft
+never exists holding unsigned assets. `provenance` is a separate reusable
+workflow rather than a step, because the point of provenance is that the build
+cannot reach the thing attesting it. Both are covered in
+[supply-chain.md](./supply-chain.md#releases).
+
 `fail-fast` is off: if Windows breaks, macOS and Linux still finish, so you
 learn "only Windows is broken" instead of "something is broken".
 
 ### 5. Edit the draft, then publish it
 
-The draft has generated notes (the merged PRs since the last tag) and every
-artefact attached. Two things to add before pressing **Publish release**:
+The draft has generated notes (the merged PRs since the last tag), every
+installer, a `.sigstore.json` beside each one, `sha256sums.txt`, and
+`multiple.intoto.jsonl`. Two things to add before pressing **Publish release**:
 
 - **A sentence about what actually changed**, above the generated list. The
   generated list is a changelog, not a summary.
-- **The install preamble below**, because the builds are unsigned and every
-  platform will interpose on first launch. Somebody who is not expecting that
-  reads it as "this app is malware".
+- **The install preamble below**, because the builds are not code-signed and
+  every platform will interpose on first launch. Somebody who is not expecting
+  that reads it as "this app is malware".
+
+Check the `.sigstore.json` files are there before publishing. Their absence
+means the signing step failed, and a release published without them cannot be
+retro-signed — the certificate is bound to the workflow run.
 
 ```markdown
 ### Install
@@ -98,6 +110,12 @@ artefact attached. Two things to add before pressing **Publish release**:
   unsigned, so SmartScreen interposes: _More info_ → _Run anyway_.
 
 There is no auto-update. Installing a later release over the top is the update.
+
+### Verify what you downloaded
+
+Every artefact is signed with cosign and carries SLSA provenance. See
+[SECURITY.md](https://github.com/sethcarney/boxwarden/blob/main/SECURITY.md#release-verification)
+for the commands.
 ```
 
 [running.md](./running.md#3-installing-it-on-your-computer) is the longer
