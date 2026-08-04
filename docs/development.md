@@ -237,6 +237,59 @@ round-robin across the three fake engines, one in three of them produces a
 `wsl.exe -d dev --` command line, which is the arm of `containerExecArgv` least
 likely to be looked at otherwise.
 
+## When a download refuses to verify
+
+`BOXWARDEN_FAKE_UPDATE=1` invents a release but installs nothing, so the
+verification path is only ever exercised against a real one — and when it
+refuses, the message is deliberately unhelpful:
+
+> boxwarden could not reach Sigstore to check the signature, so it will not
+> install this download.
+
+That vagueness is correct. "We could not check this" and "this is not what it
+claims to be" are different findings, and telling somebody behind a corporate
+proxy that their download was forged would be a lie. But it leaves the real
+cause nowhere to go, because the app is a GUI process — on Windows with no
+attached console at all — and nothing between `trust.ts` and the renderer reads
+the error's `cause`.
+
+Two things answer it:
+
+```bash
+bun run check:sigstore     # or: node scripts/check-sigstore.mjs --cache <path>
+```
+
+The script makes the same two attempts `trust.ts` makes — a fresh TUF refresh,
+then the `forceCache` fallback — against the same cache directory the app uses,
+and prints every layer of every error. It also probes
+`tuf-repo-cdn.sigstore.dev` directly when both fail, because `tuf-js` flattens
+an HTTP failure into `Failed to download`: the 403 from a proxy, the
+`ENOTFOUND`, or the certificate error is only visible in the raw request.
+
+`trust.ts` also `console.error`s both failures now. Seeing them on Windows
+means launching with output redirected, since a GUI process writes to a console
+that is not there:
+
+```powershell
+$env:DEBUG="tuf:*"; & "<install dir>\boxwarden.exe" *> "$env:TEMP\bw.log"
+```
+
+Three causes account for nearly all of it, and they are told apart by the error
+code rather than by guessing:
+
+| What you see                                  | What it is                                               |
+| --------------------------------------------- | -------------------------------------------------------- |
+| `ENOTFOUND`, `ECONNREFUSED`, `ETIMEDOUT`      | the host is blocked, or needs a proxy the app cannot use |
+| `UNABLE_TO_VERIFY_LEAF_SIGNATURE`, `CERT_*`   | TLS interception — try `NODE_EXTRA_CA_CERTS`             |
+| `HTTP 403` / `HTTP 407` from the direct probe | a proxy is answering for the CDN                         |
+
+The asymmetry worth knowing about: the release check and the artefact download
+go through Electron's `net.fetch`, which uses Chromium's network stack — system
+proxy, OS certificate store. The TUF refresh goes through `@sigstore/tuf` →
+`tuf-js` → the global `fetch`, which is Node's and uses neither. A machine
+where GitHub works and Sigstore does not is that difference, not a broken
+download.
+
 ## Two TypeScript projects
 
 The renderer has DOM and no Node; main and preload have the reverse. One config

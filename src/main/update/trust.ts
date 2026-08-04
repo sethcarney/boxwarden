@@ -82,7 +82,18 @@ async function load(options: TrustOptions): Promise<TrustMaterial> {
       return toTrustMaterial(
         await getTrustedRoot({ cachePath: options.cachePath, forceCache: true }),
       );
-    } catch {
+    } catch (cachedError) {
+      // Both errors, out loud, because neither reaches the user.
+      //
+      // The sentence below is deliberately vague — see the next comment — which
+      // makes this the ONLY record of what actually went wrong, and a failure
+      // whose stated remedy is "verify it by hand" is precisely the one that
+      // gets reported. On Windows the app is a GUI process with no attached
+      // console, so seeing this means launching it with output redirected
+      // (`boxwarden.exe *> log.txt`); `scripts/check-sigstore.mjs` asks the
+      // same question without a rebuild.
+      console.error('[boxwarden] Sigstore trust root: refresh failed:', error);
+      console.error('[boxwarden] Sigstore trust root: cached fallback failed:', cachedError);
       // Deliberately its own sentence, and deliberately not phrased as a
       // failed verification. "We could not check this" and "this is not what
       // it claims to be" are different findings, and merging them would tell
@@ -90,9 +101,13 @@ async function load(options: TrustOptions): Promise<TrustMaterial> {
       // the same distinction `ClaudeStatus` keeps between `unknown` and
       // `none`. tuf-repo-cdn.sigstore.dev is a separate host from GitHub, so a
       // network that allows one may well block the other.
+      // `cachedError` rather than `error` as the cause: it is the failure that
+      // actually ended the attempt chain, and the refresh error above is not
+      // lost — it is on the line before. Nothing downstream reads either one,
+      // which is exactly why they are logged rather than only attached.
       throw new Error(
         'boxwarden could not reach Sigstore to check the signature, so it will not install this download. The release page has the file and the commands to verify it by hand.',
-        { cause: error },
+        { cause: cachedError },
       );
     }
   }

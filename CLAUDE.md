@@ -35,6 +35,7 @@ bun run dist         # build + installers for the host OS, into release/
 bun run dist:mac / dist:linux / dist:win
 
 bun run check:release-version   # tag vs package.json — run before tagging, not part of `check`
+bun run check:sigstore          # can this machine reach Sigstore's trust root? diagnostic, not part of `check`
 
 bun run devcontainer:open   # devcontainer up, then attach an editor to it (scripts/devcontainer-open.mjs)
 ```
@@ -547,6 +548,14 @@ Six rules hold this together:
 - **The AppImage is the one in-place update, and only via a same-directory
   rename.** An AppImage is one file the user owns; a copy interrupted halfway
   would leave them with a truncated binary and no working boxwarden.
+- **A refusal to verify says nothing useful on purpose, so it says it to the
+  log instead.** "We could not check this" must not read as "this is forged",
+  which leaves the real cause with nowhere to go: the app is a Windows GUI
+  process with no console, and nothing downstream reads the `cause`. Both
+  failures are therefore `console.error`ed in `trust.ts`, and
+  `scripts/check-sigstore.mjs` asks the same question from the command line —
+  same library, same options, same cache directory — for a machine where
+  rebuilding the app is not the fastest way to find out.
 - **The trust root comes from TUF, not a vendored JSON.** Sigstore rotates keys;
   a pinned snapshot would silently turn every download into a failure on some
   Tuesday, and an update mechanism that disables itself is worse than none.
