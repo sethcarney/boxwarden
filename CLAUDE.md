@@ -152,7 +152,8 @@ importing Electron. They fall into three groups by cadence:
   `addProjectRoot`, `removeProjectRoot`.
 - **Terminals, read once then on demand**: `listTerminals`, `openTerminal`,
   `getStartupCommands`, `setStartupCommand`.
-- **Container processes, polled every 15s**: `claudeStatus`.
+- **Container processes, polled every 15s**: `containerActivity` — Claude Code
+  presence and attached editors, from one `top` each.
 - **The host's checkouts, polled every 30s**: `gitStatus`.
 - **The release check, asked hourly and answered from GitHub once a day**:
   `updateStatus`, `dismissUpdate`, `setUpdateChecks`, `downloadUpdate`,
@@ -450,6 +451,31 @@ activity is neither.
 v1 **annotates** the Stop button rather than gating it; a confirm dialog is the
 follow-up, once the detection has been seen to be reliable against a real
 daemon.
+
+### Attached editors
+
+Each card also says whether an editor is attached, from the SAME `top`
+response `claudeStatus` already fetched — `parseAttachedEditors` in
+`src/models/editor-session.ts`, folded with `parseClaudeProcesses` into one
+`ContainerActivity` per container. That is why the verb is `containerActivity`
+and not two verbs: it is one reading of one process table, and asking twice
+would double the poll's Docker traffic to learn nothing extra.
+
+- **It detects the SERVER, not the window.** VS Code, Cursor and Windsurf all
+  run one under `~/.<flavour>-server/bin/<commit>/`. The server outlives the
+  window it served by a few minutes, so the signal is a superset of "a window is
+  open" — which is the right way round: warning about a window that just closed
+  costs a moment's thought, failing to warn about an open one costs the work in
+  it. The badge says "attached", never "open".
+- **Matched as a PATH SEGMENT** (`/.vscode-server/`), never as a bare word —
+  the lesson `looksLikeClaudeCode` learned. Insiders is listed before stable
+  because `.vscode-server-insiders` has `.vscode-server` as a prefix.
+- **boxwarden cannot close the window, and does not try.** The `code` CLI can
+  open windows and install extensions; it cannot enumerate or close them, and
+  killing the host process would take unsaved buffers with it. So Stop is
+  ANNOTATED, the same as it is for a Claude session — `stopWarning` folds both,
+  and words them differently on purpose: an agent is ENDED by stopping, a window
+  is STRANDED by it.
 
 ### The workspace branch
 

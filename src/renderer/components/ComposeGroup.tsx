@@ -1,6 +1,6 @@
-import type { ClaudeStatus, DevContainer } from '../../models/index.js';
+import type { ClaudeStatus, EditorAttachment, DevContainer } from '../../models/index.js';
 import { canStart, canStop } from '../format.js';
-import { claudeStopWarning } from '../presenters.js';
+import { stopWarning } from '../presenters.js';
 import { groupCanStart, groupCanStop } from '../grouping.js';
 
 interface Props {
@@ -14,6 +14,8 @@ interface Props {
    * looked at.
    */
   readonly claude?: readonly (ClaudeStatus | undefined)[] | undefined;
+  /** Every member's editor attachment — "Stop all" strands every window at once. */
+  readonly editors?: readonly (EditorAttachment | undefined)[] | undefined;
   readonly onStartAll: (containers: readonly DevContainer[]) => void;
   readonly onStopAll: (containers: readonly DevContainer[]) => void;
   readonly children: React.ReactNode;
@@ -36,6 +38,7 @@ export function ComposeGroup({
   containers,
   busy,
   claude = [],
+  editors = [],
   onStartAll,
   onStopAll,
   children,
@@ -43,7 +46,7 @@ export function ComposeGroup({
   const startable = groupCanStart(containers, canStart);
   const stoppable = groupCanStop(containers, canStop);
   const runningCount = containers.filter((c) => canStop(c.runtime)).length;
-  const stopWarning = claudeStopWarning(claude);
+  const warning = stopWarning(claude, editors);
 
   return (
     <section className="group" aria-label={`Compose project ${project}`}>
@@ -60,8 +63,8 @@ export function ComposeGroup({
           {stoppable && (
             <button
               type="button"
-              className={stopWarning === undefined ? undefined : 'warn'}
-              title={stopWarning}
+              className={warning === undefined ? undefined : 'warn'}
+              title={warning}
               disabled={busy}
               onClick={() => {
                 onStopAll(containers);

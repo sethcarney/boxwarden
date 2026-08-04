@@ -13,8 +13,8 @@ export { useAppViewModel } from './useAppViewModel.js';
 export type { DiscoveryViewModel } from './useDiscovery.js';
 export { REFRESH_INTERVAL_MS, useDiscovery } from './useDiscovery.js';
 
-export type { ClaudeViewModel } from './useClaudeStatus.js';
-export { CLAUDE_INTERVAL_MS, useClaudeStatus } from './useClaudeStatus.js';
+export type { ActivityViewModel } from './useContainerActivity.js';
+export { ACTIVITY_INTERVAL_MS, useContainerActivity } from './useContainerActivity.js';
 
 export type { GitViewModel } from './useGitStatus.js';
 export { GIT_INTERVAL_MS, useGitStatus } from './useGitStatus.js';

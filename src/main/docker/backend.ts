@@ -1,11 +1,11 @@
 import type {
-  ClaudeStatus,
   ContainerId,
   DevContainer,
   DockerEndpoint,
   DockerEnvironment,
   EngineSelection,
 } from '../../models/index.js';
+import type { ContainerActivity } from '../../shared/ipc.js';
 
 /**
  * Everything the app needs from a container runtime, and nothing more.
@@ -48,12 +48,16 @@ export interface DockerBackend {
   endpointFor(id: ContainerId): DockerEndpoint | undefined;
 
   /**
-   * Read each container's process table and report whether Claude Code is in
-   * it. Batched, and never rejects — a container that has gone away between
-   * the caller's list and this call is one `unknown` entry, not a failed scan.
+   * Read each container's process table once and report both things that can
+   * be learned from it: whether Claude Code is running in there, and whether an
+   * editor is attached. Batched, and never rejects — a container that has gone
+   * away between the caller's list and this call is one `unknown` entry, not a
+   * failed scan.
    *
    * Only the caller knows which ids are worth asking about; this does not
    * filter by state, because it does not inspect. Ask about live containers.
    */
-  claudeStatus(ids: readonly ContainerId[]): Promise<ReadonlyMap<ContainerId, ClaudeStatus>>;
+  containerActivity(
+    ids: readonly ContainerId[],
+  ): Promise<ReadonlyMap<ContainerId, ContainerActivity>>;
 }

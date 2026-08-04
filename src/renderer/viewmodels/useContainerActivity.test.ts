@@ -6,7 +6,7 @@ import { asContainerId } from '../../models/index.js';
 import { devContainer } from '../test-fixtures.js';
 import { fakeApi } from './test-api.js';
 import { stubNotices } from './test-notices.js';
-import { CLAUDE_INTERVAL_MS, useClaudeStatus } from './useClaudeStatus.js';
+import { ACTIVITY_INTERVAL_MS, useContainerActivity } from './useContainerActivity.js';
 
 const RUNNING = devContainer({ id: asContainerId('a'.repeat(64)) });
 const ALSO_RUNNING = devContainer({ id: asContainerId('b'.repeat(64)) });
@@ -23,7 +23,7 @@ const SESSION: ClaudeStatus = {
 describe('useClaudeStatus', () => {
   it('returns nothing and calls nothing without a preload bridge', () => {
     const notices = stubNotices();
-    const { result } = renderHook(() => useClaudeStatus(undefined, notices, [RUNNING]));
+    const { result } = renderHook(() => useContainerActivity(undefined, notices, [RUNNING]));
 
     expect(result.current.statuses).toEqual({});
     expect(notices.showError).not.toHaveBeenCalled();
@@ -32,10 +32,10 @@ describe('useClaudeStatus', () => {
   it('takes a reading immediately rather than waiting out the first interval', async () => {
     const api = fakeApi({ claude: SESSION });
     const notices = stubNotices();
-    const { result } = renderHook(() => useClaudeStatus(api, notices, [RUNNING]));
+    const { result } = renderHook(() => useContainerActivity(api, notices, [RUNNING]));
 
     await waitFor(() => {
-      expect(result.current.statusFor(RUNNING.id)).toEqual(SESSION);
+      expect(result.current.claudeFor(RUNNING.id)).toEqual(SESSION);
     });
   });
 
@@ -46,20 +46,20 @@ describe('useClaudeStatus', () => {
   it('asks only about containers that are live', async () => {
     const api = fakeApi();
     const notices = stubNotices();
-    renderHook(() => useClaudeStatus(api, notices, [RUNNING, STOPPED]));
+    renderHook(() => useContainerActivity(api, notices, [RUNNING, STOPPED]));
 
     await waitFor(() => {
-      expect(api.claudeStatus).toHaveBeenCalledWith([RUNNING.id]);
+      expect(api.containerActivity).toHaveBeenCalledWith([RUNNING.id]);
     });
   });
 
   it('does not call at all when nothing is live', async () => {
     const api = fakeApi();
     const notices = stubNotices();
-    renderHook(() => useClaudeStatus(api, notices, [STOPPED]));
+    renderHook(() => useContainerActivity(api, notices, [STOPPED]));
 
     await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(api.claudeStatus).not.toHaveBeenCalled();
+    expect(api.containerActivity).not.toHaveBeenCalled();
   });
 
   /**
@@ -73,18 +73,18 @@ describe('useClaudeStatus', () => {
 
     const { rerender } = renderHook(
       ({ containers }: { containers: readonly DevContainer[] }) =>
-        useClaudeStatus(api, notices, containers),
+        useContainerActivity(api, notices, containers),
       { initialProps: { containers: [RUNNING] as readonly DevContainer[] } },
     );
     await waitFor(() => {
-      expect(api.claudeStatus).toHaveBeenCalledTimes(1);
+      expect(api.containerActivity).toHaveBeenCalledTimes(1);
     });
 
     // A new array, same contents — what discovery hands over every 5s.
     rerender({ containers: [devContainer({ id: asContainerId('a'.repeat(64)) })] });
     await new Promise((resolve) => setTimeout(resolve, 10));
 
-    expect(api.claudeStatus).toHaveBeenCalledTimes(1);
+    expect(api.containerActivity).toHaveBeenCalledTimes(1);
   });
 
   it('polls again when a container starts', async () => {
@@ -93,16 +93,16 @@ describe('useClaudeStatus', () => {
 
     const { rerender } = renderHook(
       ({ containers }: { containers: readonly DevContainer[] }) =>
-        useClaudeStatus(api, notices, containers),
+        useContainerActivity(api, notices, containers),
       { initialProps: { containers: [RUNNING] as readonly DevContainer[] } },
     );
     await waitFor(() => {
-      expect(api.claudeStatus).toHaveBeenCalledTimes(1);
+      expect(api.containerActivity).toHaveBeenCalledTimes(1);
     });
 
     rerender({ containers: [RUNNING, ALSO_RUNNING] });
     await waitFor(() => {
-      expect(api.claudeStatus).toHaveBeenCalledWith([RUNNING.id, ALSO_RUNNING.id]);
+      expect(api.containerActivity).toHaveBeenCalledWith([RUNNING.id, ALSO_RUNNING.id]);
     });
   });
 
@@ -116,7 +116,7 @@ describe('useClaudeStatus', () => {
 
     const { result, rerender } = renderHook(
       ({ containers }: { containers: readonly DevContainer[] }) =>
-        useClaudeStatus(api, notices, containers),
+        useContainerActivity(api, notices, containers),
       { initialProps: { containers: [RUNNING, ALSO_RUNNING] as readonly DevContainer[] } },
     );
     await waitFor(() => {
@@ -133,14 +133,14 @@ describe('useClaudeStatus', () => {
 
     const { result, rerender } = renderHook(
       ({ containers }: { containers: readonly DevContainer[] }) =>
-        useClaudeStatus(api, notices, containers),
+        useContainerActivity(api, notices, containers),
       { initialProps: { containers: [RUNNING] as readonly DevContainer[] } },
     );
     await waitFor(() => {
-      expect(result.current.statusFor(RUNNING.id)).toEqual(SESSION);
+      expect(result.current.claudeFor(RUNNING.id)).toEqual(SESSION);
     });
 
-    api.claudeStatus.mockRejectedValueOnce(new Error('socket went away'));
+    api.containerActivity.mockRejectedValueOnce(new Error('socket went away'));
     rerender({ containers: [RUNNING, ALSO_RUNNING] });
 
     await waitFor(() => {
@@ -148,7 +148,7 @@ describe('useClaudeStatus', () => {
     });
     // A failed poll must not blank the badge: losing it would make the Stop
     // button look safe for a container that has an agent in it.
-    expect(result.current.statusFor(RUNNING.id)).toEqual(SESSION);
+    expect(result.current.claudeFor(RUNNING.id)).toEqual(SESSION);
   });
 
   /** What ComposeGroup's "Stop all" aggregates, in the group's own order. */
@@ -156,14 +156,14 @@ describe('useClaudeStatus', () => {
     const api = fakeApi({ claude: SESSION });
     const notices = stubNotices();
 
-    const { result } = renderHook(() => useClaudeStatus(api, notices, [RUNNING, STOPPED]));
+    const { result } = renderHook(() => useContainerActivity(api, notices, [RUNNING, STOPPED]));
     await waitFor(() => {
-      expect(result.current.statusFor(RUNNING.id)).toEqual(SESSION);
+      expect(result.current.claudeFor(RUNNING.id)).toEqual(SESSION);
     });
 
     // STOPPED was never asked about, so it has no entry — which is not the
     // same as `{ kind: 'none' }` and must not be flattened into it.
-    expect(result.current.statusesFor([RUNNING, STOPPED])).toEqual([SESSION, undefined]);
+    expect(result.current.claudeForAll([RUNNING, STOPPED])).toEqual([SESSION, undefined]);
   });
 
   describe('cadence', () => {
@@ -179,16 +179,16 @@ describe('useClaudeStatus', () => {
     it('is slower than the discovery poll by default', () => {
       // Discovery runs at 5s. This costs one `top` per live container and
       // re-derives an answer that changes when a person starts an agent.
-      expect(CLAUDE_INTERVAL_MS).toBeGreaterThan(5_000);
+      expect(ACTIVITY_INTERVAL_MS).toBeGreaterThan(5_000);
     });
 
     it('keeps polling on its own interval', async () => {
       const api = fakeApi({ claude: SESSION });
       const notices = stubNotices();
-      renderHook(() => useClaudeStatus(api, notices, [RUNNING], TICK_MS));
+      renderHook(() => useContainerActivity(api, notices, [RUNNING], TICK_MS));
 
       await waitFor(() => {
-        expect(api.claudeStatus.mock.calls.length).toBeGreaterThan(2);
+        expect(api.containerActivity.mock.calls.length).toBeGreaterThan(2);
       });
     });
 
@@ -202,23 +202,23 @@ describe('useClaudeStatus', () => {
       const notices = stubNotices();
       const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
 
-      renderHook(() => useClaudeStatus(api, notices, [RUNNING], TICK_MS));
+      renderHook(() => useContainerActivity(api, notices, [RUNNING], TICK_MS));
 
       // The initial reading is unconditional — the window may have been hidden
       // since before the app rendered, and the first paint still needs data.
       await waitFor(() => {
-        expect(api.claudeStatus).toHaveBeenCalledTimes(1);
+        expect(api.containerActivity).toHaveBeenCalledTimes(1);
       });
 
       await afterATick();
-      expect(api.claudeStatus).toHaveBeenCalledTimes(1);
+      expect(api.containerActivity).toHaveBeenCalledTimes(1);
 
       hidden.mockReturnValue(false);
       act(() => {
         document.dispatchEvent(new Event('visibilitychange'));
       });
       await waitFor(() => {
-        expect(api.claudeStatus).toHaveBeenCalledTimes(2);
+        expect(api.containerActivity).toHaveBeenCalledTimes(2);
       });
 
       hidden.mockRestore();

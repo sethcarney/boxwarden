@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ClaudeStatus, ContainerId, DevContainer } from '../../models/index.js';
-import type { BoxwardenApi, ClaudeStatusMap } from '../../shared/ipc.js';
+import type {
+  ClaudeStatus,
+  ContainerId,
+  DevContainer,
+  EditorAttachment,
+} from '../../models/index.js';
+import type { BoxwardenApi, ContainerActivity, ContainerActivityMap } from '../../shared/ipc.js';
 import { useMounted } from './useMounted.js';
 import type { NoticesViewModel } from './useNotices.js';
 
@@ -8,24 +13,31 @@ import type { NoticesViewModel } from './useNotices.js';
  * How often to re-read. Three times slower than discovery, deliberately —
  * see the note on the hook.
  */
-export const CLAUDE_INTERVAL_MS = 15_000;
+export const ACTIVITY_INTERVAL_MS = 15_000;
 
-export interface ClaudeViewModel {
+export interface ActivityViewModel {
   /**
-   * Presence by container id. A MISSING entry means "no answer yet"; it is not
-   * the same as `{ kind: 'none' }`, and the Views must not treat it as such.
+   * By container id. A MISSING entry means "no answer yet"; it is not the same
+   * as `{ kind: 'none' }`, and the Views must not treat it as such — a card
+   * with no warning is a card saying stopping is safe.
    */
-  readonly statuses: ClaudeStatusMap;
-  readonly statusFor: (id: ContainerId) => ClaudeStatus | undefined;
-  /** Every status in a group, in the group's own order — what "Stop all" aggregates. */
-  readonly statusesFor: (
+  readonly statuses: ContainerActivityMap;
+  readonly activityFor: (id: ContainerId) => ContainerActivity | undefined;
+  readonly claudeFor: (id: ContainerId) => ClaudeStatus | undefined;
+  readonly editorFor: (id: ContainerId) => EditorAttachment | undefined;
+  /** Every reading in a group, in the group's own order — what "Stop all" aggregates. */
+  readonly claudeForAll: (
     containers: readonly DevContainer[],
   ) => readonly (ClaudeStatus | undefined)[];
+  readonly editorsForAll: (
+    containers: readonly DevContainer[],
+  ) => readonly (EditorAttachment | undefined)[];
   readonly refresh: () => void;
 }
 
 /**
- * Whether a Claude Code session is running inside each live container.
+ * What is running inside each live container: a Claude Code session, an
+ * attached editor, or neither.
  *
  * A ViewModel of its own, and NOT part of `useDiscovery`, for the same reason
  * `useProjects` is separate: cadence. Discovery polls every five seconds
@@ -47,7 +59,7 @@ export interface ClaudeViewModel {
  *     a fresh reading the moment the window is shown again, which is when a
  *     stale badge is about to be acted on.
  */
-export function useClaudeStatus(
+export function useContainerActivity(
   api: BoxwardenApi | undefined,
   notices: NoticesViewModel,
   containers: readonly DevContainer[],
@@ -57,9 +69,9 @@ export function useClaudeStatus(
    * need fake timers, and faking the timers React's scheduler runs on
    * deadlocks `act()` rather than failing. Callers in the app pass nothing.
    */
-  intervalMs: number = CLAUDE_INTERVAL_MS,
-): ClaudeViewModel {
-  const [statuses, setStatuses] = useState<ClaudeStatusMap>({});
+  intervalMs: number = ACTIVITY_INTERVAL_MS,
+): ActivityViewModel {
+  const [statuses, setStatuses] = useState<ContainerActivityMap>({});
   const mounted = useMounted();
 
   // Destructured, not held as the object: `notices` is rebuilt on every render
@@ -94,13 +106,13 @@ export function useClaudeStatus(
 
     inFlight.current = true;
     try {
-      const next = await api.claudeStatus(ids);
+      const next = await api.containerActivity(ids);
       // Merged, not replaced — see "does not blank on failure" above.
       if (mounted.current) setStatuses((current) => ({ ...current, ...next }));
     } catch (error) {
       if (mounted.current) {
         showError(
-          `Could not check for Claude Code sessions: ${error instanceof Error ? error.message : String(error)}`,
+          `Could not read what is running inside the containers: ${error instanceof Error ? error.message : String(error)}`,
         );
       }
     } finally {
@@ -150,16 +162,25 @@ export function useClaudeStatus(
     return Object.fromEntries(Object.entries(statuses).filter(([id]) => present.has(id)));
   }, [statuses, allKey]);
 
-  const statusFor = useCallback((id: ContainerId) => visible[id], [visible]);
-  const statusesFor = useCallback(
-    (group: readonly DevContainer[]) => group.map((container) => visible[container.id]),
+  const activityFor = useCallback((id: ContainerId) => visible[id], [visible]);
+  const claudeFor = useCallback((id: ContainerId) => visible[id]?.claude, [visible]);
+  const editorFor = useCallback((id: ContainerId) => visible[id]?.editor, [visible]);
+  const claudeForAll = useCallback(
+    (group: readonly DevContainer[]) => group.map((container) => visible[container.id]?.claude),
+    [visible],
+  );
+  const editorsForAll = useCallback(
+    (group: readonly DevContainer[]) => group.map((container) => visible[container.id]?.editor),
     [visible],
   );
 
   return {
     statuses: visible,
-    statusFor,
-    statusesFor,
+    activityFor,
+    claudeFor,
+    editorFor,
+    claudeForAll,
+    editorsForAll,
     refresh: useCallback(() => void poll(), [poll]),
   };
 }
