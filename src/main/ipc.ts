@@ -776,11 +776,6 @@ export function registerIpcHandlers(context: IpcContext): void {
    */
   const updateFailure = (message: string): UpdateStatus => ({
     currentVersion: context.updates.currentVersion,
-    // `idle`, not the downloader's state: this path is reached when the call
-    // itself failed, so the only honest thing to say about a download is
-    // nothing. Reading through to the real state here would report progress
-    // from a handler that just threw.
-    download: { kind: 'idle' },
     outcome: { kind: 'failed', message },
   });
 
@@ -806,31 +801,5 @@ export function registerIpcHandlers(context: IpcContext): void {
     IPC.setUpdateChecks,
     (enabled) => context.updates.setEnabled(enabled === true),
     updateFailure,
-  );
-
-  // ---- Fetching the update ----
-
-  handle<UpdateStatus>(
-    IPC.downloadUpdate,
-    // No argument. What is fetched is planned from the main process's own last
-    // status, so the renderer cannot name a host, a path or a version — see
-    // `UpdatesContext.download`.
-    () => context.updates.download(),
-    updateFailure,
-  );
-
-  handle<UpdateStatus>(
-    IPC.cancelUpdateDownload,
-    () => context.updates.cancelDownload(),
-    updateFailure,
-  );
-
-  handle<ActionResult>(
-    IPC.installUpdate,
-    () => context.updates.install(),
-    (message) => ({
-      ok: false,
-      message,
-    }),
   );
 }

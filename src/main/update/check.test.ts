@@ -1,16 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import type {
-  DownloadPlan,
-  Release,
-  UpdateDownload,
-  UpdatePreferences,
-} from '../../models/index.js';
-import {
-  CHECKSUMS_ASSET_NAME,
-  RELEASE_URL_PREFIX,
-  signatureAssetName,
-} from '../../models/index.js';
-import type { DownloadController } from './check.js';
+import type { Release, UpdatePreferences } from '../../models/index.js';
+import { RELEASE_URL_PREFIX } from '../../models/index.js';
 import { UpdateChecker } from './check.js';
 
 /**
@@ -37,61 +27,6 @@ const RELEASE: Release = {
 
 const NOON = new Date('2026-08-03T12:00:00Z');
 
-/**
- * A release carrying everything a verified download needs — the artefact, the
- * Sigstore bundle beside it and the checksum manifest — which is what
- * `.github/workflows/release.yml` actually leaves behind.
- */
-const SIGNED_RELEASE: Release = {
-  ...RELEASE,
-  assets: [
-    { name: 'boxwarden_1.2.0_amd64.deb', url: `${RELEASE_URL_PREFIX}download/x.deb` },
-    {
-      name: signatureAssetName('boxwarden_1.2.0_amd64.deb'),
-      url: `${RELEASE_URL_PREFIX}download/x.deb.sigstore.json`,
-    },
-    { name: CHECKSUMS_ASSET_NAME, url: `${RELEASE_URL_PREFIX}download/sha256sums.txt` },
-  ],
-};
-
-/**
- * The downloader as `check.ts` sees it: three verbs and a piece of state.
- *
- * A spy rather than the real `UpdateDownloader`, which imports Electron and
- * would drag a runtime into a suite whose whole point is not needing one. What
- * is under test here is the ORCHESTRATION — that a plan is built in the main
- * process, that a refusal is recorded rather than thrown, that the state rides
- * back on the status — not the bytes.
- */
-function fakeDownloads(): DownloadController & {
-  readonly started: DownloadPlan[];
-  readonly refusals: string[];
-} {
-  const started: DownloadPlan[] = [];
-  const refusals: string[] = [];
-  let state: UpdateDownload = { kind: 'idle' };
-
-  return {
-    started,
-    refusals,
-    get state() {
-      return state;
-    },
-    start(plan) {
-      started.push(plan);
-      state = { kind: 'fetching', version: plan.version, progress: { receivedBytes: 0 } };
-    },
-    cancel() {
-      state = { kind: 'idle' };
-    },
-    refuse(version, message) {
-      refusals.push(message);
-      state = { kind: 'failed', version, message };
-    },
-    install: () => Promise.resolve({ ok: true as const }),
-  };
-}
-
 function checker(
   options: {
     readonly preferences?: UpdatePreferences;
@@ -99,7 +34,6 @@ function checker(
     readonly release?: Release | undefined;
     readonly fetchRelease?: () => Promise<Release | undefined>;
     readonly now?: Date;
-    readonly downloads?: DownloadController;
   } = {},
 ) {
   let preferences: UpdatePreferences = options.preferences ?? { enabled: true };
@@ -120,7 +54,6 @@ function checker(
     now: () => options.now ?? NOON,
     preferences: () => preferences,
     persist,
-    ...(options.downloads === undefined ? {} : { downloads: options.downloads }),
   });
 
   return { subject, fetchRelease, persist, saved: () => preferences };
@@ -304,91 +237,5 @@ describe('UpdateChecker', () => {
       expect(fetchRelease).toHaveBeenCalledTimes(1);
       expect(status.outcome).toMatchObject({ kind: 'available' });
     });
-  });
-});
-
-describe('downloading', () => {
-  it('plans the download in the main process, from its own last status', async () => {
-    const downloads = fakeDownloads();
-    const { subject } = checker({ release: SIGNED_RELEASE, downloads });
-
-    await subject.download();
-
-    expect(downloads.started).toHaveLength(1);
-    expect(downloads.started[0]?.fileName).toBe('boxwarden_1.2.0_amd64.deb');
-    // The identity is derived from the tag that was actually fetched, so a
-    // renderer cannot influence which signature would satisfy the check.
-    expect(downloads.started[0]?.identity.subjectAlternativeName).toContain('refs/tags/v1.2.0');
-  });
-
-  /**
-   * The refusal reaches the user as a state they can read, not as a thrown IPC
-   * error. `RELEASE` has an artefact and no signature beside it, which is
-   * exactly the shape `planDownload` exists to refuse.
-   */
-  it('records a refusal rather than throwing, when the release cannot be verified', async () => {
-    const downloads = fakeDownloads();
-    const { subject } = checker({ release: RELEASE, downloads });
-
-    const status = await subject.download();
-
-    expect(downloads.started).toHaveLength(0);
-    expect(downloads.refusals[0]).toContain('no signature');
-    expect(status.download.kind).toBe('failed');
-  });
-
-  it('does nothing at all when there is no update on offer', async () => {
-    const downloads = fakeDownloads();
-    const { subject } = checker({ release: undefined, downloads });
-
-    const status = await subject.download();
-
-    expect(downloads.started).toHaveLength(0);
-    expect(downloads.refusals).toHaveLength(0);
-    expect(status.outcome.kind).toBe('current');
-  });
-
-  it('carries the download state back on the status, so one poll answers both', async () => {
-    const downloads = fakeDownloads();
-    const { subject } = checker({ release: SIGNED_RELEASE, downloads });
-
-    await subject.download();
-    const status = await subject.status(false);
-
-    expect(status.download).toEqual({
-      kind: 'fetching',
-      version: '1.2.0',
-      progress: { receivedBytes: 0 },
-    });
-  });
-
-  /**
-   * Turning the daily check off is not abandoning a file the user already
-   * waited for. Deleting it, or hiding it, would be the app punishing somebody
-   * for changing a setting.
-   */
-  it('keeps offering a finished download after checks are turned off', async () => {
-    const downloads = fakeDownloads();
-    const { subject } = checker({ release: SIGNED_RELEASE, downloads });
-
-    await subject.download();
-    const status = await subject.setEnabled(false);
-
-    expect(status.outcome.kind).toBe('disabled');
-    expect(status.download.kind).toBe('fetching');
-  });
-
-  /**
-   * A build with no downloader — the fixture, and any test — reports `idle`
-   * forever and refuses to install. It must not claim it could.
-   */
-  it('reports idle and refuses to install when there is no downloader', async () => {
-    const { subject } = checker({ release: SIGNED_RELEASE });
-
-    const status = await subject.download();
-    expect(status.download).toEqual({ kind: 'idle' });
-
-    const result = await subject.install();
-    expect(result).toEqual({ ok: false, message: 'This build cannot install downloads.' });
   });
 });

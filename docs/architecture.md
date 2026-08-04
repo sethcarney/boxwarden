@@ -641,37 +641,46 @@ so a five-service workspace would otherwise stat one `.git` five times a poll.
 
 Once a day the main process asks GitHub for `/releases/latest`, compares it
 against `app.getVersion()`, and — if there is something newer — says which file
-this machine needs and offers to fetch it.
+this machine needs, links to it, and lists the steps to install it.
 
-What it will not do is swap the application in place. `electron-updater` does
-exactly that and verifies a CODE signature to decide it is safe; these builds
-have none, so Squirrel.Mac would refuse the swap and everywhere else it would
-overwrite a binary the OS never checked. See
+It CHECKS. It does not download and it does not install, and that is the whole
+feature rather than the first stage of one.
+
+The reason starts with a constraint that has always been true: it cannot swap
+the application in place. `electron-updater` does exactly that and verifies a
+CODE signature to decide it is safe; these builds have none, so Squirrel.Mac
+would refuse the swap and everywhere else it would overwrite a binary the OS
+never checked. See
 [roadmap](./roadmap.md#6-packaging--signing-notarisation-updates).
 
-What it does instead is the half that needs no certificate, and it is a
-separate pure module — `src/models/download.ts`:
+Given that, an in-app download ends where a browser download ends — at an
+installer the user runs and clicks through a Gatekeeper or SmartScreen warning.
+boxwarden did have one, fetching the artefact and verifying it against
+`sha256sums.txt` and a Sigstore bundle chained to a TUF-fetched trust root. It
+was removed, and the reasoning is worth keeping because the feature looks
+obviously worth having until you price it:
 
-1. **Plan.** Resolve the artefact, its `<name>.sigstore.json` bundle and
-   `sha256sums.txt` out of the release. Every one is a release ASSET held to the
-   same `RELEASE_URL_PREFIX` rule, never a URL built by string concatenation, and
-   the artefact's name has to survive `safeAssetFileName` before anything is
-   written. A release missing any of the three is REFUSED — not downgraded to a
-   weaker check, because an attacker who can add an asset could then disable the
-   signature check by omitting one.
-2. **Fetch.** Stream to `userData/updates`, capped, with progress.
-3. **Verify.** SHA-256 against the manifest, then the Sigstore bundle against a
-   TUF-fetched trust root, with a policy pinning the certificate to
-   `.github/workflows/release.yml@refs/tags/<tag>` and the GitHub Actions OIDC
-   issuer. Both are required; neither degrades to a warning.
-4. **Apply.** `shell.openPath` for the dmg, the NSIS installer and the deb — the
-   OS installs, boxwarden does not. For an AppImage, and only an AppImage,
-   replace the file at `$APPIMAGE` through a same-directory rename and relaunch.
+- The saving over the link was **one download in a browser**. Both paths end at
+  the same installer and the same OS warning.
+- The cost was three crypto dependencies in the main process, a BoringSSL
+  compatibility shim (Electron's crypto cannot verify an EC signature without
+  being told the digest, which Node's OpenSSL infers), and a hard runtime
+  dependency on `tuf-repo-cdn.sigstore.dev` — a different host from GitHub, so a
+  network that permits one may block the other.
+- The failure mode was the wrong shape. Unable to reach the trust root, the app
+  REFUSED to install and said so in words no user can distinguish from "this
+  release is forged". An updater that works on some networks and cries tampering
+  on others is worse than one that hands you a link.
 
-The reason the verification is strict rather than advisory: a file boxwarden
-writes itself carries no `com.apple.quarantine` attribute, so Gatekeeper's
-first-launch check does not fire the way it would on a browser download. There
-is no second gate behind this one.
+Verification did not disappear; it moved out of the critical path. Every release
+still carries `sha256sums.txt` and one `.sigstore.json` per artefact, and the
+release notes carry the commands to check them. On a network that blocks
+Sigstore, that costs a user one optional manual step instead of the entire
+update path.
+
+The way back is a code-signing certificate plus `electron-updater`, which does
+the download, the verification and the swap together — not a hand-rolled fetch,
+which is a worse version of what the certificate gives you outright.
 
 The same shell-around-a-core split as everything else. `src/models/update.ts`
 is pure and holds all of it — semver precedence, the GitHub payload parser, the

@@ -109,17 +109,16 @@ retro-signed — the certificate is bound to the workflow run.
 - **Windows** — run `boxwarden-setup-<v>-<arch>.exe`. Per-user, no admin rights. The build is
   not code-signed, so SmartScreen interposes: _More info_ → _Run anyway_.
 
-boxwarden checks for a newer release once a day. When there is one it offers to
-**fetch and verify** the artefact for the machine it is running on — against
-`sha256sums.txt` and the artefact's `.sigstore.json` bundle, whose certificate
-has to name this repository's release workflow at that release's tag — and then
-hands the verified file to the operating system's installer. It does not swap
-its own application bundle: that needs a CODE signature, which is the thing
-these builds still do not have. The AppImage is the one exception, because an
-AppImage is a single file the user owns and replacing it IS the install.
+boxwarden checks for a newer release once a day and, when there is one, names
+the artefact for the machine it is running on, links to it, and lists the steps
+above. It does not download it and does not install it — see
+`docs/development.md#why-there-is-no-in-app-download`. The short version is that
+swapping the application bundle needs a CODE signature these builds do not have,
+so an in-app download would end at the same installer and the same SmartScreen
+warning as the link does.
 
-A release missing its signature or its checksum manifest is refused rather than
-downloaded, and the browser link stays on screen throughout.
+Which makes the release notes the place verification actually happens, for
+anybody who wants it — so the section below is not boilerplate.
 
 ### Verify what you downloaded
 

@@ -237,67 +237,52 @@ round-robin across the three fake engines, one in three of them produces a
 `wsl.exe -d dev --` command line, which is the arm of `containerExecArgv` least
 likely to be looked at otherwise.
 
-## When a download refuses to verify
+## Why there is no in-app download
 
-`BOXWARDEN_FAKE_UPDATE=1` invents a release but installs nothing, so the
-verification path is only ever exercised against a real one — and when it
-refuses, the message is deliberately unhelpful:
+boxwarden checks for a new release and links to it. It does not fetch the
+artefact and does not run the installer, and that is deliberate — if you are
+here because you expected a progress bar, this is the note that explains where
+it went.
 
-> boxwarden could not reach Sigstore to check the signature, so it will not
-> install this download.
+It used to be there: the app downloaded the artefact, checked it against
+`sha256sums.txt`, and verified a Sigstore bundle chained to a TUF-fetched trust
+root with the certificate pinned to this repository's release workflow. It was
+removed in favour of the link, for three reasons that compound:
 
-That vagueness is correct. "We could not check this" and "this is not what it
-claims to be" are different findings, and telling somebody behind a corporate
-proxy that their download was forged would be a lie. But it leaves the real
-cause nowhere to go, because the app is a GUI process — on Windows with no
-attached console at all — and nothing between `trust.ts` and the renderer reads
-the error's `cause`.
+1. **The app cannot swap its own bundle** without a code-signing certificate,
+   which this project does not have. So the in-app download ended at exactly
+   the installer a browser download ends at, with the same Gatekeeper or
+   SmartScreen warning after it. The saving was one download.
+2. **`tuf-repo-cdn.sigstore.dev` is a different host from GitHub**, and the
+   TUF refresh went through `tuf-js` → the global `fetch` — Node's, which uses
+   neither the system proxy nor the OS certificate store — while the release
+   check went through Electron's `net.fetch`, which uses both. A corporate
+   network where GitHub worked and Sigstore did not was the ordinary case, not
+   the exotic one.
+3. **The failure mode read as an accusation.** Unable to reach the trust root,
+   the app refused to install and said so in wording no user can distinguish
+   from "this release is forged". An updater that works on some networks and
+   cries tampering on others is worse than one that hands you a link.
 
-**First, though: is it the runtime?** Electron links BoringSSL, which — unlike
-Node's OpenSSL — will not infer a digest for an EC key, and every verification
-in this app goes through the digest-less `crypto.verify(undefined, …)` that
-`@tufjs/models` and `@sigstore/core` both make. `src/main/crypto-compat.ts`
-compensates for that and is installed before anything else in `index.ts`; the
-script below tests the primitive before it tests the network, so a runtime that
-cannot verify at all says so in the first three lines rather than looking like
-a blocked CDN.
+There was also a runtime bug worth recording, because it is the kind of thing
+that will bite anything else in this app that verifies a signature: Electron
+links BoringSSL, which — unlike Node's OpenSSL — will not infer a digest for an
+EC key, and `@tufjs/models` and `@sigstore/core` both call
+`crypto.verify(undefined, …)`. Both read the throw as "this key did not sign
+it", so the symptom was `root was signed by 0/3 keys` four layers up, which
+reads like a tampered release rather than a missing default. Signature
+verification could never have succeeded in ANY packaged build, on any platform,
+until a compatibility shim was added — and it was not discoverable until a
+release existed to download.
 
-Two things answer the rest:
+Releases are still signed. `release.yml` cosign-signs every artefact and
+attaches `sha256sums.txt` plus one `.sigstore.json` per file; the release notes
+carry the commands to verify them by hand. See `docs/supply-chain.md`.
 
-```bash
-bun run check:sigstore     # or: node scripts/check-sigstore.mjs --cache <path>
-```
-
-The script makes the same two attempts `trust.ts` makes — a fresh TUF refresh,
-then the `forceCache` fallback — against the same cache directory the app uses,
-and prints every layer of every error. It also probes
-`tuf-repo-cdn.sigstore.dev` directly when both fail, because `tuf-js` flattens
-an HTTP failure into `Failed to download`: the 403 from a proxy, the
-`ENOTFOUND`, or the certificate error is only visible in the raw request.
-
-`trust.ts` also `console.error`s both failures now. Seeing them on Windows
-means launching with output redirected, since a GUI process writes to a console
-that is not there:
-
-```powershell
-$env:DEBUG="tuf:*"; & "<install dir>\boxwarden.exe" *> "$env:TEMP\bw.log"
-```
-
-Three causes account for nearly all of it, and they are told apart by the error
-code rather than by guessing:
-
-| What you see                                  | What it is                                               |
-| --------------------------------------------- | -------------------------------------------------------- |
-| `ENOTFOUND`, `ECONNREFUSED`, `ETIMEDOUT`      | the host is blocked, or needs a proxy the app cannot use |
-| `UNABLE_TO_VERIFY_LEAF_SIGNATURE`, `CERT_*`   | TLS interception — try `NODE_EXTRA_CA_CERTS`             |
-| `HTTP 403` / `HTTP 407` from the direct probe | a proxy is answering for the CDN                         |
-
-The asymmetry worth knowing about: the release check and the artefact download
-go through Electron's `net.fetch`, which uses Chromium's network stack — system
-proxy, OS certificate store. The TUF refresh goes through `@sigstore/tuf` →
-`tuf-js` → the global `fetch`, which is Node's and uses neither. A machine
-where GitHub works and Sigstore does not is that difference, not a broken
-download.
+The way back, if it ever comes back, is a code-signing certificate plus
+`electron-updater` — which does the download, the verification and the bundle
+swap as one thing. Re-adding a hand-rolled fetch would be rebuilding a worse
+version of what the certificate buys outright.
 
 ## Two TypeScript projects
 

@@ -203,9 +203,6 @@ export const IPC = {
   updateStatus: 'boxwarden:update-status',
   dismissUpdate: 'boxwarden:dismiss-update',
   setUpdateChecks: 'boxwarden:set-update-checks',
-  downloadUpdate: 'boxwarden:download-update',
-  cancelUpdateDownload: 'boxwarden:cancel-update-download',
-  installUpdate: 'boxwarden:install-update',
 } as const;
 
 /**
@@ -388,36 +385,19 @@ export interface BoxwardenApi {
   /** Turn the daily check off, or back on — persisted, and checked immediately when on. */
   setUpdateChecks(enabled: boolean): Promise<UpdateStatus>;
 
-  /**
-   * ---- Fetching the update ----
+  /*
+   * There is deliberately NO `downloadUpdate` / `installUpdate` here.
    *
-   * Three more, and the bar they clear is the one `openTerminal` cleared: they
-   * do something no combination of the existing verbs can. A renderer cannot
-   * download a file — it has no filesystem — and it must not be the thing that
-   * decides a download is trustworthy, because the whole verification would
-   * then live on the side of the bridge that renders network data.
+   * There was, and the three verbs did clear the bar — a sandboxed renderer has
+   * no filesystem, so nothing else could have expressed them. They were removed
+   * for a reason that is not about this surface at all: the app cannot swap its
+   * own bundle without a code-signing certificate, so an in-app download ended
+   * at the same installer a browser download ends at, having first required
+   * Sigstore's CDN to be reachable or else REFUSING, in words that read like an
+   * accusation of tampering. See the note at the top of src/models/update.ts.
    *
-   * `downloadUpdate` and `cancelUpdateDownload` answer with the whole status
-   * for the same reason the three above do: the download IS a field of it, and
-   * a second shape would let the two disagree.
-   *
-   * Note what none of them takes: a URL, a filename, or a version. The main
-   * process plans the download from its own last status — see
-   * `UpdatesContext.download` — so the renderer's entire vocabulary here is
-   * "start", "stop" and "apply".
+   * Clearing the bar is necessary for a verb, never sufficient. If they come
+   * back it should be because a certificate arrived and `electron-updater` is
+   * doing the whole job, not because the shape looked re-addable.
    */
-  downloadUpdate(): Promise<UpdateStatus>;
-
-  cancelUpdateDownload(): Promise<UpdateStatus>;
-
-  /**
-   * Hand the verified file to the operating system's installer.
-   *
-   * An `ActionResult` rather than a status because on most platforms the app
-   * is about to quit, and the last thing it does is not a state the renderer
-   * will get to render. Refused unless a download has been fetched AND
-   * verified: the path is written in one place in `download.ts` and read in
-   * one, and nothing the renderer sends can name a different one.
-   */
-  installUpdate(): Promise<ActionResult>;
 }
