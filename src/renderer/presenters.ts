@@ -22,10 +22,13 @@ import type {
   EngineSelection,
   PortBinding,
   SshAgentState,
+  UpdateDownload,
+  UpdateInstructions,
+  UpdateStatus,
 } from '../models/index.js';
 import { projectName } from '../models/index.js';
 import type { DiscoverySnapshot } from '../shared/ipc.js';
-import { canExec, describeTarget, runtimeLabel } from './format.js';
+import { canExec, describeTarget, relativeTime, runtimeLabel } from './format.js';
 
 /**
  * Anything thrown, as a sentence.
@@ -367,4 +370,224 @@ export function claudeStopWarning(
   return sessions === 1
     ? 'A Claude Code session is running in here. Stopping ends it.'
     : `${String(sessions)} Claude Code sessions are running in here. Stopping ends them.`;
+}
+
+/**
+ * ---- The update prompt ----
+ *
+ * Two derivations, because the answer is shown in two places at once and they
+ * are not the same thing:
+ *
+ *   - `updatePanel` is the banner. It exists ONLY when there is a newer
+ *     release the user has not waved away, because a panel that is always on
+ *     screen is a panel nobody reads by the second week.
+ *   - `updateSummary` is the footer line, which is always there. It is also
+ *     the only place boxwarden says which version it is, which is worth having
+ *     on its own — "what am I running" is the first question in any bug report.
+ */
+
+export interface UpdatePanel {
+  readonly headline: string;
+  readonly detail: string;
+  /** Straight from the Model — the steps and commands for this install kind. */
+  readonly instructions: UpdateInstructions;
+  /**
+   * The one file this machine needs, when exactly one matched. Undefined sends
+   * the user to the release page to choose, which is the honest answer — see
+   * `pickAsset`. A label and a URL travel together so a View cannot render one
+   * without the other.
+   *
+   * This is the MANUAL route and it stays on screen even when boxwarden can
+   * fetch the file itself: a browser download is the fallback for every
+   * refusal in `planDownload`, and it is also simply what some people prefer.
+   */
+  readonly link: { readonly label: string; readonly url: string } | undefined;
+  /** The in-app download: what to offer, or how far it has got. */
+  readonly fetch: DownloadPresentation;
+  readonly releaseUrl: string;
+}
+
+/**
+ * The state of the in-app download, as a View can render it without deciding
+ * anything.
+ *
+ * Seven arms for six model states plus "there is nothing to offer", and the
+ * split that matters most is `progress` vs `verifying`: those are the two the
+ * user waits through, and they mean different things. Bytes arriving can be
+ * cancelled and tell you nothing about whether the file is good; verification
+ * is the part that decides, and the file must not be installable during it.
+ * A single "working…" spinner across both would put an Install button on
+ * screen a second before there was anything safe to install.
+ */
+export type DownloadPresentation =
+  /** No artefact matched this machine, so there is nothing to fetch. */
+  | { readonly kind: 'unavailable' }
+  | { readonly kind: 'offer'; readonly label: string }
+  | {
+      readonly kind: 'progress';
+      readonly label: string;
+      /** 0–100, absent when the response declared no length. */
+      readonly percent?: number;
+    }
+  | { readonly kind: 'verifying'; readonly label: string }
+  | { readonly kind: 'ready'; readonly label: string; readonly detail: string }
+  | { readonly kind: 'installing'; readonly label: string }
+  | { readonly kind: 'failed'; readonly message: string };
+
+/**
+ * What the download half of the banner says.
+ *
+ * The `ready` detail names BOTH checks by name. That is not a boast: the user
+ * is about to run an installer that macOS and Windows will then warn them
+ * about, and the sentence that gets them past the warning is the one that says
+ * what was actually verified and by whom.
+ */
+export function downloadPresentation(
+  download: UpdateDownload,
+  asset: { readonly name: string; readonly size?: number } | undefined,
+): DownloadPresentation {
+  switch (download.kind) {
+    case 'idle':
+      return asset === undefined
+        ? { kind: 'unavailable' }
+        : { kind: 'offer', label: `Download ${asset.name}${formatSize(asset.size)}` };
+
+    case 'fetching': {
+      const { receivedBytes, totalBytes } = download.progress;
+      return {
+        kind: 'progress',
+        label:
+          totalBytes === undefined
+            ? `Downloading — ${formatBytes(receivedBytes)} so far`
+            : `Downloading — ${formatBytes(receivedBytes)} of ${formatBytes(totalBytes)}`,
+        ...(totalBytes === undefined || totalBytes === 0
+          ? {}
+          : { percent: Math.min(100, Math.round((receivedBytes / totalBytes) * 100)) }),
+      };
+    }
+
+    case 'verifying':
+      return { kind: 'verifying', label: 'Checking the signature…' };
+
+    case 'ready':
+      return {
+        kind: 'ready',
+        label: `Install ${download.fileName}`,
+        detail:
+          'Verified against this release’s checksums and its Sigstore signature from the boxwarden release workflow.',
+      };
+
+    case 'installing':
+      return { kind: 'installing', label: 'Installing…' };
+
+    case 'failed':
+      return { kind: 'failed', message: download.message };
+  }
+}
+
+/** Bytes for a progress line — always one decimal, so the number stops jumping. */
+function formatBytes(bytes: number): string {
+  const megabytes = bytes / (1024 * 1024);
+  return `${megabytes.toFixed(1)} MB`;
+}
+
+/**
+ * The update banner, or nothing.
+ *
+ * `revealed` is what a dismissal does NOT do: "Not now" hides the banner and
+ * leaves the footer saying an update exists, and clicking that footer brings
+ * this back. A dismissal that could not be undone would be a trap — the user
+ * would have to wait for the NEXT release to see the instructions again.
+ */
+export function updatePanel(
+  status: UpdateStatus,
+  now: number,
+  revealed: boolean,
+): UpdatePanel | undefined {
+  if (status.outcome.kind !== 'available') return undefined;
+  const { release, asset, instructions, dismissed } = status.outcome;
+  if (dismissed && !revealed) return undefined;
+
+  const published =
+    release.publishedAt === undefined
+      ? ''
+      : ` It was published ${relativeTime(release.publishedAt, now)}.`;
+
+  return {
+    headline: `boxwarden ${release.version} is available`,
+    // What this sentence must NOT say any more is "the builds are unsigned".
+    // They are signed, with cosign, which is exactly what makes the verified
+    // download below possible — and they are still not CODE-signed, which is
+    // why the last step of every install is a Gatekeeper or SmartScreen
+    // warning. Saying "unsigned" flatly would now be wrong in the sense that
+    // matters here and right only in the one the user meets later.
+    detail: `You are running ${status.currentVersion}.${published} boxwarden can fetch and verify the download for you; installing it is still your click.`,
+    instructions,
+    link:
+      asset === undefined
+        ? undefined
+        : { label: `${asset.name}${formatSize(asset.size)}`, url: asset.url },
+    fetch: downloadPresentation(status.download, asset),
+    releaseUrl: release.url,
+  };
+}
+
+/** Bytes as the download dialog will show them, or nothing when GitHub did not say. */
+function formatSize(bytes: number | undefined): string {
+  if (bytes === undefined) return '';
+  const megabytes = bytes / (1024 * 1024);
+  return ` (${megabytes < 10 ? megabytes.toFixed(1) : String(Math.round(megabytes))} MB)`;
+}
+
+export interface UpdateSummary {
+  readonly label: string;
+  readonly title: string;
+}
+
+/**
+ * The footer line, for every arm of the status.
+ *
+ * The six arms produce six different sentences on purpose. "Up to date" and
+ * "could not check" must never look the same — one of them is a promise the
+ * app is in no position to make — and neither may borrow the silence that
+ * "checks are off" is entitled to.
+ */
+export function updateSummary(status: UpdateStatus, now: number): UpdateSummary {
+  const name = status.currentVersion === '' ? 'boxwarden' : `boxwarden ${status.currentVersion}`;
+  const checked =
+    status.checkedAt === undefined
+      ? 'boxwarden has not checked for a new release yet.'
+      : `Last checked ${relativeTime(status.checkedAt, now)}.`;
+  const clickToCheck = 'Click to check now.';
+
+  switch (status.outcome.kind) {
+    case 'unsupported':
+      return { label: `${name} · development build`, title: status.outcome.reason };
+
+    case 'disabled':
+      return {
+        label: `${name} · update checks off`,
+        title: `boxwarden is not contacting GitHub. Click to turn the daily check back on and look now.`,
+      };
+
+    case 'unchecked':
+      return { label: name, title: `${checked} ${clickToCheck}` };
+
+    case 'current':
+      return { label: `${name} · up to date`, title: `${checked} ${clickToCheck}` };
+
+    case 'failed':
+      return {
+        label: `${name} · update check failed`,
+        title: `${status.outcome.message} ${clickToCheck}`,
+      };
+
+    case 'available':
+      return {
+        label: `${name} · ${status.outcome.release.version} available`,
+        title: status.outcome.dismissed
+          ? `You said not now to ${status.outcome.release.version}. Click to see how to install it.`
+          : `${checked} Click to see how to install it.`,
+      };
+  }
 }

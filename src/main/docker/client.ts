@@ -31,7 +31,7 @@ import {
 } from './endpoint.js';
 import { DEV_CONTAINER_LABEL, mapContainer, type InspectResponse } from './mapping.js';
 import { detectRuntime, type VersionResponse } from './runtime.js';
-import { createWslConnection, discoverWsl } from './wsl.js';
+import { createWslConnection, discoverWsl, invalidateWslCache } from './wsl.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -329,6 +329,15 @@ export class DockerodeBackend implements DockerBackend {
     this.#connections = undefined;
     this.#ownerById.clear();
     this.#endpointById.clear();
+    // And the WSL reading, which is cached for 30s so the five-second poll does
+    // not spawn wsl.exe six times a minute forever. That cache is right for a
+    // machine that is working and wrong for one that has just stopped: if a
+    // relay died, its socket is still in the cached reading and every call
+    // would keep failing against it until the TTL expired. Clearing it here
+    // puts recovery back on the poll's cadence rather than the cache's — the
+    // expensive discovery is skipped while nothing is wrong, and re-run the
+    // moment something is.
+    invalidateWslCache();
   }
 
   async #listFrom(connection: Connection): Promise<readonly DevContainer[]> {

@@ -1,6 +1,7 @@
 import type { EditorId, TerminalId } from '../../models/index.js';
 import type { EditorOption, TerminalOption } from '../../shared/ipc.js';
 import { ViewPicker } from '../components/ViewPicker.js';
+import type { UpdateSummary } from '../presenters.js';
 import type { ViewPreferences } from '../view.js';
 
 interface Props {
@@ -22,6 +23,19 @@ interface Props {
    */
   readonly showTerminalPicker: boolean;
   readonly onChooseTerminal: (id: TerminalId) => void;
+  /**
+   * The version this is, and what the last release check found — one line,
+   * already worded by `updateSummary` for all six arms of the status.
+   *
+   * Always rendered, including when everything is current. It is the only
+   * place boxwarden says which version it is, and it is the way back from
+   * "Stop checking for updates": a setting with no visible off state is a
+   * setting nobody can reverse.
+   */
+  readonly update: UpdateSummary;
+  readonly updateBusy: boolean;
+  /** Check now — and turn the daily check back on, if it was off. */
+  readonly onUpdateAction: () => void;
 }
 
 export function AppFooter({
@@ -36,6 +50,9 @@ export function AppFooter({
   terminalId,
   showTerminalPicker,
   onChooseTerminal,
+  update,
+  updateBusy,
+  onUpdateAction,
 }: Props) {
   return (
     <footer className="app-foot">
@@ -43,6 +60,16 @@ export function AppFooter({
         {countLabel}
         {scannedLabel === undefined ? '' : ` · ${scannedLabel}`}
       </span>
+
+      <button
+        type="button"
+        className="link foot-update"
+        title={update.title}
+        onClick={onUpdateAction}
+        disabled={updateBusy}
+      >
+        {update.label}
+      </button>
 
       <div className="foot-right">
         <ViewPicker view={view} onChange={onChangeView} />

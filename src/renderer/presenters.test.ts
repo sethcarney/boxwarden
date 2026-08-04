@@ -14,9 +14,11 @@ import {
   sshAgentBadge,
   summariseProjects,
   terminalBlockedReason,
+  updatePanel,
+  updateSummary,
   visiblePorts,
 } from './presenters.js';
-import { snapshot, unreachableSnapshot } from './viewmodels/test-api.js';
+import { snapshot, unreachableSnapshot, updateAvailable } from './viewmodels/test-api.js';
 
 /** Pure — no DOM, no bridge. This is the point of the presenters module. */
 
@@ -339,5 +341,171 @@ describe('claudeStopWarning', () => {
     expect(claudeStopWarning(several)).toBe(
       '3 Claude Code sessions are running in here. Stopping ends them.',
     );
+  });
+});
+
+describe('updatePanel', () => {
+  const NOW = new Date('2026-08-03T12:00:00Z').getTime();
+
+  it('names both versions, the file for this machine, and its size', () => {
+    const panel = updatePanel(updateAvailable(), NOW, false);
+
+    expect(panel?.headline).toBe('boxwarden 1.2.0 is available');
+    expect(panel?.detail).toContain('You are running 1.1.0.');
+    expect(panel?.detail).toContain('published 2 days ago');
+    expect(panel?.link).toEqual({
+      label: 'boxwarden_1.2.0_amd64.deb (91 MB)',
+      url: 'https://github.com/sethcarney/boxwarden/releases/download/v1.2.0/boxwarden_1.2.0_amd64.deb',
+    });
+  });
+
+  /**
+   * The banner promises exactly what the app can deliver, which is now more
+   * than it was and still not everything: boxwarden fetches and verifies, and
+   * the user installs. It must not say "unsigned" — the artefacts ARE signed
+   * with cosign, which is what makes the verification possible — and it must
+   * not imply the app installs itself, because a user who expects that and
+   * finds otherwise stops reading the banner.
+   */
+  it('offers to fetch and verify, and still leaves the install to the user', () => {
+    const detail = updatePanel(updateAvailable(), NOW, false)?.detail ?? '';
+    expect(detail).toContain('fetch and verify');
+    expect(detail).toContain('still your click');
+    expect(detail).not.toContain('unsigned');
+  });
+
+  it('is nothing at all for every arm that is not an available update', () => {
+    expect(
+      updatePanel(
+        { currentVersion: '1.1.0', download: { kind: 'idle' }, outcome: { kind: 'current' } },
+        NOW,
+        false,
+      ),
+    ).toBeUndefined();
+    expect(
+      updatePanel(
+        { currentVersion: '1.1.0', download: { kind: 'idle' }, outcome: { kind: 'unchecked' } },
+        NOW,
+        false,
+      ),
+    ).toBeUndefined();
+    expect(
+      updatePanel(
+        { currentVersion: '1.1.0', download: { kind: 'idle' }, outcome: { kind: 'disabled' } },
+        NOW,
+        false,
+      ),
+    ).toBeUndefined();
+    expect(
+      updatePanel(
+        {
+          currentVersion: '1.1.0',
+          download: { kind: 'idle' },
+          outcome: { kind: 'failed', message: 'offline' },
+        },
+        NOW,
+        false,
+      ),
+    ).toBeUndefined();
+  });
+
+  it('stays down once dismissed, and comes back when the user asks for it', () => {
+    const status = updateAvailable();
+    const dismissed = {
+      ...status,
+      outcome: { ...status.outcome, dismissed: true },
+    } as typeof status;
+
+    expect(updatePanel(dismissed, NOW, false)).toBeUndefined();
+    expect(updatePanel(dismissed, NOW, true)).toBeDefined();
+  });
+
+  it('sends the user to the release page when no single file matched', () => {
+    const status = updateAvailable();
+    const { asset: _dropped, ...outcome } = status.outcome as Extract<
+      typeof status.outcome,
+      { kind: 'available' }
+    >;
+    const panel = updatePanel({ ...status, outcome }, NOW, false);
+
+    expect(panel?.link).toBeUndefined();
+    expect(panel?.releaseUrl).toBe('https://github.com/sethcarney/boxwarden/releases/tag/v1.2.0');
+  });
+});
+
+describe('updateSummary', () => {
+  const NOW = new Date('2026-08-03T12:00:00Z').getTime();
+
+  it('always names the running version — the app says it nowhere else', () => {
+    expect(
+      updateSummary(
+        { currentVersion: '1.1.0', download: { kind: 'idle' }, outcome: { kind: 'unchecked' } },
+        NOW,
+      ).label,
+    ).toBe('boxwarden 1.1.0');
+  });
+
+  /**
+   * The distinction the whole feature rests on: an app that reports a check it
+   * could not complete as "up to date" is worse than one that never checked.
+   */
+  it('never reports a failed check as up to date', () => {
+    const failed = updateSummary(
+      {
+        currentVersion: '1.1.0',
+        download: { kind: 'idle' },
+        outcome: { kind: 'failed', message: 'GitHub answered HTTP 500.' },
+      },
+      NOW,
+    );
+
+    expect(failed.label).toBe('boxwarden 1.1.0 · update check failed');
+    expect(failed.title).toContain('GitHub answered HTTP 500.');
+  });
+
+  it('says when checks are off, so the setting can be found again', () => {
+    const off = updateSummary(
+      { currentVersion: '1.1.0', download: { kind: 'idle' }, outcome: { kind: 'disabled' } },
+      NOW,
+    );
+    expect(off.label).toBe('boxwarden 1.1.0 · update checks off');
+    expect(off.title).toContain('turn the daily check back on');
+  });
+
+  it('reports how long ago the last look was', () => {
+    const current = updateSummary(
+      {
+        currentVersion: '1.1.0',
+        download: { kind: 'idle' },
+        checkedAt: new Date('2026-08-03T09:00:00Z'),
+        outcome: { kind: 'current' },
+      },
+      NOW,
+    );
+    expect(current.label).toBe('boxwarden 1.1.0 · up to date');
+    expect(current.title).toContain('Last checked 3 hours ago.');
+  });
+
+  it('still points at a dismissed update rather than going silent', () => {
+    const status = updateAvailable();
+    const dismissed = {
+      ...status,
+      outcome: { ...status.outcome, dismissed: true },
+    } as typeof status;
+
+    expect(updateSummary(dismissed, NOW).label).toBe('boxwarden 1.1.0 · 1.2.0 available');
+    expect(updateSummary(dismissed, NOW).title).toContain('You said not now');
+  });
+
+  it('says a development build is one, rather than claiming to be up to date', () => {
+    const dev = updateSummary(
+      {
+        currentVersion: '0.0.0',
+        download: { kind: 'idle' },
+        outcome: { kind: 'unsupported', reason: 'This is a development build.' },
+      },
+      NOW,
+    );
+    expect(dev.label).toBe('boxwarden 0.0.0 · development build');
   });
 });

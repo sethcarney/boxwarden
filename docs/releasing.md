@@ -106,10 +106,20 @@ retro-signed — the certificate is bound to the workflow run.
   It sets up `chrome-sandbox` and installs an AppArmor profile the AppImage
   cannot, which Ubuntu 24.04 needs. The `.AppImage` is for everywhere else:
   `chmod +x` and run it.
-- **Windows** — run the `Setup .exe`. Per-user, no admin rights. The build is
-  unsigned, so SmartScreen interposes: _More info_ → _Run anyway_.
+- **Windows** — run `boxwarden-setup-<v>-<arch>.exe`. Per-user, no admin rights. The build is
+  not code-signed, so SmartScreen interposes: _More info_ → _Run anyway_.
 
-There is no auto-update. Installing a later release over the top is the update.
+boxwarden checks for a newer release once a day. When there is one it offers to
+**fetch and verify** the artefact for the machine it is running on — against
+`sha256sums.txt` and the artefact's `.sigstore.json` bundle, whose certificate
+has to name this repository's release workflow at that release's tag — and then
+hands the verified file to the operating system's installer. It does not swap
+its own application bundle: that needs a CODE signature, which is the thing
+these builds still do not have. The AppImage is the one exception, because an
+AppImage is a single file the user owns and replacing it IS the install.
+
+A release missing its signature or its checksum manifest is refused rather than
+downloaded, and the browser link stays on screen throughout.
 
 ### Verify what you downloaded
 
@@ -131,7 +141,7 @@ Per platform, from `release/`:
 | -------- | -------------------------------------------------------------------------------------- |
 | macOS    | `boxwarden-<v>.dmg`, `boxwarden-<v>-arm64.dmg`, matching `-mac.zip`s, `latest-mac.yml` |
 | Linux    | `boxwarden-<v>.AppImage`, `boxwarden_<v>_amd64.deb` (plus arm64), `latest-linux.yml`   |
-| Windows  | `boxwarden Setup <v>.exe`, `latest.yml`                                                |
+| Windows  | `boxwarden-setup-<v>-<arch>.exe`, `latest.yml`                                         |
 
 Plus a `.blockmap` beside each installer that has one.
 
@@ -211,8 +221,20 @@ All three are tracked in
   line above. The Windows equivalent is a code-signing certificate through the
   same `CSC_LINK` pair.
 
-- **Auto-update.** The manifests are published; nothing consumes them. Wiring
-  up `electron-updater` is a change to the app, not to this workflow.
+- **Auto-update.** The app checks for a new release and says how to install it
+  (`src/main/update/`); it does not download or swap anything, because
+  an unsigned in-place update cannot be verified. The `latest*.yml` manifests
+  are still published and still unread — they are what `electron-updater`
+  would consume on the day there is a signature to check. Wiring that up is a
+  change to the app, not to this workflow.
+
+  Two things here DO depend on this workflow, and breaking either one breaks
+  the update prompt rather than the release: the tag has to stay `v<version>`
+  (the check compares it against `package.json`), and the artefact filenames
+  have to keep their architecture spelling — `-arm64` on the dmg and the
+  AppImage, `_amd64` and `_arm64` on the deb. `pickAsset` in
+  `src/models/update.ts` matches on those, and a rename would leave users on a
+  banner that offers the release page instead of a file.
 
 - **ASAR integrity.** The fuse that would detect a tampered archive is off.
 

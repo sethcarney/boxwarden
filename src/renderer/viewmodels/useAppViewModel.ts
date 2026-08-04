@@ -18,6 +18,8 @@ import type { TerminalsViewModel } from './useTerminals.js';
 import { useTerminals } from './useTerminals.js';
 import type { ThemeViewModel } from './useTheme.js';
 import { useTheme } from './useTheme.js';
+import type { UpdateViewModel } from './useUpdate.js';
+import { useUpdate } from './useUpdate.js';
 
 /** Stable identity for "no advice yet", so the partition below memoises. */
 const EMPTY_ADVICE: readonly Advice[] = [];
@@ -39,17 +41,19 @@ export interface AppViewModel {
   readonly claude: ClaudeViewModel;
   /** The setup advice, what the user has hidden of it, and which screen is showing. */
   readonly advisories: AdvisoriesViewModel;
+  readonly update: UpdateViewModel;
 }
 
 /**
  * The root ViewModel: every piece of state the app renders, and every action it
  * can take, with no JSX anywhere beneath it.
  *
- * Composition rather than one large hook, because the seven below have
+ * Composition rather than one large hook, because the nine below have
  * genuinely different lifetimes — Docker is polled every five seconds, Claude
- * Code presence every fifteen, the filesystem is scanned on demand, the editor
- * and terminal lists are read once, and the theme never touches the bridge at
- * all. Keeping them separate is what lets each be tested against a fake
+ * Code presence every fifteen, GitHub is asked about a new release once a day,
+ * the filesystem is scanned on demand, the editor and terminal lists are read
+ * once, and the theme and the hidden advice never touch the bridge at all.
+ * Keeping them separate is what lets each be tested against a fake
  * `BoxwardenApi` without standing up the others.
  *
  * Every hook is called unconditionally and guards on `api` internally: a bridge
@@ -72,6 +76,9 @@ export function useAppViewModel(): AppViewModel {
   // not a literal `[]`: the partition memoises on the array's identity, and a
   // fresh empty array every render would recompute it on every poll.
   const advisories = useAdvisories(discovery.snapshot?.advice ?? EMPTY_ADVICE);
+  // Takes `now` rather than reading the clock, so "published 2 days ago" ages
+  // on the same tick every other relative time in the app does.
+  const update = useUpdate(api, now);
 
   return {
     bridgeAvailable: api !== undefined,
@@ -84,5 +91,6 @@ export function useAppViewModel(): AppViewModel {
     projects,
     claude,
     advisories,
+    update,
   };
 }

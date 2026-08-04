@@ -1,6 +1,6 @@
 {
   "name": "boxwarden",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "description": "Local dev container management: lists the dev containers on your machine and reattaches your editor to them.",
@@ -66,6 +66,9 @@
     "esbuild"
   ],
   "dependencies": {
+    "@sigstore/bundle": "^5.0.0",
+    "@sigstore/tuf": "^5.0.0",
+    "@sigstore/verify": "^4.1.0",
     "dockerode": "^5.0.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"

@@ -10,6 +10,7 @@ import type {
   ProjectId,
   ProjectScan,
   TerminalId,
+  UpdateStatus,
 } from '../models/index.js';
 
 /**
@@ -166,6 +167,12 @@ export const IPC = {
   getStartupCommands: 'boxwarden:get-startup-commands',
   setStartupCommand: 'boxwarden:set-startup-command',
   claudeStatus: 'boxwarden:claude-status',
+  updateStatus: 'boxwarden:update-status',
+  dismissUpdate: 'boxwarden:dismiss-update',
+  setUpdateChecks: 'boxwarden:set-update-checks',
+  downloadUpdate: 'boxwarden:download-update',
+  cancelUpdateDownload: 'boxwarden:cancel-update-download',
+  installUpdate: 'boxwarden:install-update',
 } as const;
 
 /**
@@ -277,4 +284,81 @@ export interface BoxwardenApi {
    * must keep distinct from `none` — the Stop button reads it.
    */
   claudeStatus(ids: readonly ContainerId[]): Promise<ClaudeStatusMap>;
+
+  /**
+   * ---- Self-update ----
+   *
+   * Three verbs, and each one clears one of the bars a new channel has to
+   * clear (see CLAUDE.md):
+   *
+   *   - `updateStatus` is a THIRD cadence, and by far the slowest: a network
+   *     call to GitHub, at most once a day. Folding it into `DiscoverySnapshot`
+   *     would put an HTTP request behind a poll that runs seven hundred times
+   *     an hour, to re-derive an answer that changes when somebody publishes a
+   *     release.
+   *   - `dismissUpdate` and `setUpdateChecks` change main-process state that
+   *     OUTLIVES the call — both are written to preferences.json and read on
+   *     the next launch — which is the same bar `selectEngine` cleared.
+   *
+   * All three answer with the whole status rather than an `ActionResult`, so
+   * the UI never has to guess what a mutation did: it re-renders from the
+   * value it was handed.
+   */
+
+  /**
+   * What the last look found, checking first if a day has passed.
+   *
+   * `force` is the "Check now" button, and it is the only input the renderer
+   * supplies anywhere in this feature. It cannot choose a URL — that is a
+   * constant in the models layer — and it cannot turn checks on: a `force`
+   * against disabled checks still answers `disabled` without touching the
+   * network.
+   */
+  updateStatus(force: boolean): Promise<UpdateStatus>;
+
+  /**
+   * "Not now" about the version currently on offer.
+   *
+   * No argument, for the reason `addProjectRoot` takes none: the renderer says
+   * that the user dismissed something, and the main process decides WHICH
+   * version that was, from its own last status. A version number arriving over
+   * the bridge could silence a release the user was never shown.
+   */
+  dismissUpdate(): Promise<UpdateStatus>;
+
+  /** Turn the daily check off, or back on — persisted, and checked immediately when on. */
+  setUpdateChecks(enabled: boolean): Promise<UpdateStatus>;
+
+  /**
+   * ---- Fetching the update ----
+   *
+   * Three more, and the bar they clear is the one `openTerminal` cleared: they
+   * do something no combination of the existing verbs can. A renderer cannot
+   * download a file — it has no filesystem — and it must not be the thing that
+   * decides a download is trustworthy, because the whole verification would
+   * then live on the side of the bridge that renders network data.
+   *
+   * `downloadUpdate` and `cancelUpdateDownload` answer with the whole status
+   * for the same reason the three above do: the download IS a field of it, and
+   * a second shape would let the two disagree.
+   *
+   * Note what none of them takes: a URL, a filename, or a version. The main
+   * process plans the download from its own last status — see
+   * `UpdatesContext.download` — so the renderer's entire vocabulary here is
+   * "start", "stop" and "apply".
+   */
+  downloadUpdate(): Promise<UpdateStatus>;
+
+  cancelUpdateDownload(): Promise<UpdateStatus>;
+
+  /**
+   * Hand the verified file to the operating system's installer.
+   *
+   * An `ActionResult` rather than a status because on most platforms the app
+   * is about to quit, and the last thing it does is not a state the renderer
+   * will get to render. Refused unless a download has been fetched AND
+   * verified: the path is written in one place in `download.ts` and read in
+   * one, and nothing the renderer sends can name a different one.
+   */
+  installUpdate(): Promise<ActionResult>;
 }

@@ -323,6 +323,26 @@ export interface WslDiscovery {
 const NOT_APPLICABLE: WslDiscovery = { status: { kind: 'not-applicable' }, sockets: [] };
 
 /**
+ * How long a WSL reading is good for.
+ *
+ * The same bargain, and the same number, as `probeSshAgent` — and for a
+ * sharper version of the same reason. Discovery calls `probe()` every five
+ * seconds, and on Windows an uncached pass through this function spawns
+ * `wsl.exe` at least three times before it has even looked at a distro:
+ * `wslIsInstalled`, `listInstalledDistros`, `listRunningDistros`, then one
+ * `inspectDistro` per candidate. That is upwards of a thousand process spawns
+ * an hour to re-answer a question that changes when somebody starts a distro.
+ *
+ * 30 seconds is chosen from the user's side rather than the machine's: someone
+ * who has just started a distro, or installed socat because an advisory told
+ * them to, should see the app notice on its own rather than wonder whether it
+ * is going to. Long enough to stop the spawning, short enough to feel awake.
+ */
+const CACHE_TTL_MS = 30_000;
+
+let cached: { readonly at: number; readonly value: WslDiscovery } | undefined;
+
+/**
  * Every running WSL distro that has, or can be given, a reachable engine socket
  * — plus enough about the ones that do not for the UI to explain itself.
  *
@@ -331,12 +351,36 @@ const NOT_APPLICABLE: WslDiscovery = { status: { kind: 'not-applicable' }, socke
  * a position to tell them apart; returning only the sockets is what forced the
  * UI to say "couldn't connect" and stop there.
  *
- * Distros are inspected concurrently: this runs on every refresh, and a machine
- * with three distros should not pay three round trips in series for it.
+ * Distros are inspected concurrently: a machine with three distros should not
+ * pay three round trips in series for it.
+ *
+ * **Cached**, because this is the most expensive thing the five-second poll can
+ * reach — see `CACHE_TTL_MS`. `now` is a parameter for the reason the clock is
+ * one everywhere else in this codebase: a test asks for a fresh read by passing
+ * a time past the TTL rather than by reaching for a global.
  */
-export async function discoverWsl(): Promise<WslDiscovery> {
+export async function discoverWsl(now: number = Date.now()): Promise<WslDiscovery> {
   if (process.platform !== 'win32') return NOT_APPLICABLE;
+  if (cached !== undefined && now - cached.at < CACHE_TTL_MS) return cached.value;
 
+  const value = await discover();
+  cached = { at: now, value };
+  return value;
+}
+
+/**
+ * Drop the cached reading.
+ *
+ * For the one case where waiting out the TTL is wrong: the user pressed
+ * something. A forced check is the user asking a question, and answering it
+ * with a reading from twenty seconds ago is how an app looks broken to the
+ * person who just fixed the thing it was complaining about.
+ */
+export function invalidateWslCache(): void {
+  cached = undefined;
+}
+
+async function discover(): Promise<WslDiscovery> {
   if (!(await wslIsInstalled())) {
     return { status: { kind: 'not-installed' }, sockets: [] };
   }

@@ -1,12 +1,21 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { BrowserWindow, app, dialog, session, shell, type WebContents } from 'electron';
-import { defaultProjectRoots, resolveProjectRoots, withStartupCommand } from '../models/index.js';
+import {
+  defaultProjectRoots,
+  detectInstallKind,
+  resolveProjectRoots,
+  withStartupCommand,
+} from '../models/index.js';
 import { registerIpcHandlers } from './ipc.js';
 import type { DockerBackend } from './docker/backend.js';
 import { DockerodeBackend } from './docker/client.js';
 import { FakeDockerBackend } from './docker/fake.js';
 import { shutdownWslServices } from './docker/wsl.js';
+import { UpdateChecker } from './update/check.js';
+import { UpdateDownloader } from './update/download.js';
+import { fakeUpdatesFromEnv } from './update/fake.js';
+import { fetchLatestRelease } from './update/github.js';
 import { loadPreferences, savePreferences } from './preferences.js';
 
 /**
@@ -284,8 +293,76 @@ void app.whenReady().then(async () => {
 
   mainWindow = createWindow();
 
+  /**
+   * The daily release check.
+   *
+   * `app.isPackaged` is the gate, and it is doing two jobs. In development
+   * `app.getVersion()` is the `0.0.0` placeholder, so there is nothing
+   * meaningful to compare — and "download the .dmg and install it over the
+   * top" is nonsense advice for a checkout you are editing. It also means
+   * `bun run dev`, the fixture runs and CI never contact GitHub.
+   *
+   * The install kind is detected once, here, because none of its inputs can
+   * change while the app runs.
+   */
+  const updateIdentity = {
+    currentVersion: app.getVersion(),
+    installKind: detectInstallKind(process.platform, process.env, process.execPath),
+    arch: process.arch,
+  };
+  /**
+   * The bytes half: fetch the artefact, verify it, hand it to the OS.
+   *
+   * Both paths live under `userData` rather than the system temp directory,
+   * and for two different reasons. The download has to survive a reboot — a
+   * verified installer the user has not run yet is not rubbish — and a temp
+   * directory is precisely the place other processes are entitled to write,
+   * which is the wrong neighbourhood for a file this app will later open.
+   * TUF's cache is separate from it so that sweeping old downloads can never
+   * take the trust root with it.
+   */
+  const downloads = new UpdateDownloader({
+    ...updateIdentity,
+    directory: join(app.getPath('userData'), 'updates'),
+    trustCachePath: join(app.getPath('userData'), 'sigstore'),
+    now: () => new Date(),
+    // Nothing to do: the renderer POLLS `updateStatus`, which reads the
+    // downloader's state directly, so a push would be a second delivery of
+    // something already arriving. The hook exists because a future
+    // `webContents.send` would go here, and a downloader that could not
+    // announce a change would have to be rewritten to add one.
+    onChange: () => undefined,
+    relaunch: () => {
+      app.relaunch();
+    },
+  });
+
+  const updates =
+    // BOXWARDEN_FAKE_UPDATE=1 serves a release that does not exist, through the
+    // real folding — the counterpart to BOXWARDEN_FAKE_DOCKER, and for the same
+    // reason: the screen only appears on a machine where something newer has
+    // been published.
+    fakeUpdatesFromEnv(process.env, updateIdentity) ??
+    new UpdateChecker({
+      ...updateIdentity,
+      supported: app.isPackaged,
+      fetchRelease: () => fetchLatestRelease(app.getVersion()),
+      now: () => new Date(),
+      preferences: () => preferences.updates,
+      persist: (next) => {
+        persist({ ...preferences, updates: next });
+      },
+      downloads,
+    });
+
+  // At launch, not at exit: the sweep that runs on quit is the one that does
+  // not run when the app is killed, and leaving installers behind is the
+  // failure this whole path exists to avoid.
+  void downloads.sweep();
+
   registerIpcHandlers({
     backend,
+    updates,
     // Identity by object, not by URL. A URL comparison invites a
     // near-miss — a frame that merely *claims* the right origin — whereas
     // this is the actual WebContents we created, and nothing else can be it.

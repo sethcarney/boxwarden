@@ -10,6 +10,7 @@ import type {
   ProjectId,
   ProjectRoot,
   ProjectScan,
+  UpdateStatus,
 } from '../models/index.js';
 import {
   adviseEnvironment,
@@ -46,6 +47,7 @@ import {
 import { launchTerminal } from './terminal/launch.js';
 import { resolveContainerCli, resolveTerminal } from './terminal/resolve.js';
 import { terminalsFor, terminalTarget } from './terminal/targets.js';
+import type { UpdatesContext } from './update/check.js';
 
 /**
  * Registering the handlers needs the backend and a way to recognise our own
@@ -76,6 +78,15 @@ export interface IpcContext {
 
   /** Where the per-container startup commands are read from and written to. */
   readonly terminals: TerminalsContext;
+
+  /**
+   * The daily release check.
+   *
+   * Reached through the same kind of seam as the folder picker: this module
+   * knows nothing about `net.fetch`, `app.getVersion()` or where preferences
+   * live, and the checker knows nothing about IPC.
+   */
+  readonly updates: UpdatesContext;
 }
 
 /**
@@ -640,5 +651,72 @@ export function registerIpcHandlers(context: IpcContext): void {
       return statuses;
     },
     () => ({}),
+  );
+
+  // ---- Self-update ----
+
+  /**
+   * Every one of the three answers with a whole `UpdateStatus`, including the
+   * failure path: a status that named no version would blank the footer, which
+   * is the only place the app says which boxwarden this is.
+   */
+  const updateFailure = (message: string): UpdateStatus => ({
+    currentVersion: context.updates.currentVersion,
+    // `idle`, not the downloader's state: this path is reached when the call
+    // itself failed, so the only honest thing to say about a download is
+    // nothing. Reading through to the real state here would report progress
+    // from a handler that just threw.
+    download: { kind: 'idle' },
+    outcome: { kind: 'failed', message },
+  });
+
+  handle<UpdateStatus>(
+    IPC.updateStatus,
+    // The single boolean the renderer supplies in this feature. It skips a
+    // timestamp comparison on a URL that is a constant in the models layer —
+    // it cannot name a host, and it cannot re-enable a check the user turned
+    // off.
+    (force) => context.updates.status(force === true),
+    updateFailure,
+  );
+
+  handle<UpdateStatus>(
+    IPC.dismissUpdate,
+    // No argument: which version was dismissed is the main process's own last
+    // answer, not something the renderer gets to name.
+    () => context.updates.dismiss(),
+    updateFailure,
+  );
+
+  handle<UpdateStatus>(
+    IPC.setUpdateChecks,
+    (enabled) => context.updates.setEnabled(enabled === true),
+    updateFailure,
+  );
+
+  // ---- Fetching the update ----
+
+  handle<UpdateStatus>(
+    IPC.downloadUpdate,
+    // No argument. What is fetched is planned from the main process's own last
+    // status, so the renderer cannot name a host, a path or a version — see
+    // `UpdatesContext.download`.
+    () => context.updates.download(),
+    updateFailure,
+  );
+
+  handle<UpdateStatus>(
+    IPC.cancelUpdateDownload,
+    () => context.updates.cancelDownload(),
+    updateFailure,
+  );
+
+  handle<ActionResult>(
+    IPC.installUpdate,
+    () => context.updates.install(),
+    (message) => ({
+      ok: false,
+      message,
+    }),
   );
 }

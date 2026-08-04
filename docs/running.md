@@ -185,7 +185,7 @@ are targeting, or in CI on that OS.
 | ------- | ---------------------------------------------------------------------------- |
 | macOS   | `boxwarden-<version>.dmg`, `-arm64.dmg`, matching `.zip`s                    |
 | Linux   | `boxwarden-<version>.AppImage`, `boxwarden_<version>_amd64.deb` (plus arm64) |
-| Windows | `boxwarden Setup <version>.exe`                                              |
+| Windows | `boxwarden-setup-<version>-<arch>.exe`                                       |
 
 ### Install it
 
@@ -221,7 +221,7 @@ chmod +x release/boxwarden-0.0.0.AppImage
 ./release/boxwarden-0.0.0.AppImage
 ```
 
-**Windows.** Run `boxwarden Setup <version>.exe`. It is a per-user install, so
+**Windows.** Run `boxwarden-setup-<version>-<arch>.exe`. It is a per-user install, so
 no UAC prompt and no admin rights, and it lets you choose the directory. The
 build is unsigned, so SmartScreen will interpose — _More info_ → _Run anyway_.
 
@@ -233,8 +233,41 @@ build is unsigned, so SmartScreen will interpose — _More info_ → _Run anyway
 | Linux   | `sudo apt remove boxwarden`, or delete the AppImage |
 | Windows | Settings → Apps → boxwarden → Uninstall             |
 
-There is **no auto-update**. An installed build stays at the version you built
-until you build another one and install it over the top.
+### Updates
+
+boxwarden asks GitHub once a day whether a newer release exists. When there is
+one it says so, above the container list, with the exact file for the platform
+and install kind you are on and the command to install it — `sudo apt install
+./boxwarden_<version>_amd64.deb` for the deb, `chmod +x` for the AppImage, drag
+to Applications for the dmg, run the installer for Windows.
+
+It can also **fetch the file for you and check it**: the download is verified
+against the release's `sha256sums.txt` and against the cosign signature beside
+it, whose certificate has to name this repository's release workflow at that
+exact tag. Only then does the Install button appear, and all it does is hand the
+file to your operating system's installer — you still complete the install.
+
+What it does **not** do is replace its own application bundle, and it will not
+while the builds carry no CODE signature: Squirrel.Mac refuses an unsigned swap
+outright, and everywhere else it would mean overwriting a binary on the strength
+of a download the OS never checked. The one exception is the AppImage, which is
+a single file you own — there boxwarden replaces the file and relaunches, after
+the same two checks.
+
+If a release is missing its signature or its checksum manifest, boxwarden
+refuses to download it and points you at the release page instead.
+
+Two controls, both in the footer line that names your version:
+
+- **Not now** on the banner hides it for that version. The footer still says the
+  update exists, and clicking the footer brings the banner back.
+- **Stop checking for updates** turns the daily check off for good. It is the
+  only outbound network request boxwarden makes, so if you would rather it made
+  none, that is the switch. The footer then reads `update checks off`, and
+  clicking it turns them back on and looks straight away.
+
+The check is skipped entirely in a development build (`bun run dev`), where
+there is no released version to compare against.
 
 ---
 
@@ -287,8 +320,9 @@ the installers and the deb's control scripts have been inspected.
 Not verified, because the machine this was built on has no Docker socket and no
 editor installed: discovery against a real daemon, whether the
 `vscode-remote://` URI reattaches rather than offering to build, and editor
-binary resolution on any OS. Signing, notarisation and auto-update are not
-configured at all. [roadmap.md](./roadmap.md) is the honest list.
+binary resolution on any OS. Signing and notarisation are not configured at
+all, and the update check has never seen a real release — there are none yet.
+[roadmap.md](./roadmap.md) is the honest list.
 
 The engine picker and the setup advice are unit-tested and exercised against
 the fixtures, which is a real bar — the advice engine is pure, so every branch

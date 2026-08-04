@@ -63,6 +63,7 @@ MODEL       src/models/                pure types and functions, imports nothing
               editor/     URI building, spawn
               terminal/   docker exec argv, emulator quoting, spawn
               projects/   filesystem walk for unbuilt dev containers
+              update/     the daily release check, and its fixture
 ```
 
 **The layering rule** has three parts, and all three are load-bearing:
@@ -81,6 +82,8 @@ MODEL       src/models/                pure types and functions, imports nothing
    | `projects/scan.ts` (fs walk)      | `models/project.ts`                        |
    | `preferences.ts` (fs)             | `models/{engine,project,terminal}.ts`      |
    | `ssh-agent.ts` (env, fs, exec)    | `models/advice.ts`, `models/ssh-agent.ts`  |
+   | `update/github.ts` (net)          | `models/update.ts`                         |
+   | `update/check.ts` (clock, cache)  | `models/update.ts`                         |
 
 2. **A ViewModel renders nothing.** No module in `src/renderer/viewmodels/`
    imports `react-dom` or returns JSX. That is what lets the whole layer be
@@ -96,18 +99,20 @@ Docker daemon or a display, and why the shells stay small.
 
 ### The ViewModel layer
 
-`useAppViewModel()` composes seven, kept separate because their lifetimes
+`useAppViewModel()` composes nine, kept separate because their lifetimes
 genuinely differ:
 
-| Hook            | Owns                                                        | Cadence           |
-| --------------- | ----------------------------------------------------------- | ----------------- |
-| `useDiscovery`  | snapshot, busy set, start/stop/open/terminal, engine choice | polled every 5s   |
-| `useProjects`   | scan, roots, unbuilt/built partition                        | on open, on ask   |
-| `useEditors`    | installed editors, the chosen one                           | read once         |
-| `useTerminals`  | installed emulators, the chosen one, startup commands       | read once         |
-| `useNotices`    | the message bar and the copyable fallback                   | event-driven      |
-| `useAdvisories` | which advice is hidden, and which screen is showing         | never touches IPC |
-| `useTheme`      | layout + theme, persisted to localStorage                   | never touches IPC |
+| Hook              | Owns                                                        | Cadence                    |
+| ----------------- | ----------------------------------------------------------- | -------------------------- |
+| `useDiscovery`    | snapshot, busy set, start/stop/open/terminal, engine choice | polled every 5s            |
+| `useProjects`     | scan, roots, unbuilt/built partition                        | on open, on ask            |
+| `useEditors`      | installed editors, the chosen one                           | read once                  |
+| `useTerminals`    | installed emulators, the chosen one, startup commands       | read once                  |
+| `useNotices`      | the message bar and the copyable fallback                   | event-driven               |
+| `useClaudeStatus` | Claude Code presence per container                          | polled every 15s           |
+| `useUpdate`       | the release check: banner, footer line, dismiss, off switch | asked hourly, GitHub daily |
+| `useAdvisories`   | which advice is hidden, and which screen is showing         | never touches IPC          |
+| `useTheme`        | layout + theme, persisted to localStorage                   | never touches IPC          |
 
 Four conventions hold this together:
 
@@ -125,9 +130,15 @@ Four conventions hold this together:
   exactly that reason: two busy sets would let one re-enable a button the other
   still considers busy.
 - **Failures report through `useNotices`**, never through a second message
-  channel, so a later failure cannot hide behind an earlier one.
+  channel, so a later failure cannot hide behind an earlier one. `useUpdate` is
+  the one exception, and it is a narrow one: every other ViewModel reports a
+  failure that followed a click, whereas a background release check that seized
+  the message bar would push aside a notice about what the user was actually
+  doing — hourly, forever, on a machine that is simply offline. A failed check
+  is an arm of `UpdateStatus` instead, so it renders where the answer would
+  have.
 
-**The IPC surface is fifteen narrow verbs** — see `src/shared/ipc.ts` — all
+**The IPC surface is twenty-one narrow verbs** — see `src/shared/ipc.ts` — all
 declared as a `BoxwardenApi` interface consumed by the renderer without
 importing Electron. They fall into three groups by cadence:
 
@@ -138,6 +149,9 @@ importing Electron. They fall into three groups by cadence:
 - **Terminals, read once then on demand**: `listTerminals`, `openTerminal`,
   `getStartupCommands`, `setStartupCommand`.
 - **Container processes, polled every 15s**: `claudeStatus`.
+- **The release check, asked hourly and answered from GitHub once a day**:
+  `updateStatus`, `dismissUpdate`, `setUpdateChecks`, `downloadUpdate`,
+  `cancelUpdateDownload`, `installUpdate`.
 
 Prefer looping over the existing verbs (e.g. `Promise.allSettled` for a compose
 group's "Start all") over adding new channels. The exceptions so far all earned
@@ -146,8 +160,14 @@ terminal verbs spawn a process no combination of the others can; and the
 project verbs and `claudeStatus` are a _different cadence_ — folding
 `scanProjects` into `DiscoverySnapshot` would make the 5s poll pay for a
 filesystem walk sixty times an hour, and folding in `claudeStatus` would
-multiply its Docker traffic by the number of live containers. **A new verb has
-to clear one of those three bars.** Lifecycle actions return failure as
+multiply its Docker traffic by the number of live containers. The update verbs
+clear all three between them: `updateStatus` is the slowest cadence in the app
+(an HTTP request, daily); `dismissUpdate` and `setUpdateChecks` write
+preferences that outlive the call; and `downloadUpdate`, `cancelUpdateDownload`
+and `installUpdate` do something no combination of the others can, because a
+sandboxed renderer has no filesystem — and because the decision that a download
+is trustworthy must not live on the side of the bridge that renders network
+data. **A new verb has to clear one of those three bars.** Lifecycle actions return failure as
 `{ ok: false, message }` data rather than throwing — a thrown main-process
 error crosses IPC as an opaque string with the real message buried.
 
@@ -159,7 +179,15 @@ command — it reads its own stored copy — and `claudeStatus` drops any id tha
 is not in the last scan.
 
 `addProjectRoot` takes **no argument** on purpose: the renderer can ask for the
-folder picker, and cannot say which folder the answer is.
+folder picker, and cannot say which folder the answer is. `dismissUpdate` is
+the same shape — the renderer says the user dismissed something, and the main
+process decides which version that was from its own last status. So are the
+three download verbs, and they are the sharpest case of the rule: one fetches a
+file from the internet and one opens it with the operating system, and neither
+takes a URL, a filename or a version. The plan is built in the main process
+from a release payload whose every link was already checked against this
+repository, and the path handed to the OS is the single one that passed both the
+checksum and the signature.
 
 ### Two path spaces — the most error-prone part of this app
 
@@ -404,6 +432,98 @@ v1 **annotates** the Stop button rather than gating it; a confirm dialog is the
 follow-up, once the detection has been seen to be reliable against a real
 daemon.
 
+### Self-update
+
+Once a day the main process asks GitHub for `/releases/latest` and, if
+something newer exists, says which file this machine needs and how to install
+it. Same split as everything else: `src/models/update.ts` is pure and holds the
+whole decision — semver precedence, the payload parser, install-kind detection,
+the asset match, the per-platform instructions. `src/main/update/github.ts` is
+the one module that reaches the network, and it is the only one that imports
+Electron; `src/main/update/check.ts` holds the clock and the cache, takes the
+fetch as a parameter, and therefore has tests.
+
+**It does not swap the application bundle, and that is the design, not a stage
+of it.** `electron-updater` does exactly that and verifies a CODE signature to
+decide it is safe; these builds have none — cosign is a different thing and does
+not substitute — so Squirrel.Mac refuses the swap outright and everywhere else
+it would overwrite a binary the OS never checked.
+
+### Fetching and verifying the download
+
+What it DOES do is the half that needs no certificate, in the pure
+`src/models/download.ts` plus shells in `src/main/update/`:
+
+1. **Plan** — resolve the artefact, its `<name>.sigstore.json` and
+   `sha256sums.txt` out of the release. All three are release ASSETS, held to
+   the same `RELEASE_URL_PREFIX` rule as everything else out of that payload,
+   never URLs built by concatenation.
+2. **Fetch** — stream to `userData/updates`, capped, with progress.
+3. **Verify** — SHA-256 against the manifest, then the Sigstore bundle against a
+   TUF-fetched trust root.
+4. **Apply** — `shell.openPath` and let the OS install. Except the AppImage.
+
+Six rules hold this together:
+
+- **A missing signature is a REFUSAL, never a downgrade to checksum-only.**
+  Otherwise an attacker who can add an asset to a release disables the signature
+  check by omitting one. Same for a missing `sha256sums.txt`.
+- **The certificate identity is the point.** Any workflow on GitHub can get a
+  cert from the same issuer, so a bundle that merely verifies proves nothing.
+  `signerIdentity` pins the SAN to
+  `.github/workflows/release.yml@refs/tags/<tag>` and the issuer to GitHub's
+  Actions token service. **That string is a contract with `release.yml`** —
+  renaming the workflow, or moving the signing step into a reusable one, makes
+  every installed copy refuse the next release.
+- **`safeAssetFileName` is an allow-list and refuses rather than sanitises.** The
+  name arrives over the network and becomes a path. Rewriting a hostile name
+  into a safe one produces a file that no longer matches its line in
+  `sha256sums.txt`, so the failure would surface as a bogus integrity error.
+  No spaces: `electron-builder.yml` sets `nsis.artifactName` so the installer
+  is `boxwarden-setup-<version>-<arch>.exe` rather than the spaced default,
+  which is what lets the allow-list stay this narrow. First and last characters
+  must be alphanumeric, which stops the trailing dot or space Windows strips
+  _after_ validation.
+- **`verifying` is a state of its own, and nothing is installable during it.**
+  That is the window in which the whole file is on disk and unvouched-for. A
+  file boxwarden wrote itself carries no `com.apple.quarantine` attribute, so
+  Gatekeeper's first-launch check does not fire — **this verification is the
+  only gate, not a second opinion.**
+- **The AppImage is the one in-place update, and only via a same-directory
+  rename.** An AppImage is one file the user owns; a copy interrupted halfway
+  would leave them with a truncated binary and no working boxwarden.
+- **The trust root comes from TUF, not a vendored JSON.** Sigstore rotates keys;
+  a pinned snapshot would silently turn every download into a failure on some
+  Tuesday, and an update mechanism that disables itself is worse than none.
+
+Five things the CHECK breaks on if they are forgotten:
+
+- **A prerelease sorts BELOW the release it leads to.** Backwards, and everyone
+  on the final 1.2.0 is prompted to "update" to the candidate it replaced.
+- **The install KIND decides the instructions, not the platform.** Linux is a
+  deb apt replaces in place and an AppImage the user overwrites by hand.
+  `detectInstallKind` reads the AppImage runtime's own `APPIMAGE` variable and
+  the install prefix, and answers `linux-unknown` rather than guessing.
+- **The x64 deb is `amd64`.** electron-builder follows dpkg's architecture
+  names for the deb and omits the architecture entirely from the default x64
+  dmg and AppImage. One token table covers all of it; a per-target regex is how
+  the deb ends up unmatched. Those filenames are an interface — renaming an
+  artefact in `release.yml` breaks the match.
+- **URLs from the response are checked against
+  `https://github.com/sethcarney/boxwarden/releases/`, not `github.com`.**
+  `shell.openExternal` only checks the origin, so origin alone would accept a
+  link to any other repository on the site. The same parser guards the copy
+  remembered in `preferences.json`, which is a file anything can write.
+- **A failed check is not "up to date".** Separate arms, rendered differently,
+  for the reason `ClaudeStatus` keeps `unknown` apart from `none`.
+
+The check is skipped entirely when `app.isPackaged` is false, so `bun run dev`
+and CI never contact GitHub — which also means `BOXWARDEN_FAKE_UPDATE=1` is the
+only way to see the banner until a release exists. The fixture drives the real
+`planDownload` over a fabricated release that carries its signature and checksum
+assets, and simulates the fetch, so the progress bar and the Install button can
+be worked on without a network — but it will not install anything.
+
 ### Layout and theme
 
 Three layouts (`grid` — the default, `list`, `rows`) and three themes (`dark`,
@@ -570,6 +690,12 @@ what each one exercises — Windows paths, compose, unparseable labels, WSL,
 etc.). The main process logs a loud warning when this is active; never let a
 fake container list be mistaken for a real one.
 
+`BOXWARDEN_FAKE_UPDATE=1` is the same bargain for the update banner
+(`src/main/update/fake.ts`): a release one minor version above this build,
+carrying every artefact the release workflow attaches, folded through the real
+`foldUpdateStatus`. It touches neither the network nor `preferences.json`, and
+warns just as loudly.
+
 ## Working in the repo's own dev container
 
 `bun run devcontainer:open` (`scripts/devcontainer-open.mjs`) builds/starts
@@ -683,4 +809,6 @@ that are not in any file. Four rules that touch code review:
 
 The README's status line matters: discovery/start-stop/open-in-editor are
 unit-tested and UI-verified against fixtures, but **not yet verified against a
-real Docker daemon or a real editor install**.
+real Docker daemon or a real editor install**. The update check is in the same
+position for a different reason — there are no releases yet, so nothing has
+ever come back from `/releases/latest`.

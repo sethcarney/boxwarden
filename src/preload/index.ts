@@ -21,12 +21,21 @@ import type { BoxwardenApi } from '../shared/ipc.js';
  *     Anything else arrives as undefined on the far side.
  *
  * The methods are deliberately narrow — no generic "invoke any channel" escape
- * hatch. A renderer bug can misuse only these fifteen verbs, and every one
+ * hatch. A renderer bug can misuse only these eighteen verbs, and every one
  * that acts on a container or a project takes an ID: the main process resolves
  * that to its own copy rather than acting on data the renderer supplied.
  *
- * Note what `addProjectRoot` does NOT take: a path. The renderer can ask for
- * the folder picker to be shown, and cannot say which folder the answer is.
+ * Note what `addProjectRoot` does NOT take: a path, and what `dismissUpdate`
+ * does not take: a version. The renderer can ask for the folder picker to be
+ * shown and cannot say which folder the answer is; it can say the user
+ * dismissed an update and cannot say which one.
+ *
+ * `downloadUpdate` and `installUpdate` are the sharpest case of the same rule.
+ * One fetches a file from the internet and the other opens it with the
+ * operating system, and neither takes an argument: the URL is planned in the
+ * main process from a release payload whose every link was already checked
+ * against this repository, and the path handed to the OS is the one — the
+ * single one — that passed both the checksum and the signature.
  */
 const api: BoxwardenApi = {
   discover: () => ipcRenderer.invoke(IPC.discover),
@@ -47,6 +56,16 @@ const api: BoxwardenApi = {
   // renderer object here — and it re-validates every id against its own last
   // container list regardless.
   claudeStatus: (ids) => ipcRenderer.invoke(IPC.claudeStatus, [...ids]),
+  updateStatus: (force) => ipcRenderer.invoke(IPC.updateStatus, force),
+  // No version argument — the main process dismisses whatever it last offered.
+  dismissUpdate: () => ipcRenderer.invoke(IPC.dismissUpdate),
+  setUpdateChecks: (enabled) => ipcRenderer.invoke(IPC.setUpdateChecks, enabled),
+  // No URL, no filename, no version: what gets downloaded is planned in the
+  // main process from its own last status.
+  downloadUpdate: () => ipcRenderer.invoke(IPC.downloadUpdate),
+  cancelUpdateDownload: () => ipcRenderer.invoke(IPC.cancelUpdateDownload),
+  // No path — the verified one is the only one the main process will open.
+  installUpdate: () => ipcRenderer.invoke(IPC.installUpdate),
 };
 
 contextBridge.exposeInMainWorld('boxwarden', api);
