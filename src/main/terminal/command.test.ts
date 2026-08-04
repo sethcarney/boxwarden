@@ -218,6 +218,69 @@ describe('daemonUrl', () => {
 describe('containerExecArgv', () => {
   const cli = { kind: 'docker', binaryPath: '/usr/bin/docker' } as const;
 
+  /**
+   * `docker exec` without `-u` enters as the IMAGE's user, which for most dev
+   * container base images is root — while VS Code attaches as `remoteUser`.
+   * Same container, different world: none of the tools a dev container installs
+   * for its user are on root's PATH.
+   */
+  it("enters as the container's remote user, the way VS Code does", () => {
+    const argv = containerExecArgv({
+      cli,
+      containerId: CONTAINER_ID,
+      user: 'vscode',
+      script: 'exec sh -l',
+    });
+
+    expect(argv).toEqual([
+      '/usr/bin/docker',
+      'exec',
+      '-it',
+      '-u',
+      'vscode',
+      CONTAINER_ID,
+      'sh',
+      '-lc',
+      'exec sh -l',
+    ]);
+  });
+
+  /**
+   * Position is not cosmetic: everything after the container id is the command
+   * to run, so a `-u` there would be passed to `sh` rather than to the daemon.
+   */
+  it('puts -u before the container id, where the CLI expects it', () => {
+    const argv = containerExecArgv({
+      cli,
+      containerId: CONTAINER_ID,
+      user: 'vscode',
+      script: 'exec sh -l',
+    });
+
+    expect(argv.indexOf('-u')).toBeLessThan(argv.indexOf(CONTAINER_ID));
+  });
+
+  it('says nothing when no user is known, leaving the daemon its default', () => {
+    const argv = containerExecArgv({ cli, containerId: CONTAINER_ID, script: 'exec sh -l' });
+    expect(argv).not.toContain('-u');
+    expect(
+      containerExecArgv({ cli, containerId: CONTAINER_ID, user: '', script: 'x' }),
+    ).not.toContain('-u');
+  });
+
+  it('carries the user through the WSL arm as well', () => {
+    const argv = containerExecArgv({
+      cli: { kind: 'podman', binaryPath: '' },
+      containerId: CONTAINER_ID,
+      transport: { transport: 'wsl', distro: 'dev', socketPath: '/run/podman/podman.sock' },
+      user: 'vscode',
+      script: 'exec sh -l',
+    });
+
+    expect(argv.slice(0, 4)).toEqual(['wsl.exe', '-d', 'dev', '--']);
+    expect(argv.indexOf('-u')).toBeLessThan(argv.indexOf(CONTAINER_ID));
+  });
+
   it('names the daemon that owns the container, rather than trusting the default', () => {
     // boxwarden connects to every engine that answers. Without -H the exec
     // reaches whichever one the CLI defaults to and fails with "no such

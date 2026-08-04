@@ -3,6 +3,7 @@ import {
   mapContainer,
   mapRuntime,
   parsePorts,
+  resolveRemoteUser,
   resolveWorkspaceFolder,
   type InspectResponse,
 } from './mapping.js';
@@ -215,6 +216,72 @@ describe('resolveWorkspaceFolder', () => {
   it('gives up rather than guessing when the host path is unresolved', () => {
     const noWorkingDir: InspectResponse = { ...BASE, Config: { ...BASE.Config, WorkingDir: '' } };
     expect(resolveWorkspaceFolder(noWorkingDir, parseLocalFolder('garbage'))).toBeUndefined();
+  });
+});
+
+describe('resolveRemoteUser', () => {
+  const withMetadata = (metadata: string, user?: string): InspectResponse => ({
+    ...BASE,
+    Config: {
+      ...BASE.Config,
+      ...(user === undefined ? {} : { User: user }),
+      Labels: { ...BASE.Config?.Labels, 'devcontainer.metadata': metadata },
+    },
+  });
+
+  /**
+   * The whole point: this is the field VS Code reads to decide who to attach
+   * as, so matching it is not a guess about what the developer wanted.
+   */
+  it('prefers remoteUser, which is what VS Code attaches as', () => {
+    expect(resolveRemoteUser(withMetadata('[{"remoteUser":"vscode"}]'))).toBe('vscode');
+  });
+
+  it('falls back to containerUser when no remote user is named', () => {
+    expect(resolveRemoteUser(withMetadata('[{"containerUser":"node"}]'))).toBe('node');
+  });
+
+  it('prefers remoteUser over containerUser when both are present', () => {
+    expect(
+      resolveRemoteUser(withMetadata('[{"containerUser":"node","remoteUser":"vscode"}]')),
+    ).toBe('vscode');
+  });
+
+  /**
+   * The label is ordered image → features → devcontainer.json, and the spec
+   * merges single-valued properties by letting later entries win. Taking the
+   * first would let a feature declaring `root` override what the developer
+   * wrote in their own config — the exact inversion this fixes.
+   */
+  it('lets a later fragment override an earlier one', () => {
+    expect(resolveRemoteUser(withMetadata('[{"remoteUser":"root"},{"remoteUser":"vscode"}]'))).toBe(
+      'vscode',
+    );
+  });
+
+  it('reads a bare object as well as an array', () => {
+    expect(resolveRemoteUser(withMetadata('{"remoteUser":"vscode"}'))).toBe('vscode');
+  });
+
+  it("falls back to the image's user when the metadata names nobody", () => {
+    expect(resolveRemoteUser(withMetadata('[{"id":"ghcr.io/x/y"}]', 'node'))).toBe('node');
+  });
+
+  /**
+   * Undefined, never a guess: `docker exec -u` at a user that does not exist
+   * makes the daemon refuse outright, and an emulator closes the window of a
+   * command that exited — so the button would appear to do nothing at all.
+   */
+  it('answers undefined rather than guessing', () => {
+    expect(resolveRemoteUser(BASE)).toBeUndefined();
+    expect(resolveRemoteUser(withMetadata('not json at all'))).toBeUndefined();
+    expect(resolveRemoteUser(withMetadata('[{"remoteUser":""}]'))).toBeUndefined();
+    expect(resolveRemoteUser(withMetadata('[{"remoteUser":42}]'))).toBeUndefined();
+  });
+
+  it('reaches DevContainer, since the terminal is what needs it', () => {
+    expect(mapContainer(withMetadata('[{"remoteUser":"vscode"}]'))?.remoteUser).toBe('vscode');
+    expect(mapContainer(BASE)?.remoteUser).toBeUndefined();
   });
 });
 

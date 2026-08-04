@@ -543,6 +543,9 @@ export function registerIpcHandlers(context: IpcContext): void {
         cli,
         containerId: container.id,
         ...(transport === undefined ? {} : { transport }),
+        // The main process's own copy again, like the startup command and the
+        // workspace folder: the renderer never says who to become.
+        ...(container.remoteUser === undefined ? {} : { user: container.remoteUser }),
         script,
       });
       // Shown to the user on failure, so they can run it themselves. Quoted
