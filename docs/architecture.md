@@ -491,6 +491,22 @@ Terminal.app ships with macOS, so probing it before iTerm2 would leave iTerm2
 permanently unreachable as a default; `x-terminal-emulator` and `xterm` are
 always present on a Linux desktop, so they go last.
 
+**Where the shell starts.** `docker exec` begins in the image's `WorkingDir`,
+which for most base images is `/` — so a terminal opened on a workspace lands
+nowhere near it. The script's first line is a `cd` to `workspaceFolder`, which
+also means the startup command below runs from the workspace rather than from
+the root.
+
+It is a `cd` rather than `docker exec -w`, and that is the interesting choice.
+`-w` is the tidier mechanism, but `workspaceFolder` is not always known: its
+third source is the `/workspaces/<basename>` convention, i.e. a guess (see
+`resolveWorkspaceFolder`). A `-w` at a path that does not exist makes the daemon
+refuse the exec outright, and most emulators close the window of a command that
+exited immediately — so clicking Terminal would appear to do nothing at all. A
+`cd` that fails degrades to exactly the old behaviour, with one line on stderr
+naming the folder it could not enter. The path is quoted like everything else
+here, because it comes from a container label rather than from the user.
+
 **The startup command.** A per-container command, run inside the container
 before the interactive shell each time a terminal opens. It is deliberately
 shell code — that is the feature — and it is deliberately shell code on the

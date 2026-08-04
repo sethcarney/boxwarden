@@ -511,10 +511,16 @@ export function registerIpcHandlers(context: IpcContext): void {
       }
 
       // The main process reads its OWN copy of the startup command, keyed off
-      // its own copy of the container. The renderer never gets to say what runs.
-      const script = containerShellScript(
-        context.terminals.startupCommands()[containerSettingsKey(container)],
-      );
+      // its own copy of the container, and its own copy of the workspace
+      // folder. The renderer never gets to say what runs, or where.
+      const startupCommand = context.terminals.startupCommands()[containerSettingsKey(container)];
+      const script = containerShellScript({
+        // exactOptionalPropertyTypes: an absent value is an absent key.
+        ...(container.workspaceFolder === undefined
+          ? {}
+          : { workspaceFolder: container.workspaceFolder }),
+        ...(startupCommand === undefined ? {} : { startupCommand }),
+      });
       const exec = containerExecArgv({
         cli,
         containerId: container.id,
