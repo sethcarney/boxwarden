@@ -1,6 +1,7 @@
 import type {
   ContainerCli,
   ContainerCliKind,
+  ContainerPath,
   DockerTransport,
   TerminalTarget,
 } from '../../models/index.js';
@@ -80,18 +81,63 @@ export function escapeForWindowsTerminal(value: string): string {
  * dev container almost always has bash, and dropping a developer into dash
  * with no history and no completion reads as a broken terminal.
  *
- * The startup command runs BEFORE that handover and is not backgrounded, so a
- * long-running one (`bun run dev`) holds the window and shows its output,
- * which is the point of designating it. Interrupting it lands in the
- * interactive shell rather than closing the window.
+ * Three things happen in order, and the order is the whole design:
  *
- * `exec` throughout: no leftover `sh` waiting underneath, so Ctrl-D closes the
+ *   1. **`cd` to the workspace folder.** `docker exec` starts in the image's
+ *      `WorkingDir`, which for most base images is `/` — so a terminal opened
+ *      on a workspace lands nowhere near it.
+ *   2. **The startup command**, which therefore runs FROM the workspace. It is
+ *      not backgrounded, so a long-running one (`bun run dev`) holds the window
+ *      and shows its output, which is the point of designating it.
+ *      Interrupting it lands in the interactive shell rather than closing the
+ *      window.
+ *   3. **The handover**, which inherits that working directory.
+ *
+ * `exec` at the end: no leftover `sh` waiting underneath, so Ctrl-D closes the
  * window once rather than twice.
+ *
+ * ## Why `cd` here and not `docker exec -w`
+ *
+ * `-w` is the tidier mechanism and it is the wrong one, because
+ * `workspaceFolder` is not always known — its third source is the
+ * `/workspaces/<basename>` convention, i.e. a GUESS (see
+ * `resolveWorkspaceFolder`). A `-w` at a path that does not exist makes the
+ * daemon refuse the exec outright, and most emulators close a window whose
+ * command exited immediately: clicking Terminal would appear to do nothing at
+ * all. A `cd` that fails leaves the developer exactly where they are today,
+ * with one line saying so. Degrading to the old behaviour beats failing shut.
+ *
+ * The path is attacker-influenced — it can come from a container label — so it
+ * goes through `posixQuoteOne` like every other value this file turns into
+ * shell code. That is inside the container, which is the boundary that matters:
+ * on the HOST the whole script remains a single argv element.
  */
-export function containerShellScript(startupCommand?: string): string {
+export function containerShellScript(
+  options: {
+    /** Where to start. Omitted when the container did not say. */
+    readonly workspaceFolder?: ContainerPath;
+    readonly startupCommand?: string;
+  } = {},
+): string {
   const handover = 'if command -v bash > /dev/null 2>&1; then exec bash -l; else exec sh -l; fi';
-  const startup = startupCommand?.trim();
-  return startup === undefined || startup === '' ? handover : `${startup}\n${handover}`;
+  const lines: string[] = [];
+
+  const folder = options.workspaceFolder?.trim();
+  if (folder !== undefined && folder !== '') {
+    // Said out loud rather than swallowed: a shell that silently started
+    // somewhere else is the bug this line exists to fix, and repeating it
+    // quietly in the failure case would be the same bug with extra steps.
+    const complaint = posixQuoteOne(
+      `boxwarden: could not enter ${folder} — staying in the image's working directory.`,
+    );
+    lines.push(`cd ${posixQuoteOne(folder)} 2>/dev/null || printf '%s\\n' ${complaint} >&2`);
+  }
+
+  const startup = options.startupCommand?.trim();
+  if (startup !== undefined && startup !== '') lines.push(startup);
+
+  lines.push(handover);
+  return lines.join('\n');
 }
 
 /**

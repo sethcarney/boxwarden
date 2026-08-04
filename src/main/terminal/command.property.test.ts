@@ -1,6 +1,7 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import { appleScriptString, posixQuote, posixQuoteOne } from './command.js';
+import { asContainerPath } from '../../models/index.js';
+import { appleScriptString, containerShellScript, posixQuote, posixQuoteOne } from './command.js';
 
 /**
  * Property-based tests for the quoting functions, which are the security
@@ -55,6 +56,39 @@ function unquotePosix(quoted: string): string {
       index += 2;
       continue;
     }
+    out += char;
+    index += 1;
+  }
+
+  return out;
+}
+
+/**
+ * The first word of a command line, as a shell would take it: characters up to
+ * the first space that is not inside quotes, with the quoting removed.
+ *
+ * The point of the state machine is that it cannot be fooled by content — a
+ * space, a newline or a redirect inside the quotes is part of the word, which
+ * is exactly the claim being tested.
+ */
+function firstWord(line: string): string {
+  let out = '';
+  let index = 0;
+  let inQuotes = false;
+
+  while (index < line.length) {
+    const char = line.charAt(index);
+    if (char === "'") {
+      inQuotes = !inQuotes;
+      index += 1;
+      continue;
+    }
+    if (!inQuotes && char === '\\') {
+      out += line.charAt(index + 1);
+      index += 2;
+      continue;
+    }
+    if (!inQuotes && char === ' ') break;
     out += char;
     index += 1;
   }
@@ -164,6 +198,36 @@ describe('posixQuote', () => {
         split.push(current);
 
         expect(split).toEqual([...argv]);
+      }),
+    );
+  });
+});
+
+describe('containerShellScript', () => {
+  /**
+   * The workspace folder is the second value in this file that becomes shell
+   * code inside the container, and unlike the startup command the user did not
+   * write it — it comes from a container label, so it is chosen by whoever
+   * created the container. The example test names the attack; this one looks
+   * for the path nobody thought to type.
+   */
+  it('reconstructs any workspace folder exactly, whatever is in it', () => {
+    fc.assert(
+      fc.property(fc.string(), (folder) => {
+        const script = containerShellScript({ workspaceFolder: asContainerPath(folder) });
+        const trimmed = folder.trim();
+
+        if (trimmed === '') {
+          expect(script).not.toContain('cd ');
+          return;
+        }
+
+        expect(script.startsWith('cd ')).toBe(true);
+        // Read the argument the way a shell reads it — up to the first
+        // UNQUOTED space — rather than by searching for the redirect that
+        // follows. A folder containing `2>/dev/null`, or a newline, would fool
+        // a search; it must not fool the shell, and it must not fool this.
+        expect(firstWord(script.slice('cd '.length))).toBe(trimmed);
       }),
     );
   });
