@@ -1,6 +1,6 @@
 {
   "name": "boxwarden",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
   "type": "module",
   "description": "Local dev container management: lists the dev containers on your machine and reattaches your editor to them.",
