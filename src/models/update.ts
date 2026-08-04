@@ -458,7 +458,7 @@ export function updateInstructions(
 
     case 'nsis':
       return {
-        headline: 'Download the Setup .exe and run it.',
+        headline: 'Download the installer and run it.',
         steps: [
           quit,
           'Run the installer. It installs per user, needs no admin rights, and replaces the version you have — there is nothing to uninstall first.',

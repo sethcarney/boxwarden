@@ -265,8 +265,8 @@ describe('pickAsset', () => {
   });
 
   it('takes the only candidate of the right kind without consulting the architecture', () => {
-    expect(pickAsset([asset('boxwarden Setup 1.2.0.exe')], 'nsis', 'arm64')?.name).toBe(
-      'boxwarden Setup 1.2.0.exe',
+    expect(pickAsset([asset('boxwarden-setup-1.2.0-arm64.exe')], 'nsis', 'arm64')?.name).toBe(
+      'boxwarden-setup-1.2.0-arm64.exe',
     );
   });
 

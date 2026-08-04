@@ -106,7 +106,7 @@ retro-signed — the certificate is bound to the workflow run.
   It sets up `chrome-sandbox` and installs an AppArmor profile the AppImage
   cannot, which Ubuntu 24.04 needs. The `.AppImage` is for everywhere else:
   `chmod +x` and run it.
-- **Windows** — run the `Setup .exe`. Per-user, no admin rights. The build is
+- **Windows** — run `boxwarden-setup-<v>-<arch>.exe`. Per-user, no admin rights. The build is
   not code-signed, so SmartScreen interposes: _More info_ → _Run anyway_.
 
 boxwarden checks for a newer release once a day. When there is one it offers to
@@ -141,7 +141,7 @@ Per platform, from `release/`:
 | -------- | -------------------------------------------------------------------------------------- |
 | macOS    | `boxwarden-<v>.dmg`, `boxwarden-<v>-arm64.dmg`, matching `-mac.zip`s, `latest-mac.yml` |
 | Linux    | `boxwarden-<v>.AppImage`, `boxwarden_<v>_amd64.deb` (plus arm64), `latest-linux.yml`   |
-| Windows  | `boxwarden Setup <v>.exe`, `latest.yml`                                                |
+| Windows  | `boxwarden-setup-<v>-<arch>.exe`, `latest.yml`                                         |
 
 Plus a `.blockmap` beside each installer that has one.
 

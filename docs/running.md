@@ -185,7 +185,7 @@ are targeting, or in CI on that OS.
 | ------- | ---------------------------------------------------------------------------- |
 | macOS   | `boxwarden-<version>.dmg`, `-arm64.dmg`, matching `.zip`s                    |
 | Linux   | `boxwarden-<version>.AppImage`, `boxwarden_<version>_amd64.deb` (plus arm64) |
-| Windows | `boxwarden Setup <version>.exe`                                              |
+| Windows | `boxwarden-setup-<version>-<arch>.exe`                                       |
 
 ### Install it
 
@@ -221,7 +221,7 @@ chmod +x release/boxwarden-0.0.0.AppImage
 ./release/boxwarden-0.0.0.AppImage
 ```
 
-**Windows.** Run `boxwarden Setup <version>.exe`. It is a per-user install, so
+**Windows.** Run `boxwarden-setup-<version>-<arch>.exe`. It is a per-user install, so
 no UAC prompt and no admin rights, and it lets you choose the directory. The
 build is unsigned, so SmartScreen will interpose — _More info_ → _Run anyway_.
 

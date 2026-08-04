@@ -65,9 +65,10 @@ function nextVersion(currentVersion: string): string {
  * the fixture is the opposite: the screen only appears on a machine where
  * something newer exists.
  *
- * `boxwarden Setup <version>.exe` keeps its spaces, because that is what
- * electron-builder emits for NSIS and it is the name `safeAssetFileName` has
- * to accept for a Windows download to be possible at all.
+ * The NSIS artefact is spelled the way `electron-builder.yml` now names it —
+ * hyphens, explicit arch — because these strings are the interface `pickAsset`
+ * and `safeAssetFileName` match against. A fixture using the old spaced default
+ * would exercise a refusal that no real release can produce.
  */
 function fakeRelease(version: string): Release {
   const download = (name: string, size = 95_000_000) => ({
@@ -83,7 +84,8 @@ function fakeRelease(version: string): Release {
     `boxwarden-${version}-arm64.AppImage`,
     `boxwarden_${version}_amd64.deb`,
     `boxwarden_${version}_arm64.deb`,
-    `boxwarden Setup ${version}.exe`,
+    `boxwarden-setup-${version}-x64.exe`,
+    `boxwarden-setup-${version}-arm64.exe`,
   ];
 
   return {
@@ -241,9 +243,8 @@ class FakeUpdateChecker implements UpdatesContext {
    * The plan is built by the REAL `planDownload`, from the fixture release.
    *
    * Which is the point: a Windows fixture run hits the genuine refusal over
-   * `boxwarden Setup <version>.exe`, and every other platform gets a plan that
-   * passed the same asset matching, signature-present and filename checks a
-   * real release has to.
+   * every platform gets a plan that passed the same asset matching,
+   * signature-present and filename checks a real release has to.
    */
   async download(): Promise<UpdateStatus> {
     const current = await this.status();

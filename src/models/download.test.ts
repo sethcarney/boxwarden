@@ -38,13 +38,13 @@ function signedRelease(installer: string): Release {
 }
 
 describe('safeAssetFileName', () => {
-  it('accepts every artefact electron-builder emits, spaces included', () => {
+  it('accepts every artefact electron-builder emits', () => {
     for (const name of [
       'boxwarden-1.2.0.dmg',
       'boxwarden-1.2.0-arm64.dmg',
       'boxwarden-1.2.0.AppImage',
       'boxwarden_1.2.0_amd64.deb',
-      'boxwarden Setup 1.2.0.exe',
+      'boxwarden-setup-1.2.0-x64.exe',
       'sha256sums.txt',
       'boxwarden-1.2.0.dmg.sigstore.json',
     ]) {
@@ -68,6 +68,7 @@ describe('safeAssetFileName', () => {
       '.',
       'x.dmg\u0000.txt', // NUL, which truncates inside a syscall
       'x\u202Eepx.dmg', // right-to-left override: renders as something else
+      'boxwarden Setup 1.2.0.exe', // a space anywhere: electron-builder's old default
       'x.dmg ', // trailing space, stripped by Windows AFTER validation
       'x.dmg.', // trailing dot, likewise
       ' x.dmg', // leading space
@@ -86,12 +87,12 @@ describe('parseChecksums', () => {
     const digests = parseChecksums(
       [
         `${'a'.repeat(64)}  boxwarden-1.2.0.dmg`,
-        `${'b'.repeat(64)} *boxwarden Setup 1.2.0.exe`,
+        `${'b'.repeat(64)} *boxwarden-setup-1.2.0-x64.exe`,
       ].join('\n'),
     );
 
     expect(digests.get('boxwarden-1.2.0.dmg')).toBe('a'.repeat(64));
-    expect(digests.get('boxwarden Setup 1.2.0.exe')).toBe('b'.repeat(64));
+    expect(digests.get('boxwarden-setup-1.2.0-x64.exe')).toBe('b'.repeat(64));
   });
 
   it('lower-cases the digest, so a manifest written in either case compares', () => {

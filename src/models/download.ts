@@ -97,25 +97,20 @@ export function signerIdentity(tag: string): SignerIdentity {
  * right-to-left override that makes `exe.gpj` render as `jpg.exe`. This
  * refuses all of them by refusing everything that is not plainly a filename.
  *
- * The set is what electron-builder actually emits: letters, digits, dot,
- * underscore, hyphen — and the SPACE, because the NSIS artefact really is
- * called `boxwarden Setup 1.2.0.exe`. A rule without it would have been a rule
- * that quietly excluded every Windows user from the verified download, which
- * is the kind of correctness that shows up as a bug report about a missing
- * button.
+ * The set is what electron-builder emits for this repo: letters, digits, dot,
+ * underscore and hyphen. No space — `electron-builder.yml` names the NSIS
+ * artefact `boxwarden-setup-<version>-<arch>.exe` precisely so that this rule
+ * can stay this narrow. The default was `boxwarden Setup 1.2.0.exe`, and
+ * accommodating it would have meant either allowing spaces for every name that
+ * ever arrives over the network, or silently excluding every Windows user from
+ * the verified download.
  *
- * The space is safe here for a reason worth stating rather than assuming:
- * nothing on this path goes through a shell. `shell.openPath` calls the
- * platform's open API with a path, and the AppImage branch does filesystem
- * operations — there is no command line for a space to split.
- *
- * First and last characters must be alphanumeric, which is what keeps the
- * space from mattering at the ends. A trailing space or dot is stripped by
- * Windows AFTER a name is validated, so `evil.exe.` and `evil.exe ` are the
- * classic ways to make a checked name become a different one; both fail here.
- * It also excludes `.` and `..` without a special case.
+ * First and last characters must be alphanumeric. A trailing space or dot is
+ * stripped by Windows AFTER a name is validated, so `evil.exe.` and
+ * `evil.exe ` are the classic ways to make a checked name become a different
+ * one; both fail here. It also excludes `.` and `..` without a special case.
  */
-const SAFE_ASSET_NAME = /^[A-Za-z0-9](?:[A-Za-z0-9._ -]*[A-Za-z0-9])?$/;
+const SAFE_ASSET_NAME = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
 
 /** No name may be longer than this once written; a filesystem limit, stated. */
 const MAX_ASSET_NAME_LENGTH = 128;

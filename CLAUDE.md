@@ -479,9 +479,10 @@ Six rules hold this together:
   name arrives over the network and becomes a path. Rewriting a hostile name
   into a safe one produces a file that no longer matches its line in
   `sha256sums.txt`, so the failure would surface as a bogus integrity error.
-  Spaces ARE allowed — `boxwarden Setup 1.2.0.exe` is real, and nothing on this
-  path goes through a shell — but the first and last characters must be
-  alphanumeric, which is what stops the trailing dot or space Windows strips
+  No spaces: `electron-builder.yml` sets `nsis.artifactName` so the installer
+  is `boxwarden-setup-<version>-<arch>.exe` rather than the spaced default,
+  which is what lets the allow-list stay this narrow. First and last characters
+  must be alphanumeric, which stops the trailing dot or space Windows strips
   _after_ validation.
 - **`verifying` is a state of its own, and nothing is installable during it.**
   That is the window in which the whole file is on disk and unvouched-for. A
