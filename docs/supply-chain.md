@@ -201,31 +201,38 @@ Cosign proves that these exact bytes came out of this exact workflow, to
 someone who runs a verify command. That is a strong claim and it is worth
 having.
 
-**The app is now that someone.** `src/main/update/verify.ts` runs the same two
-checks a careful person would — `sha256sum -c`, then `cosign verify-blob
---bundle` with `--certificate-identity` and `--certificate-oidc-issuer` — over
-every update it downloads, before the file is offered for installation. So the
-signatures are no longer only for the minority who verify by hand; they are load
-bearing on the ordinary update path. Three consequences worth knowing:
+**The app is deliberately NOT that someone.** For one release it was: it ran
+the same two checks a careful person would — `sha256sum -c`, then
+`cosign verify-blob --bundle` with `--certificate-identity` and
+`--certificate-oidc-issuer` — over every update it downloaded. That was removed
+along with the in-app download itself
+(`docs/development.md#why-there-is-no-in-app-download`), because the download
+ended at the same installer a browser download does while making
+`tuf-repo-cdn.sigstore.dev` a hard runtime dependency: on a network that blocked
+it, boxwarden refused to install and said so in words a user reads as an
+accusation of tampering.
 
-- **The signing identity is part of the contract now.** Renaming
+So the signatures are back to being for the person who verifies by hand — which
+is what makes the release notes carrying the verify commands part of the
+release procedure rather than decoration. Three consequences:
+
+- **The signing identity is documented, not enforced by a client.** Renaming
   `.github/workflows/release.yml`, or moving the `cosign sign-blob` step into a
-  reusable workflow, changes the certificate's SAN and every installed copy of
-  boxwarden will refuse the next release. `signerIdentity` in
-  `src/models/download.ts` is the other half of that string.
-- **`sha256sums.txt` and one `.sigstore.json` per installer are required
-  assets.** A release missing either is refused by the app, not downloaded with
-  a weaker check.
-- **The trust root is fetched over TUF**, not vendored, so a Sigstore key
-  rotation is something the client follows rather than something that strands
-  it. It falls back to the cached root when the CDN is unreachable.
+  reusable workflow, changes the certificate's SAN — which now breaks the
+  `--certificate-identity` string in the release notes rather than every
+  installed copy of the app. Cheaper to get wrong, and correspondingly easier to
+  leave wrong: check it when the workflow moves.
+- **`sha256sums.txt` and one `.sigstore.json` per installer are still required
+  assets**, and `releasing.md` says to confirm they are attached before
+  publishing. Nothing in the app will notice their absence any more, so this is
+  the only check there is.
+- **A verifier fetches the trust root over TUF**, which is why the commands in
+  the release notes work through a Sigstore key rotation without being reissued.
 
 It is still **not** code signing. The macOS and Windows builds carry no
 Developer ID and no Authenticode certificate and are not notarised, so
-Gatekeeper and SmartScreen warn on first launch — including for everyone who
-gets there through the verified in-app download, since a file the app wrote
-itself carries no quarantine attribute and the OS never had an opinion to
-revise. The two mechanisms answer different questions and neither substitutes
+Gatekeeper and SmartScreen warn on first launch. The two mechanisms answer
+different questions and neither substitutes
 for the other. `CSC_IDENTITY_AUTO_DISCOVERY: false` in `release.yml` is set
 precisely so that the unsigned state is stated rather than buried in a green
 log; closing it needs a certificate, and

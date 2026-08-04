@@ -1,9 +1,3 @@
-// FIRST, and before anything that might reach a signature. Electron's
-// BoringSSL cannot infer a digest for an EC key where Node's OpenSSL can, and
-// every Sigstore and TUF verification in this app is built on the call that
-// relies on it — see src/main/crypto-compat.ts. Without this the whole
-// download-and-verify path refuses on every platform.
-import { installCryptoCompat } from './crypto-compat.js';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { BrowserWindow, app, dialog, session, shell, type WebContents } from 'electron';
@@ -21,7 +15,6 @@ import { shutdownWslServices } from './docker/wsl.js';
 import { fakeGitStatus } from './git/fake.js';
 import { readGitStatus } from './git/status.js';
 import { UpdateChecker } from './update/check.js';
-import { UpdateDownloader } from './update/download.js';
 import { fakeUpdatesFromEnv } from './update/fake.js';
 import { fetchLatestRelease } from './update/github.js';
 import { loadPreferences, savePreferences } from './preferences.js';
@@ -79,22 +72,6 @@ const PLATFORM_DEFAULT_ROOTS = defaultProjectRoots(process.platform, homedir());
  */
 if (process.env['BOXWARDEN_SOFTWARE_RENDER'] === '1') {
   app.disableHardwareAcceleration();
-}
-
-/**
- * Module scope, like the line above, and for a stricter version of the same
- * reason: the dependencies this compensates for are imported by the update
- * checker, so waiting for `whenReady` would be waiting until after the thing
- * it protects could already have run.
- *
- * Logged when it fires, because a silent compatibility shim is one nobody
- * remembers is there — and this one exists to be deleted, on the day it starts
- * reporting that it was not needed.
- */
-if (installCryptoCompat()) {
-  console.warn(
-    '[boxwarden] This runtime cannot infer a digest for EC keys; signature verification is running through the compatibility shim in crypto-compat.ts.',
-  );
 }
 
 function backendFromEnv(): DockerBackend {
@@ -326,6 +303,10 @@ void app.whenReady().then(async () => {
    * top" is nonsense advice for a checkout you are editing. It also means
    * `bun run dev`, the fixture runs and CI never contact GitHub.
    *
+   * It CHECKS and does not fetch: nothing here writes to disk, opens a file
+   * with the OS, or reaches any host but GitHub's API. See the note at the top
+   * of src/models/update.ts for why the download was taken back out.
+   *
    * The install kind is detected once, here, because none of its inputs can
    * change while the app runs.
    */
@@ -334,32 +315,6 @@ void app.whenReady().then(async () => {
     installKind: detectInstallKind(process.platform, process.env, process.execPath),
     arch: process.arch,
   };
-  /**
-   * The bytes half: fetch the artefact, verify it, hand it to the OS.
-   *
-   * Both paths live under `userData` rather than the system temp directory,
-   * and for two different reasons. The download has to survive a reboot — a
-   * verified installer the user has not run yet is not rubbish — and a temp
-   * directory is precisely the place other processes are entitled to write,
-   * which is the wrong neighbourhood for a file this app will later open.
-   * TUF's cache is separate from it so that sweeping old downloads can never
-   * take the trust root with it.
-   */
-  const downloads = new UpdateDownloader({
-    ...updateIdentity,
-    directory: join(app.getPath('userData'), 'updates'),
-    trustCachePath: join(app.getPath('userData'), 'sigstore'),
-    now: () => new Date(),
-    // Nothing to do: the renderer POLLS `updateStatus`, which reads the
-    // downloader's state directly, so a push would be a second delivery of
-    // something already arriving. The hook exists because a future
-    // `webContents.send` would go here, and a downloader that could not
-    // announce a change would have to be rewritten to add one.
-    onChange: () => undefined,
-    relaunch: () => {
-      app.relaunch();
-    },
-  });
 
   const updates =
     // BOXWARDEN_FAKE_UPDATE=1 serves a release that does not exist, through the
@@ -376,13 +331,7 @@ void app.whenReady().then(async () => {
       persist: (next) => {
         persist({ ...preferences, updates: next });
       },
-      downloads,
     });
-
-  // At launch, not at exit: the sweep that runs on quit is the one that does
-  // not run when the app is killed, and leaving installers behind is the
-  // failure this whole path exists to avoid.
-  void downloads.sweep();
 
   registerIpcHandlers({
     backend,

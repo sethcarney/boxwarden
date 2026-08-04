@@ -1,12 +1,5 @@
-import type {
-  DownloadPlan,
-  InstallKind,
-  Release,
-  UpdateDownload,
-  UpdatePreferences,
-  UpdateStatus,
-} from '../../models/index.js';
-import { foldUpdateStatus, isCheckDue, isRefusal, planDownload } from '../../models/index.js';
+import type { InstallKind, Release, UpdatePreferences, UpdateStatus } from '../../models/index.js';
+import { foldUpdateStatus, isCheckDue } from '../../models/index.js';
 
 /**
  * When to ask GitHub, and what to do with the answer.
@@ -50,37 +43,6 @@ export interface UpdateCheckerOptions {
   now(): Date;
   preferences(): UpdatePreferences;
   persist(next: UpdatePreferences): void;
-  /**
-   * The bytes half. Absent in tests and in `fake.ts`, where there is no
-   * filesystem to write to and no Sigstore to ask — a checker with no
-   * downloader reports `idle` forever and refuses to install, which is exactly
-   * how a build that cannot download should behave.
-   */
-  readonly downloads?: DownloadController;
-}
-
-/**
- * The downloader, as this module needs it.
- *
- * An interface for the same reason `fetchRelease` is a function: `check.ts`
- * imports no Electron, which is what makes the daily gate, the cache and the
- * dismissal testable without a runtime. `UpdateDownloader` in `download.ts`
- * satisfies this structurally and is the only production implementation.
- */
-export interface DownloadController {
-  readonly state: UpdateDownload;
-  start(plan: DownloadPlan): void;
-  cancel(): void;
-  install(): Promise<{ ok: true } | { ok: false; message: string }>;
-  /**
-   * Record that a download was refused before it began.
-   *
-   * Here rather than as a return value so that ALL download state lives in one
-   * object. A refusal the checker held itself would be a second source of
-   * truth for the same field, and the two would disagree the first time a
-   * refusal was followed by a successful download of something else.
-   */
-  refuse(version: string, message: string): void;
 }
 
 /**
@@ -103,20 +65,6 @@ export interface UpdatesContext {
   status(force: boolean): Promise<UpdateStatus>;
   dismiss(): Promise<UpdateStatus>;
   setEnabled(enabled: boolean): Promise<UpdateStatus>;
-  /**
-   * Fetch and verify the artefact for the version currently on offer.
-   *
-   * Takes no argument — the same rule as `dismiss`. WHICH file is downloaded
-   * is derived here from this process's own last status, so a renderer cannot
-   * name a URL, a filename, or a version. That is the whole reason the plan is
-   * built on this side: `planDownload` decides what to fetch, and everything
-   * it decides from came out of a response that was already checked against
-   * `RELEASE_URL_PREFIX`.
-   */
-  download(): Promise<UpdateStatus>;
-  cancelDownload(): Promise<UpdateStatus>;
-  /** Hand the verified file to the OS. May quit the app; see `download.ts`. */
-  install(): Promise<{ ok: true } | { ok: false; message: string }>;
 }
 
 export class UpdateChecker implements UpdatesContext {
@@ -152,7 +100,6 @@ export class UpdateChecker implements UpdatesContext {
     if (!this.#options.supported) {
       return {
         currentVersion: this.#options.currentVersion,
-        download: { kind: 'idle' },
         outcome: {
           kind: 'unsupported',
           reason:
@@ -168,12 +115,6 @@ export class UpdateChecker implements UpdatesContext {
         ...(preferences.lastCheckedAt === undefined
           ? {}
           : { checkedAt: preferences.lastCheckedAt }),
-        // Not `this.#downloads()`: a download already fetched and verified
-        // stays installable even after the user turns checks off. Turning off
-        // the daily question is not the same as abandoning an answer already
-        // given, and deleting the file they waited for would be the app
-        // punishing them for changing a setting.
-        download: this.#downloads(),
         outcome: { kind: 'disabled' },
       };
     }
@@ -209,49 +150,6 @@ export class UpdateChecker implements UpdatesContext {
     return await this.status(enabled);
   }
 
-  /**
-   * Start fetching the offered artefact, after deciding it can be fetched.
-   *
-   * The refusals are as important as the success and are reported into the
-   * download state rather than thrown: `planDownload` says no to a release
-   * with no signature, no checksum manifest, an ambiguous artefact or a
-   * filename that will not be written to disk, and each of those is something
-   * the user can act on by opening the release page. A thrown error would
-   * reach them as a failed IPC call.
-   */
-  async download(): Promise<UpdateStatus> {
-    const downloads = this.#options.downloads;
-    const current = await this.status();
-    if (downloads === undefined || current.outcome.kind !== 'available') return current;
-
-    const { release, asset } = current.outcome;
-    const plan = planDownload(release, asset);
-    if (isRefusal(plan)) {
-      downloads.refuse(release.version, plan.reason);
-    } else {
-      downloads.start(plan);
-    }
-    return await this.status();
-  }
-
-  async cancelDownload(): Promise<UpdateStatus> {
-    this.#options.downloads?.cancel();
-    return await this.status();
-  }
-
-  async install(): Promise<{ ok: true } | { ok: false; message: string }> {
-    const downloads = this.#options.downloads;
-    if (downloads === undefined) {
-      return { ok: false, message: 'This build cannot install downloads.' };
-    }
-    return await downloads.install();
-  }
-
-  /** `idle` when there is no downloader at all — see `DownloadController`. */
-  #downloads(): UpdateDownload {
-    return this.#options.downloads?.state ?? { kind: 'idle' };
-  }
-
   /** What is known without asking again — from the file, except for a failure. */
   #remembered(preferences: UpdatePreferences): UpdateStatus {
     if (this.#last?.outcome.kind === 'failed') return this.#last;
@@ -261,11 +159,7 @@ export class UpdateChecker implements UpdatesContext {
     // have to invent one, and an invented timestamp is how "never checked"
     // starts reading as "checked, and you are up to date".
     if (preferences.lastCheckedAt === undefined) {
-      return {
-        currentVersion: this.#options.currentVersion,
-        download: this.#downloads(),
-        outcome: { kind: 'unchecked' },
-      };
+      return { currentVersion: this.#options.currentVersion, outcome: { kind: 'unchecked' } };
     }
     return foldUpdateStatus(this.#facts(preferences), preferences.lastCheckedAt);
   }
@@ -308,9 +202,6 @@ export class UpdateChecker implements UpdatesContext {
         ...(preferences.lastCheckedAt === undefined
           ? {}
           : { checkedAt: preferences.lastCheckedAt }),
-        // A check that could not be completed says nothing about a download
-        // that already finished — the file is verified and still on disk.
-        download: this.#downloads(),
         outcome: {
           kind: 'failed',
           message: error instanceof Error ? error.message : String(error),
@@ -327,7 +218,6 @@ export class UpdateChecker implements UpdatesContext {
       installKind: this.#options.installKind,
       arch: this.#options.arch,
       release: preferences.lastRelease,
-      download: this.#downloads(),
       ...(preferences.dismissedVersion === undefined
         ? {}
         : { dismissedVersion: preferences.dismissedVersion }),

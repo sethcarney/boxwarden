@@ -32,8 +32,7 @@
     "format:check": "prettier --check .",
     "check": "bun run typecheck && bun run lint && bun run format:check && bun run test && bun run check:devcontainer",
     "check:devcontainer": "node scripts/check-devcontainer.mjs",
-    "check:release-version": "node scripts/check-release-version.mjs",
-    "check:sigstore": "node scripts/check-sigstore.mjs"
+    "check:release-version": "node scripts/check-release-version.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -67,9 +66,6 @@
     "esbuild"
   ],
   "dependencies": {
-    "@sigstore/bundle": "^5.0.0",
-    "@sigstore/tuf": "^5.0.0",
-    "@sigstore/verify": "^4.1.0",
     "dockerode": "^5.0.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"

@@ -241,21 +241,23 @@ and install kind you are on and the command to install it — `sudo apt install
 ./boxwarden_<version>_amd64.deb` for the deb, `chmod +x` for the AppImage, drag
 to Applications for the dmg, run the installer for Windows.
 
-It can also **fetch the file for you and check it**: the download is verified
-against the release's `sha256sums.txt` and against the cosign signature beside
-it, whose certificate has to name this repository's release workflow at that
-exact tag. Only then does the Install button appear, and all it does is hand the
-file to your operating system's installer — you still complete the install.
+**It checks and links. It does not download or install.** The banner gives you
+the file and the steps; your browser fetches it and you run it.
 
-What it does **not** do is replace its own application bundle, and it will not
-while the builds carry no CODE signature: Squirrel.Mac refuses an unsigned swap
-outright, and everywhere else it would mean overwriting a binary on the strength
-of a download the OS never checked. The one exception is the AppImage, which is
-a single file you own — there boxwarden replaces the file and relaunches, after
-the same two checks.
+That is not a missing feature waiting to be built. boxwarden cannot replace its
+own application bundle while the builds carry no CODE signature — Squirrel.Mac
+refuses an unsigned swap outright, and everywhere else it would mean overwriting
+a binary on the strength of a download the OS never checked — so an in-app
+download would deposit you at exactly the installer and the same SmartScreen or
+Gatekeeper warning the link does. It briefly existed, and the cost was that
+every update also required Sigstore's CDN to be reachable; on a network that
+blocked it, boxwarden refused to install and said so in words that read like an
+accusation. A link works on every network.
 
-If a release is missing its signature or its checksum manifest, boxwarden
-refuses to download it and points you at the release page instead.
+**The releases are still signed**, and if you want to check one, the release
+notes carry the commands: `sha256sum -c sha256sums.txt` and `cosign verify-blob
+--bundle <file>.sigstore.json` with the certificate identity naming this
+repository's release workflow at that exact tag.
 
 Two controls, both in the footer line that names your version:
 

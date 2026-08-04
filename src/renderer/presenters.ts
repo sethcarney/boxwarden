@@ -24,7 +24,6 @@ import type {
   GitStatus,
   PortBinding,
   SshAgentState,
-  UpdateDownload,
   UpdateInstructions,
   UpdateStatus,
 } from '../models/index.js';
@@ -524,98 +523,12 @@ export interface UpdatePanel {
    * `pickAsset`. A label and a URL travel together so a View cannot render one
    * without the other.
    *
-   * This is the MANUAL route and it stays on screen even when boxwarden can
-   * fetch the file itself: a browser download is the fallback for every
-   * refusal in `planDownload`, and it is also simply what some people prefer.
+   * This is the ONLY route: boxwarden opens the link and the user takes it from
+   * there. See the note at the top of src/models/update.ts for why there is no
+   * in-app download beside it.
    */
   readonly link: { readonly label: string; readonly url: string } | undefined;
-  /** The in-app download: what to offer, or how far it has got. */
-  readonly fetch: DownloadPresentation;
   readonly releaseUrl: string;
-}
-
-/**
- * The state of the in-app download, as a View can render it without deciding
- * anything.
- *
- * Seven arms for six model states plus "there is nothing to offer", and the
- * split that matters most is `progress` vs `verifying`: those are the two the
- * user waits through, and they mean different things. Bytes arriving can be
- * cancelled and tell you nothing about whether the file is good; verification
- * is the part that decides, and the file must not be installable during it.
- * A single "working…" spinner across both would put an Install button on
- * screen a second before there was anything safe to install.
- */
-export type DownloadPresentation =
-  /** No artefact matched this machine, so there is nothing to fetch. */
-  | { readonly kind: 'unavailable' }
-  | { readonly kind: 'offer'; readonly label: string }
-  | {
-      readonly kind: 'progress';
-      readonly label: string;
-      /** 0–100, absent when the response declared no length. */
-      readonly percent?: number;
-    }
-  | { readonly kind: 'verifying'; readonly label: string }
-  | { readonly kind: 'ready'; readonly label: string; readonly detail: string }
-  | { readonly kind: 'installing'; readonly label: string }
-  | { readonly kind: 'failed'; readonly message: string };
-
-/**
- * What the download half of the banner says.
- *
- * The `ready` detail names BOTH checks by name. That is not a boast: the user
- * is about to run an installer that macOS and Windows will then warn them
- * about, and the sentence that gets them past the warning is the one that says
- * what was actually verified and by whom.
- */
-export function downloadPresentation(
-  download: UpdateDownload,
-  asset: { readonly name: string; readonly size?: number } | undefined,
-): DownloadPresentation {
-  switch (download.kind) {
-    case 'idle':
-      return asset === undefined
-        ? { kind: 'unavailable' }
-        : { kind: 'offer', label: `Download ${asset.name}${formatSize(asset.size)}` };
-
-    case 'fetching': {
-      const { receivedBytes, totalBytes } = download.progress;
-      return {
-        kind: 'progress',
-        label:
-          totalBytes === undefined
-            ? `Downloading — ${formatBytes(receivedBytes)} so far`
-            : `Downloading — ${formatBytes(receivedBytes)} of ${formatBytes(totalBytes)}`,
-        ...(totalBytes === undefined || totalBytes === 0
-          ? {}
-          : { percent: Math.min(100, Math.round((receivedBytes / totalBytes) * 100)) }),
-      };
-    }
-
-    case 'verifying':
-      return { kind: 'verifying', label: 'Checking the signature…' };
-
-    case 'ready':
-      return {
-        kind: 'ready',
-        label: `Install ${download.fileName}`,
-        detail:
-          'Verified against this release’s checksums and its Sigstore signature from the boxwarden release workflow.',
-      };
-
-    case 'installing':
-      return { kind: 'installing', label: 'Installing…' };
-
-    case 'failed':
-      return { kind: 'failed', message: download.message };
-  }
-}
-
-/** Bytes for a progress line — always one decimal, so the number stops jumping. */
-function formatBytes(bytes: number): string {
-  const megabytes = bytes / (1024 * 1024);
-  return `${megabytes.toFixed(1)} MB`;
 }
 
 /**
@@ -642,24 +555,23 @@ export function updatePanel(
 
   return {
     headline: `boxwarden ${release.version} is available`,
-    // What this sentence must NOT say any more is "the builds are unsigned".
-    // They are signed, with cosign, which is exactly what makes the verified
-    // download below possible — and they are still not CODE-signed, which is
-    // why the last step of every install is a Gatekeeper or SmartScreen
-    // warning. Saying "unsigned" flatly would now be wrong in the sense that
-    // matters here and right only in the one the user meets later.
-    detail: `You are running ${status.currentVersion}.${published} boxwarden can fetch and verify the download for you; installing it is still your click.`,
+    // This sentence must not say "unsigned" flatly, and must not promise a
+    // verification the app no longer performs. The artefacts ARE cosign-signed
+    // and are still not CODE-signed, which is why the last step of every
+    // install is a Gatekeeper or SmartScreen warning — that warning is what
+    // `instructions` prepares the user for, and it is the honest thing to lead
+    // them towards rather than a claim about what boxwarden checked.
+    detail: `You are running ${status.currentVersion}.${published} Downloading and installing it is your click — see the steps below.`,
     instructions,
     link:
       asset === undefined
         ? undefined
         : { label: `${asset.name}${formatSize(asset.size)}`, url: asset.url },
-    fetch: downloadPresentation(status.download, asset),
     releaseUrl: release.url,
   };
 }
 
-/** Bytes as the download dialog will show them, or nothing when GitHub did not say. */
+/** Bytes as the browser will show them, or nothing when GitHub did not say. */
 function formatSize(bytes: number | undefined): string {
   if (bytes === undefined) return '';
   const megabytes = bytes / (1024 * 1024);

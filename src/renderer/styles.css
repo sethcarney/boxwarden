@@ -1284,11 +1284,11 @@ select {
   max-width: 68ch;
 }
 
-/* The in-app download: the offer, the progress, and the verified install.
-   One row that changes contents rather than four stacked blocks, so the
-   banner does not grow and shrink as the download moves through its
-   states — a panel that resizes under the pointer is one whose Cancel
-   button moves out from under a click. */
+/* The download link, styled as the primary action it now is. An anchor
+   rather than a button because that is exactly what it does: hand the URL
+   to the system browser via setWindowOpenHandler. Dressing a link up as a
+   button is fine; dressing a button up as a link would hide that this
+   leaves the app. */
 .update-fetch {
   margin: 10px 0 0;
   display: flex;
@@ -1298,61 +1298,19 @@ select {
   min-height: 28px;
 }
 
-.update-fetch-label {
-  font-size: 11.5px;
-  color: var(--text-dim);
+.update-download {
+  display: inline-block;
+  padding: 5px 12px;
+  border-radius: 5px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
 }
 
-/* Indeterminate when it carries no value — which is what an unknown
-   content-length renders as, rather than a bar frozen at zero. */
-.update-progress {
-  flex: 0 1 220px;
-  height: 4px;
-  accent-color: var(--accent);
-}
-
-/* The sentence that says WHAT was checked. It reads as supporting text
-   rather than as a claim in its own right, because the button beside it
-   is the thing being vouched for. */
-.update-verified {
-  font-size: 11px;
-  line-height: 1.5;
-  color: var(--text-dim);
-  max-width: 52ch;
-}
-
-.update-fetch-failed {
-  align-items: flex-start;
-  flex-direction: column;
-  gap: 4px;
-}
-
-/* Danger-coloured, not accent: a refusal to verify is the one thing in
-   this panel that is not good news. It still sits inside the accent
-   frame, because the update itself is. */
-.update-fetch-failed p {
-  margin: 0;
-  font-size: 11.5px;
-  line-height: 1.55;
-  color: var(--danger);
-  max-width: 68ch;
-}
-
-/* The manual instructions, folded away. They are the fallback now rather
-   than the only route, and an open <details> would make the common case
-   — press the button — compete with a numbered list nobody needs. */
-.update-manual {
-  margin: 10px 0 0;
-}
-
-.update-manual > summary {
-  font-size: 11.5px;
-  color: var(--text-dim);
-  cursor: pointer;
-}
-
-.update-manual > summary:hover {
-  color: var(--text);
+.update-download:hover {
+  filter: brightness(1.08);
 }
 
 .update-links {
