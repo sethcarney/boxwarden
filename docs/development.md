@@ -178,6 +178,15 @@ running anywhere. Between them they cover every arm of `ClaudeStatus`:
 | `infra-scripts`  | A response the parser cannot read → the "could not tell" badge       |
 | everything else  | An ordinary process table → no badge                                 |
 
+It also answers the branch reads, since the fixture folders exist on nobody's
+disk (`src/main/git/fake.ts`). `webapp` is on `main`, `api-service` on
+`feature/rate-limiting`, both `platform` services on `release/2026.08` — one
+folder, two cards, which is what proves the batch reads a folder once —
+`infra-scripts` has a detached HEAD, and the rest answer `none`.
+`reporting-tool`'s Windows path never reaches the seam at all on a Linux or
+macOS host: `readableHostFolder` refuses it, which is the "could not look" arm
+rendering as no chip.
+
 The fake also reports **three** reachable engines (a Docker socket, a podman
 machine pipe, and a podman inside a WSL distro) and a WSL status with one distro
 missing socat. The fixtures round-robin across those engines, so the engine

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ClaudeStatus, EngineId } from '../models/index.js';
 import { devContainer } from './test-fixtures.js';
 import {
+  branchChip,
   claudeBadge,
   claudeStopWarning,
   containerCountLabel,
@@ -229,6 +230,39 @@ describe('sshAgentBadge', () => {
     const ok = sshAgentBadge({ kind: 'forwarded', socket: '/ssh-agent' });
     const broken = sshAgentBadge({ kind: 'declared-unmounted', socket: '/ssh-agent' });
     expect(ok?.short).not.toBe(broken?.short);
+  });
+});
+
+describe('branchChip', () => {
+  it('shows the branch name', () => {
+    const chip = branchChip({ kind: 'branch', branch: 'feature/rate-limiting' });
+    expect(chip?.text).toBe('feature/rate-limiting');
+    expect(chip?.tone).toBe('branch');
+    expect(chip?.label).toContain('feature/rate-limiting');
+  });
+
+  it('abbreviates a detached HEAD and keeps the full id in the title', () => {
+    const chip = branchChip({
+      kind: 'detached',
+      commit: '4f2c1ab9d3e5f70123456789abcdef0123456789',
+    });
+    expect(chip?.text).toBe('4f2c1ab');
+    expect(chip?.tone).toBe('detached');
+    expect(chip?.title).toContain('4f2c1ab9d3e5f70123456789abcdef0123456789');
+    // "4f2c1ab" alone does not say what it is, so the accessible name does.
+    expect(chip?.label).toContain('Detached HEAD');
+  });
+
+  /**
+   * Unlike `claudeBadge`, `unknown` renders NOTHING. Nothing here gates a
+   * click, and this arm is the ordinary state of every card on a machine where
+   * the host folders are not visible — a chip on all of them, forever, on a
+   * machine where nothing is wrong is how a chip stops being read.
+   */
+  it('shows nothing for a folder that is not a checkout, could not be read, or was not polled', () => {
+    expect(branchChip({ kind: 'none' })).toBeUndefined();
+    expect(branchChip({ kind: 'unknown', reason: 'EACCES' })).toBeUndefined();
+    expect(branchChip(undefined)).toBeUndefined();
   });
 });
 

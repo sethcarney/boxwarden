@@ -80,6 +80,7 @@ MODEL       src/models/                pure types and functions, imports nothing
    | `terminal/launch.ts` (spawn)      | `terminal/command.ts`                      |
    | `discovery/resolve.ts` (fs, exec) | `editor/targets.ts`, `terminal/targets.ts` |
    | `projects/scan.ts` (fs walk)      | `models/project.ts`                        |
+   | `git/status.ts` (fs reads)        | `models/git.ts`                            |
    | `preferences.ts` (fs)             | `models/{engine,project,terminal}.ts`      |
    | `ssh-agent.ts` (env, fs, exec)    | `models/advice.ts`, `models/ssh-agent.ts`  |
    | `update/github.ts` (net)          | `models/update.ts`                         |
@@ -99,7 +100,7 @@ Docker daemon or a display, and why the shells stay small.
 
 ### The ViewModel layer
 
-`useAppViewModel()` composes nine, kept separate because their lifetimes
+`useAppViewModel()` composes ten, kept separate because their lifetimes
 genuinely differ:
 
 | Hook              | Owns                                                        | Cadence                    |
@@ -110,6 +111,7 @@ genuinely differ:
 | `useTerminals`    | installed emulators, the chosen one, startup commands       | read once                  |
 | `useNotices`      | the message bar and the copyable fallback                   | event-driven               |
 | `useClaudeStatus` | Claude Code presence per container                          | polled every 15s           |
+| `useGitStatus`    | the branch each workspace folder is on                      | polled every 30s           |
 | `useUpdate`       | the release check: banner, footer line, dismiss, off switch | asked hourly, GitHub daily |
 | `useAdvisories`   | which advice is hidden, and which screen is showing         | never touches IPC          |
 | `useTheme`        | layout + theme, persisted to localStorage                   | never touches IPC          |
@@ -138,7 +140,7 @@ Four conventions hold this together:
   is an arm of `UpdateStatus` instead, so it renders where the answer would
   have.
 
-**The IPC surface is twenty-one narrow verbs** — see `src/shared/ipc.ts` — all
+**The IPC surface is twenty-two narrow verbs** — see `src/shared/ipc.ts` — all
 declared as a `BoxwardenApi` interface consumed by the renderer without
 importing Electron. They fall into three groups by cadence:
 
@@ -149,6 +151,7 @@ importing Electron. They fall into three groups by cadence:
 - **Terminals, read once then on demand**: `listTerminals`, `openTerminal`,
   `getStartupCommands`, `setStartupCommand`.
 - **Container processes, polled every 15s**: `claudeStatus`.
+- **The host's checkouts, polled every 30s**: `gitStatus`.
 - **The release check, asked hourly and answered from GitHub once a day**:
   `updateStatus`, `dismissUpdate`, `setUpdateChecks`, `downloadUpdate`,
   `cancelUpdateDownload`, `installUpdate`.
@@ -157,10 +160,12 @@ Prefer looping over the existing verbs (e.g. `Promise.allSettled` for a compose
 group's "Start all") over adding new channels. The exceptions so far all earned
 it: `selectEngine` changes main-process state that outlives the call; the
 terminal verbs spawn a process no combination of the others can; and the
-project verbs and `claudeStatus` are a _different cadence_ — folding
-`scanProjects` into `DiscoverySnapshot` would make the 5s poll pay for a
-filesystem walk sixty times an hour, and folding in `claudeStatus` would
-multiply its Docker traffic by the number of live containers. The update verbs
+project verbs, `claudeStatus` and `gitStatus` are a _different cadence_ —
+folding `scanProjects` into `DiscoverySnapshot` would make the 5s poll pay for
+a filesystem walk sixty times an hour, folding in `claudeStatus` would multiply
+its Docker traffic by the number of live containers, and folding in `gitStatus`
+would put a `stat` per container — possibly over a network share — behind a
+poll that runs seven hundred times an hour. The update verbs
 clear all three between them: `updateStatus` is the slowest cadence in the app
 (an HTTP request, daily); `dismissUpdate` and `setUpdateChecks` write
 preferences that outlive the call; and `downloadUpdate`, `cancelUpdateDownload`
@@ -175,8 +180,10 @@ Every verb that acts on a container or a project takes an **ID**. The main
 process resolves it against its own copy from the last scan and never acts on
 renderer-supplied data: `openInEditor` will not take a host path,
 `openProject` will not take a folder, `openTerminal` will not take a startup
-command — it reads its own stored copy — and `claudeStatus` drops any id that
-is not in the last scan.
+command — it reads its own stored copy — and `claudeStatus` and `gitStatus`
+drop any id that is not in the last scan. `gitStatus` is the sharpest case of
+the id rule: what an id resolves to there is a path on the user's disk that the
+main process then opens.
 
 `addProjectRoot` takes **no argument** on purpose: the renderer can ask for the
 folder picker, and cannot say which folder the answer is. `dismissUpdate` is
@@ -431,6 +438,44 @@ activity is neither.
 v1 **annotates** the Stop button rather than gating it; a confirm dialog is the
 follow-up, once the detection has been seen to be reliable against a real
 daemon.
+
+### The workspace branch
+
+Each card says which branch its workspace folder is on, read from `.git/HEAD`
+on the **host** — `src/models/git.ts` is the pure half (`parseGitHead`,
+`parseGitDirPointer`, `readableHostFolder`), `src/main/git/status.ts` does the
+file reads, `useGitStatus` polls, `branchChip` in `presenters.ts` turns a
+status into a chip, and `ContainerCard` gets a field.
+
+- **The host filesystem, never `docker exec`.** A dev container's workspace is
+  a bind mount of `devcontainer.local_folder`, so the checkout the container
+  sees is the one on disk beside it. Two file reads, no Docker call, and an
+  answer for a container that is STOPPED — which is when "which branch was that
+  one on?" is most often asked. `git rev-parse` inside the container works only
+  while it is running, only if git is installed in the image, and runs a
+  program in a container this app did not build.
+- **`readableHostFolder` normalises; `authorityFor` still must not.** The WSL
+  arm becomes `\\wsl.localhost\<distro>\…` so Windows can open it. Safe here
+  for the same reason it is safe in `comparableFolder`: nothing is launched from
+  the result. A folder whose flavour does not match the host answers `undefined`
+  rather than a guess.
+- **Follow the `.git` FILE, not just the directory.** One worktree per agent is
+  a common way to run several Claude Code sessions over one repository, and
+  those are exactly the containers whose branch nobody can keep in their head.
+  The pointer may be relative to the folder holding it.
+- **The read is bounded** — four levels up, two seconds — because a host path
+  can be a network share, a spun-down disk, or a UNC into a WSL distro that has
+  stopped answering, all of which make `stat` block rather than fail.
+- **`unknown` renders NOTHING, unlike the Claude badge's `unknown`.** That badge
+  guards a click, so "we could not tell" has to be visible. A branch guards
+  nothing, and `unknown` is the ordinary state of every card on a machine where
+  the folders are not visible (boxwarden in its own dev container, a WSL path
+  seen from macOS, a daemon over SSH) — a chip on all of them forever is how a
+  chip stops being read. `none` and `unknown` stay separate arms regardless:
+  one is an answer, the other is the absence of one.
+- **One read per FOLDER, not per container.** Every service in a compose project
+  carries the same label, so a five-service workspace would otherwise stat one
+  `.git` five times a poll.
 
 ### Self-update
 
@@ -689,6 +734,11 @@ Swaps in `FakeDockerBackend`, serving six fixture containers through the
 what each one exercises — Windows paths, compose, unparseable labels, WSL,
 etc.). The main process logs a loud warning when this is active; never let a
 fake container list be mistaken for a real one.
+
+It also swaps in `src/main/git/fake.ts`, so the branch chips have something to
+render — the fixture folders do not exist on anyone's disk. Gated on the same
+switch rather than one of its own, which is what stops a real container list
+from ever picking up a fabricated branch.
 
 `BOXWARDEN_FAKE_UPDATE=1` is the same bargain for the update banner
 (`src/main/update/fake.ts`): a release one minor version above this build,

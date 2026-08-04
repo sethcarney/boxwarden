@@ -7,6 +7,7 @@ import type {
   EditorId,
   EngineSelection,
   EngineSummary,
+  GitStatus,
   ProjectId,
   ProjectScan,
   TerminalId,
@@ -98,6 +99,16 @@ export type OpenInEditorResult =
  */
 export type ClaudeStatusMap = Readonly<Record<ContainerId, ClaudeStatus>>;
 
+/**
+ * Which branch each container's workspace folder is on, keyed by container id.
+ *
+ * Same shape and the same rule as `ClaudeStatusMap`: an ABSENT key means "not
+ * asked, or asked about a container the main process does not recognise", and
+ * is not the same as `{ kind: 'none' }`. Both render as no chip, but only the
+ * second one is a statement about the folder.
+ */
+export type GitStatusMap = Readonly<Record<ContainerId, GitStatus>>;
+
 /** An editor offered in the UI, with whether it was actually found on this machine. */
 export interface EditorOption {
   readonly id: EditorId;
@@ -167,6 +178,7 @@ export const IPC = {
   getStartupCommands: 'boxwarden:get-startup-commands',
   setStartupCommand: 'boxwarden:set-startup-command',
   claudeStatus: 'boxwarden:claude-status',
+  gitStatus: 'boxwarden:git-status',
   updateStatus: 'boxwarden:update-status',
   dismissUpdate: 'boxwarden:dismiss-update',
   setUpdateChecks: 'boxwarden:set-update-checks',
@@ -284,6 +296,29 @@ export interface BoxwardenApi {
    * must keep distinct from `none` — the Stop button reads it.
    */
   claudeStatus(ids: readonly ContainerId[]): Promise<ClaudeStatusMap>;
+
+  /**
+   * ---- Branch ----
+   *
+   * Which branch each container's workspace folder is checked out on, read
+   * from `.git/HEAD` on the HOST — not from inside the container. See
+   * src/models/git.ts for why the answer comes from there.
+   *
+   * A verb of its own on the same grounds as the two above: CADENCE, and this
+   * time it is the filesystem's. Discovery polls every five seconds; folding
+   * these reads into it would put a `stat` per container behind a poll that
+   * runs seven hundred times an hour — on a path that may be a network share
+   * or a UNC into a WSL distro — to re-derive an answer that changes when
+   * somebody types `git switch`. It is asked on a slower clock of its own.
+   *
+   * Batched, ids validated against the main process's own last container list,
+   * and never rejects — all three the same rules as `claudeStatus`. The
+   * renderer never names a FOLDER: it sends ids, and the main process reads
+   * only the paths its own last scan produced. A path arriving over the bridge
+   * would be a renderer choosing which of the user's directories this process
+   * opens.
+   */
+  gitStatus(ids: readonly ContainerId[]): Promise<GitStatusMap>;
 
   /**
    * ---- Self-update ----

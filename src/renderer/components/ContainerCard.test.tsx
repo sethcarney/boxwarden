@@ -419,4 +419,39 @@ describe('ContainerCard', () => {
       expect(screen.getByRole('button', { name: 'Stop' }).getAttribute('title')).toBeNull();
     });
   });
+
+  describe('the branch chip', () => {
+    it('names the branch the workspace folder is on', () => {
+      renderCard(devContainer(), { git: { kind: 'branch', branch: 'feature/rate-limiting' } });
+      expect(screen.getByLabelText('Branch feature/rate-limiting')).toBeDefined();
+      expect(screen.getByText('feature/rate-limiting')).toBeDefined();
+    });
+
+    it('abbreviates a detached HEAD and keeps the whole id in the title', () => {
+      renderCard(devContainer(), {
+        git: { kind: 'detached', commit: '4f2c1ab9d3e5f70123456789abcdef0123456789' },
+      });
+      const chip = screen.getByText('4f2c1ab');
+      expect(chip.getAttribute('title')).toContain('4f2c1ab9d3e5f70123456789abcdef0123456789');
+    });
+
+    /**
+     * Three arms render as nothing, and unlike the Claude badge that is the
+     * whole answer for `unknown` too — see the note on `branchChip`.
+     */
+    it('is absent for a folder that is not a checkout, could not be read, or was not polled', () => {
+      renderCard(devContainer(), { git: { kind: 'none' } });
+      expect(document.querySelector('.branch-chip')).toBeNull();
+
+      cleanup();
+
+      renderCard(devContainer(), { git: { kind: 'unknown', reason: 'EACCES' } });
+      expect(document.querySelector('.branch-chip')).toBeNull();
+
+      cleanup();
+
+      renderCard(devContainer());
+      expect(document.querySelector('.branch-chip')).toBeNull();
+    });
+  });
 });

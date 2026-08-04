@@ -10,6 +10,8 @@ import type { DiscoveryViewModel } from './useDiscovery.js';
 import { useDiscovery } from './useDiscovery.js';
 import type { EditorsViewModel } from './useEditors.js';
 import { useEditors } from './useEditors.js';
+import type { GitViewModel } from './useGitStatus.js';
+import { useGitStatus } from './useGitStatus.js';
 import type { NoticesViewModel } from './useNotices.js';
 import { useNotices } from './useNotices.js';
 import type { ProjectsViewModel } from './useProjects.js';
@@ -39,6 +41,8 @@ export interface AppViewModel {
   readonly discovery: DiscoveryViewModel;
   readonly projects: ProjectsViewModel;
   readonly claude: ClaudeViewModel;
+  /** Which branch each container's workspace folder is on. */
+  readonly git: GitViewModel;
   /** The setup advice, what the user has hidden of it, and which screen is showing. */
   readonly advisories: AdvisoriesViewModel;
   readonly update: UpdateViewModel;
@@ -48,11 +52,12 @@ export interface AppViewModel {
  * The root ViewModel: every piece of state the app renders, and every action it
  * can take, with no JSX anywhere beneath it.
  *
- * Composition rather than one large hook, because the nine below have
- * genuinely different lifetimes — Docker is polled every five seconds, Claude
- * Code presence every fifteen, GitHub is asked about a new release once a day,
- * the filesystem is scanned on demand, the editor and terminal lists are read
- * once, and the theme and the hidden advice never touch the bridge at all.
+ * Composition rather than one large hook, because the ten below have genuinely
+ * different lifetimes — Docker is polled every five seconds, Claude Code
+ * presence every fifteen, the workspace branches every thirty, GitHub is asked
+ * about a new release once a day, the filesystem is scanned on demand, the
+ * editor and terminal lists are read once, and the theme and the hidden advice
+ * never touch the bridge at all.
  * Keeping them separate is what lets each be tested against a fake
  * `BoxwardenApi` without standing up the others.
  *
@@ -72,6 +77,7 @@ export function useAppViewModel(): AppViewModel {
   const discovery = useDiscovery(api, notices, editors.editorId, terminals.terminalId);
   const projects = useProjects(api, notices, editors.editorId, discovery.containers);
   const claude = useClaudeStatus(api, notices, discovery.containers);
+  const git = useGitStatus(api, notices, discovery.containers);
   // After discovery, which is where the advice comes from. `EMPTY_ADVICE` and
   // not a literal `[]`: the partition memoises on the array's identity, and a
   // fresh empty array every render would recompute it on every poll.
@@ -90,6 +96,7 @@ export function useAppViewModel(): AppViewModel {
     discovery,
     projects,
     claude,
+    git,
     advisories,
     update,
   };

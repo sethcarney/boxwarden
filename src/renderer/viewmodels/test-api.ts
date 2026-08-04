@@ -5,6 +5,7 @@ import type {
   ContainerId,
   EditorId,
   EngineSelection,
+  GitStatus,
   ProjectId,
   ProjectScan,
   TerminalId,
@@ -16,6 +17,7 @@ import type {
   ClaudeStatusMap,
   DiscoverySnapshot,
   EditorOption,
+  GitStatusMap,
   OpenInEditorResult,
   OpenTerminalResult,
   ProjectRootsResult,
@@ -106,6 +108,7 @@ export interface FakeApi extends BoxwardenApi {
   readonly getStartupCommands: Mock<() => Promise<Readonly<Record<string, string>>>>;
   setStartupCommand: Mock<(id: ContainerId, command: string) => Promise<ActionResult>>;
   readonly claudeStatus: Mock<(ids: readonly ContainerId[]) => Promise<ClaudeStatusMap>>;
+  readonly gitStatus: Mock<(ids: readonly ContainerId[]) => Promise<GitStatusMap>>;
   readonly updateStatus: Mock<(force: boolean) => Promise<UpdateStatus>>;
   readonly dismissUpdate: Mock<() => Promise<UpdateStatus>>;
   readonly setUpdateChecks: Mock<(enabled: boolean) => Promise<UpdateStatus>>;
@@ -165,6 +168,8 @@ export interface FakeApiOptions {
    * whichever fixture ids the test happened to use.
    */
   readonly claude?: ClaudeStatus;
+  /** What `gitStatus` answers for every id, for the same reason `claude` is one value. */
+  readonly git?: GitStatus;
   /** What `updateStatus` answers. Defaults to "looked, nothing newer". */
   readonly update?: UpdateStatus;
 }
@@ -178,6 +183,7 @@ export function fakeApi(options: FakeApiOptions = {}): FakeApi {
   ];
   const startupCommands = options.startupCommands ?? {};
   const claude = options.claude ?? { kind: 'none' };
+  const git = options.git ?? { kind: 'branch', branch: 'main' };
   const update: UpdateStatus = options.update ?? {
     currentVersion: '1.1.0',
     checkedAt: new Date('2026-08-01T12:00:00Z'),
@@ -220,6 +226,9 @@ export function fakeApi(options: FakeApiOptions = {}): FakeApi {
     ),
     claudeStatus: vi.fn<(ids: readonly ContainerId[]) => Promise<ClaudeStatusMap>>((ids) =>
       Promise.resolve(Object.fromEntries(ids.map((id) => [id, claude]))),
+    ),
+    gitStatus: vi.fn<(ids: readonly ContainerId[]) => Promise<GitStatusMap>>((ids) =>
+      Promise.resolve(Object.fromEntries(ids.map((id) => [id, git]))),
     ),
     updateStatus: vi.fn<(force: boolean) => Promise<UpdateStatus>>(() => Promise.resolve(update)),
     dismissUpdate: vi.fn<() => Promise<UpdateStatus>>(() => Promise.resolve(update)),

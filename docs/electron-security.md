@@ -114,6 +114,27 @@ only matches path segments in it, and any shape it cannot read becomes an
 process's own last scan before any Docker call reaches them — the same rule as
 `openInEditor` above and `openProject` beside it.
 
+### Reading a branch reads two files, and only under a path the app found
+
+`gitStatus` answers "which branch is this workspace on" by reading `.git/HEAD`
+under the container's own `devcontainer.local_folder`. It takes container
+**ids**, never folders, and that rule carries more weight here than anywhere
+else on the surface: what an id resolves to is a path on the user's disk that
+this process then opens. The main process reads only paths its own last scan
+produced, from labels it parsed itself.
+
+Three further limits:
+
+- It **reads**, and only `.git/HEAD` and a `.git` pointer file. It does not
+  write, does not create, and runs no git binary — so there is no hook, no
+  config directive, and no `core.fsmonitor` to execute. A `git rev-parse` in a
+  folder the app did not create would be exactly that risk.
+- The contents are **untrusted data handed to a pure parser**
+  (`parseGitHead`), which answers `unknown` for any shape it cannot read rather
+  than throwing, and never evaluates what it read.
+- The walk up is bounded to four levels and the whole read to two seconds, so a
+  hostile or simply broken filesystem cannot hold the poll open.
+
 ### Launching an editor never goes through a shell
 
 `src/main/editor/launch.ts` uses `spawn` with an argv **array** and never

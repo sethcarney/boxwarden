@@ -25,6 +25,9 @@ unblocks the most.
 - A diagnostics screen naming every socket that was tried and why each failed.
 - **Flags Claude Code sessions running inside a container**, so Stop and "Stop
   all" are not blind to an agent mid-task.
+- **Shows the branch each workspace folder is on**, read from `.git/HEAD` on the
+  host — worktrees included — so several containers over one repository are
+  told apart at a glance.
 - **Finds dev container projects that have never been built** by walking the
   filesystem for `devcontainer.json`, listing the ones no container claims, and
   offering to open the folder so the editor can prompt "Reopen in Container".
@@ -215,7 +218,26 @@ deliberately left out of v1, in this order:
   activity is neither, and coupling them would put the stable half at the mercy
   of the other.
 
-## 8. Smaller things
+## 8. The workspace branch — what it does not do
+
+The branch chip reads `.git/HEAD` on the host and stops there. Three things it
+deliberately does not answer, in rough order of how often they will be missed:
+
+- **Whether the tree is dirty, or ahead of its remote.** Both mean walking the
+  index and the refs — orders of magnitude more work than reading one file, on
+  a poll, for a machine that may have a dozen containers. If it lands, it wants
+  a different cadence and probably an explicit refresh.
+- **A branch for the unbuilt projects.** The scan already knows those folders,
+  and the same reader would answer for them. It was left out only because the
+  scan is on-demand and this is a poll, so joining them needs a decision about
+  which clock wins rather than more code.
+- **The container's own checkout, when it is not a bind mount.** A dev container
+  that clones the repository into a volume instead of mounting the host folder
+  has a checkout this cannot see, and will report the host folder's branch — or
+  `none` — for it. That is the trade that buys the whole feature its cost of two
+  file reads; the alternative is an `exec` per container.
+
+## 9. Smaller things
 
 - **Attached containers.** Containers attached to rather than created by the
   extension use a different authority (`attached-container+<hex of JSON>`).

@@ -21,6 +21,8 @@ your machine, reattaches your editor to them, and opens a shell inside them.
 - Groups Docker Compose projects, so stopping a workspace does not leave its
   database running.
 - Starts and stops them, individually or per project.
+- Shows the **branch each workspace is on**, read from the checkout on your own
+  disk — so a row of cards from the same repository is not four identical names.
 - Flags containers with a **Claude Code session running inside**, and says so on
   the Stop button — so stopping one out from under an agent mid-task is a
   deliberate act rather than an accident.

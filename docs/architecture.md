@@ -54,6 +54,7 @@ shell around a pure function:
 | `editor/launch.ts` (spawn)       | `editor/uri.ts`                            |
 | `editor/resolve.ts` (fs, exec)   | `editor/targets.ts` (data)                 |
 | `projects/scan.ts` (fs walk)     | `models/project.ts`                        |
+| `git/status.ts` (fs reads)       | `models/git.ts`                            |
 | `ssh-agent.ts` (env, fs, exec)   | `models/advice.ts`, `models/ssh-agent.ts`  |
 | `update/github.ts` (net)         | `models/update.ts`                         |
 | `update/check.ts` (clock, cache) | `models/update.ts`                         |
@@ -61,10 +62,11 @@ shell around a pure function:
 That split is why the test suite needs no Docker daemon and no display: the
 cores are covered by unit tests, and the shells are small enough to read.
 
-`projects/scan.ts` is the one shell with tests of its own, against a temp
-directory. The rule the suite keeps is "no daemon and no display", not "no
-filesystem", and a directory walk's bugs — a depth limit off by one, a
-`.devcontainer` variant silently dropped — do not appear anywhere else.
+`projects/scan.ts` and `git/status.ts` are the shells with tests of their own,
+against a temp directory. The rule the suite keeps is "no daemon and no
+display", not "no filesystem", and the bugs those two have — a depth limit off
+by one, a `.devcontainer` variant silently dropped, a worktree pointer not
+followed — do not appear anywhere else.
 
 ### 2. A ViewModel renders nothing
 
@@ -73,7 +75,7 @@ They are React hooks — the idiomatic ViewModel in a function-component
 codebase — and they hold every piece of state the UI has, every command it can
 issue, and every value derived from the two.
 
-`useAppViewModel()` composes nine, kept apart because their lifetimes differ:
+`useAppViewModel()` composes ten, kept apart because their lifetimes differ:
 
 | Hook              | Owns                                                        | Cadence           |
 | ----------------- | ----------------------------------------------------------- | ----------------- |
@@ -83,6 +85,7 @@ issue, and every value derived from the two.
 | `useTerminals`    | installed emulators, the chosen one, startup commands       | read once         |
 | `useNotices`      | the message bar and the copyable fallback                   | event-driven      |
 | `useClaudeStatus` | Claude Code presence per container                          | polled every 15s  |
+| `useGitStatus`    | the branch each workspace folder is on                      | polled every 30s  |
 | `useUpdate`       | the release check, its banner and its off switch            | asked hourly      |
 | `useAdvisories`   | which advice is hidden, which screen is showing             | never touches IPC |
 | `useTheme`        | layout + theme, persisted to localStorage                   | never touches IPC |
@@ -162,7 +165,10 @@ container that does not exist — so VS Code offers to build a new one. The
 `does not normalise the host path` test in `uri.test.ts` is what pins this.
 
 The corollary: `parseLocalFolder` is free to be opinionated, because nothing
-about correctness depends on it.
+about correctness depends on it. `comparableFolder` (matching a project against
+a container) and `readableHostFolder` (finding the checkout to read a branch
+from) both normalise, and both are safe for the same reason: nothing is
+launched from what they return.
 
 ## Discovery
 
@@ -564,6 +570,56 @@ reading when the window is shown again.
 Ids are validated against the main process's own last container list before any
 Docker call, the same rule as `openInEditor` taking an id rather than a
 `DevContainer`.
+
+## The workspace branch
+
+Each card says which branch its workspace folder is checked out on. The answer
+comes from the **host filesystem**, not from inside the container: a dev
+container's workspace is a bind mount of `devcontainer.local_folder`, so the
+checkout the container sees is the checkout on disk beside it. Two small file
+reads, no Docker call, and an answer for a container that is stopped — which is
+when "which branch was that one on?" is most often asked.
+
+`docker exec git rev-parse` was the alternative and is worse in every direction:
+it runs a program inside a container this app did not build, works only while
+the container is running, and needs git installed in the image. Same trade as
+`top` versus `exec` for Claude Code presence, one step further — here there is
+nothing to call at all.
+
+`src/models/git.ts` is the pure half: `parseGitHead` (a symbolic ref, or a
+detached commit), `parseGitDirPointer` (the `gitdir:` file git writes for a
+**worktree** — one worktree per agent is a common way to run several sessions
+over one repository), and `readableHostFolder`, which answers where to look or
+`undefined` when the folder belongs to another operating system.
+`src/main/git/status.ts` does the file reads: walk up at most four levels
+looking for a `.git`, follow the pointer if it is a file, read `HEAD`, and cap
+the whole thing at two seconds so an unresponsive network share or a stopped
+WSL distro degrades to "could not tell" instead of holding the batch open.
+
+Four arms, and they do **not** collapse the way the Claude Code badge's do:
+
+| Arm        | Means                              | Renders   |
+| ---------- | ---------------------------------- | --------- |
+| `branch`   | on a branch                        | the name  |
+| `detached` | no branch checked out              | short sha |
+| `none`     | that folder is not a git checkout  | nothing   |
+| `unknown`  | we could not look, with the reason | nothing   |
+
+`unknown` renders nothing where the Claude badge renders a question mark, and
+the difference is the stake. That badge guards a click — a card with no badge is
+a card saying stopping is safe — so "we could not tell" has to be visible. A
+branch guards nothing, and `unknown` is the ordinary state of every card on a
+machine where the folders are not visible: boxwarden running inside its own dev
+container, a WSL path seen from macOS, a daemon reached over SSH. A chip on
+every card, forever, on a machine where nothing is wrong is how a chip stops
+being read.
+
+`gitStatus(ids)` is batched, on a 30s clock, and takes **ids, never folders**.
+That rule is sharper here than anywhere else in the IPC surface: what an id
+resolves to is a path on the user's disk that this process then opens. The main
+process reads only paths its own last scan produced, and reads each folder
+**once** per batch — every service in a compose project carries the same label,
+so a five-service workspace would otherwise stat one `.git` five times a poll.
 
 ## Checking for a new boxwarden
 

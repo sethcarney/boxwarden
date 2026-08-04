@@ -32,6 +32,9 @@ export type {
   EndpointProbe,
 } from './docker-endpoint.js';
 
+export type { GitStatus } from './git.js';
+export { parseGitDirPointer, parseGitHead, readableHostFolder, shortCommit } from './git.js';
+
 export type { SshAgentState } from './ssh-agent.js';
 export { SSH_AUTH_SOCK, containersMissingAgentSocket, sshAgentState } from './ssh-agent.js';
 
