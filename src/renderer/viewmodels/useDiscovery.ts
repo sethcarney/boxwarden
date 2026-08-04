@@ -95,9 +95,31 @@ export function useDiscovery(
     // duplicating refresh's body inside the effect.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void refresh();
-    const timer = setInterval(() => void refresh(), REFRESH_INTERVAL_MS);
+
+    const timer = setInterval(() => {
+      // Skipped while the window is hidden, the same way `useClaudeStatus`
+      // skips its own. This is the most expensive poll in the app — a probe of
+      // every candidate endpoint, then a list and an inspect per container, and
+      // on Windows a pass through WSL discovery underneath all of it — and
+      // running it twelve times a minute against a minimised window is work
+      // nobody can see. Checked on each tick rather than by tearing the
+      // interval down, so the poll resumes on its own cadence.
+      if (!document.hidden) void refresh();
+    }, REFRESH_INTERVAL_MS);
+
+    // Coming back to the window is the one moment a stale list is worth a round
+    // trip out of turn: the containers were quite possibly started from a
+    // terminal while boxwarden was in the background, and waiting up to five
+    // seconds to notice is the difference between "it saw that" and "I had to
+    // click something".
+    const onVisible = () => {
+      if (!document.hidden) void refresh();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+
     return () => {
       clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
     };
   }, [refresh]);
 

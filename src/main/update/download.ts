@@ -299,10 +299,10 @@ export class UpdateDownloader {
     const totalBytes = Number.isFinite(declared) && declared > 0 ? declared : undefined;
 
     const sink = createWriteStream(path);
+    const reader = (response.body as ReadableStream<Uint8Array>).getReader();
     let received = 0;
 
     try {
-      const reader = (response.body as ReadableStream<Uint8Array>).getReader();
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -323,6 +323,13 @@ export class UpdateDownloader {
         });
       }
     } finally {
+      // Both ends, on every path out — including the throws above, which are
+      // the ones that matter. Leaving the loop early without cancelling holds
+      // the reader's lock on a body nobody is draining, and the socket behind
+      // it stays open until the whole response is garbage collected. Abort
+      // closes it; a size cap or a full disk does not, and those are exactly
+      // the cases that leave a download half-read.
+      await reader.cancel().catch(() => undefined);
       await new Promise<void>((resolve) => {
         sink.end(resolve);
       });

@@ -6,7 +6,7 @@ import type { ActionResult } from '../../shared/ipc.js';
 import { devContainer } from '../test-fixtures.js';
 import { stubNotices } from './test-notices.js';
 import { fakeApi, snapshot, unreachableSnapshot } from './test-api.js';
-import { useDiscovery } from './useDiscovery.js';
+import { REFRESH_INTERVAL_MS, useDiscovery } from './useDiscovery.js';
 
 /**
  * The Docker ViewModel, driven with no DOM beyond what `renderHook` needs and
@@ -238,5 +238,106 @@ describe('useDiscovery', () => {
       });
     });
     expect(notices.showError).toHaveBeenCalledWith('could not spawn code');
+  });
+
+  /**
+   * The five-second poll is the most expensive thing this app does — a probe of
+   * every candidate endpoint, then a list and an inspect per container, and on
+   * Windows a pass through WSL discovery underneath all of it. Running it
+   * against a minimised window is pure cost.
+   */
+  describe('while the window is hidden', () => {
+    /**
+     * `document.hidden` is a getter with no setter, so it is redefined on the
+     * instance rather than assigned. Deleted again by the returned function,
+     * which uncovers the prototype's own getter — leaving a jsdom global
+     * patched leaks into whatever test runs next in this file.
+     */
+    function hide(hidden: boolean) {
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden });
+      return () => {
+        // Reflect rather than `delete`: `Document.hidden` is readonly in the
+        // DOM lib, so the operator is a type error even though the property is
+        // an own, configurable one at runtime.
+        Reflect.deleteProperty(document, 'hidden');
+      };
+    }
+
+    /**
+     * Fake timers, because the interval is a module constant: a real-time wait
+     * short enough for a test never reaches the first tick, so the assertion
+     * would pass whether or not the guard existed. The visible case below is
+     * the control that proves this one is measuring something.
+     */
+    async function pollsIn(hidden: boolean, ms: number): Promise<number> {
+      vi.useFakeTimers();
+      const restore = hide(hidden);
+      // Built ONCE, outside the render callback. `stubNotices()` returns a new
+      // object each call, and a new notices object gives `refresh` a new
+      // identity, which re-runs the poll effect — the test would then see the
+      // mount reading several times and blame the interval. Same trap
+      // CLAUDE.md describes for this exact hook.
+      const notices = stubNotices();
+      const api = fakeApi();
+
+      try {
+        renderHook(() => useDiscovery(api, notices, 'vscode', undefined));
+        // The reading on mount happens either way: an empty list for five
+        // seconds is the thing that reading exists to prevent, hidden or not.
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(0);
+        });
+        expect(api.discover).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(ms);
+        });
+        return api.discover.mock.calls.length - 1;
+      } finally {
+        restore();
+        vi.useRealTimers();
+      }
+    }
+
+    it('does not poll', async () => {
+      expect(await pollsIn(true, REFRESH_INTERVAL_MS * 6)).toBe(0);
+    });
+
+    it('polls normally when the window is visible', async () => {
+      // The control. Without it, the assertion above would still pass if the
+      // interval had been deleted outright.
+      expect(await pollsIn(false, REFRESH_INTERVAL_MS * 6)).toBeGreaterThan(0);
+    });
+
+    it('catches up the moment the window comes back', async () => {
+      const restore = hide(false);
+      const notices = stubNotices();
+      const api = fakeApi();
+
+      try {
+        const { result } = renderHook(() => useDiscovery(api, notices, 'vscode', undefined));
+
+        // Waited to COMPLETION, not just to the call: `refresh` guards on an
+        // in-flight request, so dispatching while the first one is still open
+        // would be dropped and the test would blame the listener.
+        await waitFor(() => {
+          expect(result.current.snapshot).toBeDefined();
+        });
+
+        await act(async () => {
+          document.dispatchEvent(new Event('visibilitychange'));
+          await Promise.resolve();
+        });
+
+        // Containers are quite often started from a terminal while boxwarden is
+        // in the background; waiting out the interval to notice is the
+        // difference between "it saw that" and "I had to click something".
+        await waitFor(() => {
+          expect(api.discover).toHaveBeenCalledTimes(2);
+        });
+      } finally {
+        restore();
+      }
+    });
   });
 });
