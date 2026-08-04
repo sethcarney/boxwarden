@@ -2,32 +2,39 @@
  * Whether a newer boxwarden has been published, and what the person running
  * this one has to do about it.
  *
- * boxwarden does not swap its own application bundle on macOS or Windows.
- * `electron-updater` does exactly that, and it needs a CODE signature to
- * decide the swap is safe — an Apple Developer ID, an Authenticode
- * certificate. This project has neither, and until it does, Squirrel.Mac
- * refuses the swap outright and everywhere else it would replace a binary on
- * the user's disk on the strength of a download nothing checked.
+ * boxwarden CHECKS for updates and does not fetch or install them. It reports
+ * that a release exists, names the one file this machine needs, links to it,
+ * and says what to do with it. Downloading it is a browser's job and installing
+ * it is the user's click.
  *
- * What it DOES do is the half that needs no certificate: fetch the one file
- * this machine needs, verify it against `sha256sums.txt` and the Sigstore
- * bundle the release workflow attaches, and hand it to the operating system's
- * own installer — see src/models/download.ts. The artefacts ARE signed, with
- * cosign, which is a different thing from code signing and does not substitute
- * for it: cosign proves these bytes came out of this repository's release
- * workflow, and Gatekeeper has never heard of it. Both statements are true at
- * once and this file is careful to keep them apart, because "unsigned" said
- * flatly is now wrong in one sense and right in the other.
+ * That boundary was moved here deliberately, and this is the reasoning so that
+ * nobody re-derives the other answer from first principles:
  *
- * The one exception is the AppImage, which updates itself in place. Not
- * because the rule bent — because an AppImage is a single file the user owns,
- * with no installer to hand it to and no package manager to offend, so
- * "replace the file" IS the install procedure and boxwarden can do it with the
- * same verification a person would have to do by hand.
+ *   - The app cannot swap its own bundle. `electron-updater` does exactly that
+ *     and needs a CODE signature to decide the swap is safe — an Apple
+ *     Developer ID, an Authenticode certificate. This project has neither, so
+ *     Squirrel.Mac refuses outright and everywhere else it would overwrite a
+ *     binary the OS never checked. That has always been true.
+ *   - Given that, an in-app download ends where a browser download ends: at an
+ *     installer the user runs and clicks through a Gatekeeper or SmartScreen
+ *     warning. It saved one download, and cost a Sigstore/TUF verification
+ *     chain in the main process — which meant a second CDN had to be reachable
+ *     or the app REFUSED to install, in wording indistinguishable from "this
+ *     release is forged". An updater that works on some networks and cries
+ *     tampering on others is worse than one that hands you a link.
  *
- * That is also why this file is bigger than a version comparison. Telling
- * somebody "1.2.0 is available" is not the feature; telling them which file
- * their machine needs, and that Gatekeeper is about to refuse it, is. Those
+ * The artefacts are still signed, with cosign, and every release still carries
+ * `sha256sums.txt` and a `.sigstore.json` per file. Verification did not go
+ * away; it moved OUT of the critical path, to commands on the release page that
+ * cannot take the app down with them. Note that cosign is a different thing
+ * from code signing and does not substitute for it — it proves these bytes came
+ * out of this repository's release workflow, and Gatekeeper has never heard of
+ * it. Both statements are true at once and this file keeps them apart, because
+ * "unsigned" said flatly is wrong in one sense and right in the other.
+ *
+ * That is why this file is bigger than a version comparison. Telling somebody
+ * "1.2.0 is available" is not the feature; telling them which file their
+ * machine needs, and that Gatekeeper is about to refuse it, is. Those
  * instructions differ per platform AND per install kind — a `.deb` is replaced
  * by apt, an AppImage by overwriting a file — so the kind is detected rather
  * than guessed from the platform alone.
@@ -45,11 +52,6 @@
  * response is checked against. Splitting them across two files is how you end
  * up trusting links from a repository you did not query.
  */
-// Type-only, and therefore erased: `download.ts` imports this module back for
-// `UPDATE_REPOSITORY` and `InstallKind`, and a value import in this direction
-// would make that a real cycle at runtime.
-import type { UpdateDownload } from './download.js';
-
 export const UPDATE_REPOSITORY = { owner: 'sethcarney', repo: 'boxwarden' } as const;
 
 /**
@@ -433,10 +435,9 @@ export interface UpdateInstructions {
  * Windows both interpose on first launch, and a user who was not warned reads
  * that as "the update is malware" and stops updating.
  *
- * These are the manual steps, and they stay reachable even now that boxwarden
- * can fetch and verify the file itself: the download refuses on a release
- * missing its signature, on an install kind whose artefact is ambiguous, and
- * on any machine where the user would rather do it themselves.
+ * These are THE steps, not a fallback behind an automated path — boxwarden
+ * checks and links, and the install is the user's to run. See the note at the
+ * top of this file for why that is the whole feature rather than a stage of it.
  */
 export function updateInstructions(
   kind: InstallKind,
@@ -551,21 +552,6 @@ export interface UpdateStatus {
   /** When the last COMPLETED check happened. Absent until one has. */
   readonly checkedAt?: Date;
   readonly outcome: UpdateOutcome;
-  /**
-   * How far a download of the offered version has got.
-   *
-   * Required rather than optional, and always present even on the arms where
-   * downloading is impossible — `idle` says that plainly, and an absent field
-   * would leave the renderer distinguishing "nothing has been asked for" from
-   * "this build cannot ask" by the shape of the object rather than by reading
-   * the outcome beside it.
-   *
-   * It rides on the status rather than on a channel of its own because the two
-   * are one state machine: the file being fetched is the asset named by
-   * `outcome.asset`, and a download that outlived the offer it belongs to
-   * would be a progress bar for a version nobody is being shown.
-   */
-  readonly download: UpdateDownload;
 }
 
 export interface UpdateFacts {
@@ -581,11 +567,6 @@ export interface UpdateFacts {
   readonly release: Release | undefined;
   /** The version the user last said "not now" to. */
   readonly dismissedVersion?: string;
-  /**
-   * The download in progress, when there is one. Absent means `idle`, which is
-   * what every caller that has never started one passes.
-   */
-  readonly download?: UpdateDownload;
 }
 
 /**
@@ -595,18 +576,10 @@ export interface UpdateFacts {
  * data, so the shell around it does nothing but fetch and remember.
  */
 export function foldUpdateStatus(facts: UpdateFacts, checkedAt: Date): UpdateStatus {
-  const base = {
-    currentVersion: facts.currentVersion,
-    checkedAt,
-    // The download belongs to a version on offer. Folding a check that found
-    // none — or found one the running build already is — resets it, so a
-    // finished download of 1.2.0 stops being advertised the moment 1.2.0 is
-    // what is running.
-    download: facts.download ?? { kind: 'idle' as const },
-  };
+  const base = { currentVersion: facts.currentVersion, checkedAt };
 
   if (facts.release === undefined || !isNewerVersion(facts.release.version, facts.currentVersion)) {
-    return { ...base, download: { kind: 'idle' }, outcome: { kind: 'current' } };
+    return { ...base, outcome: { kind: 'current' } };
   }
 
   const asset = pickAsset(facts.release.assets, facts.installKind, facts.arch);

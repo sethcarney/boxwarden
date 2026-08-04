@@ -35,7 +35,6 @@ bun run dist         # build + installers for the host OS, into release/
 bun run dist:mac / dist:linux / dist:win
 
 bun run check:release-version   # tag vs package.json — run before tagging, not part of `check`
-bun run check:sigstore          # can this machine reach Sigstore's trust root? diagnostic, not part of `check`
 
 bun run devcontainer:open   # devcontainer up, then attach an editor to it (scripts/devcontainer-open.mjs)
 ```
@@ -73,20 +72,19 @@ MODEL       src/models/                pure types and functions, imports nothing
    Anything that touches the outside world lives in `src/main/` as a thin shell
    around a pure core:
 
-   | Impure edge                       | Pure core it wraps                          |
-   | --------------------------------- | ------------------------------------------- |
-   | `docker/client.ts` (dockerode)    | `docker/mapping.ts`, `docker/host-path.ts`  |
-   | `docker/client.ts` (probing)      | `docker/endpoint.ts`                        |
-   | `editor/launch.ts` (spawn)        | `editor/uri.ts`                             |
-   | `terminal/launch.ts` (spawn)      | `terminal/command.ts`                       |
-   | `discovery/resolve.ts` (fs, exec) | `editor/targets.ts`, `terminal/targets.ts`  |
-   | `projects/scan.ts` (fs walk)      | `models/project.ts`                         |
-   | `git/status.ts` (fs reads)        | `models/git.ts`                             |
-   | `preferences.ts` (fs)             | `models/{engine,project,terminal}.ts`       |
-   | `ssh-agent.ts` (env, fs, exec)    | `models/advice.ts`, `models/ssh-agent.ts`   |
-   | `update/github.ts` (net)          | `models/update.ts`                          |
-   | `update/check.ts` (clock, cache)  | `models/update.ts`                          |
-   | `crypto-compat.ts` (patches node) | its own `wrapVerify`, `substituteDigestFor` |
+   | Impure edge                       | Pure core it wraps                         |
+   | --------------------------------- | ------------------------------------------ |
+   | `docker/client.ts` (dockerode)    | `docker/mapping.ts`, `docker/host-path.ts` |
+   | `docker/client.ts` (probing)      | `docker/endpoint.ts`                       |
+   | `editor/launch.ts` (spawn)        | `editor/uri.ts`                            |
+   | `terminal/launch.ts` (spawn)      | `terminal/command.ts`                      |
+   | `discovery/resolve.ts` (fs, exec) | `editor/targets.ts`, `terminal/targets.ts` |
+   | `projects/scan.ts` (fs walk)      | `models/project.ts`                        |
+   | `git/status.ts` (fs reads)        | `models/git.ts`                            |
+   | `preferences.ts` (fs)             | `models/{engine,project,terminal}.ts`      |
+   | `ssh-agent.ts` (env, fs, exec)    | `models/advice.ts`, `models/ssh-agent.ts`  |
+   | `update/github.ts` (net)          | `models/update.ts`                         |
+   | `update/check.ts` (clock, cache)  | `models/update.ts`                         |
 
 2. **A ViewModel renders nothing.** No module in `src/renderer/viewmodels/`
    imports `react-dom` or returns JSX. That is what lets the whole layer be
@@ -142,7 +140,7 @@ Four conventions hold this together:
   is an arm of `UpdateStatus` instead, so it renders where the answer would
   have.
 
-**The IPC surface is twenty-two narrow verbs** — see `src/shared/ipc.ts` — all
+**The IPC surface is nineteen narrow verbs** — see `src/shared/ipc.ts` — all
 declared as a `BoxwardenApi` interface consumed by the renderer without
 importing Electron. They fall into three groups by cadence:
 
@@ -156,8 +154,7 @@ importing Electron. They fall into three groups by cadence:
   presence and attached editors, from one `top` each.
 - **The host's checkouts, polled every 30s**: `gitStatus`.
 - **The release check, asked hourly and answered from GitHub once a day**:
-  `updateStatus`, `dismissUpdate`, `setUpdateChecks`, `downloadUpdate`,
-  `cancelUpdateDownload`, `installUpdate`.
+  `updateStatus`, `dismissUpdate`, `setUpdateChecks`.
 
 Prefer looping over the existing verbs (e.g. `Promise.allSettled` for a compose
 group's "Start all") over adding new channels. The exceptions so far all earned
@@ -169,13 +166,12 @@ a filesystem walk sixty times an hour, folding in `claudeStatus` would multiply
 its Docker traffic by the number of live containers, and folding in `gitStatus`
 would put a `stat` per container — possibly over a network share — behind a
 poll that runs seven hundred times an hour. The update verbs
-clear all three between them: `updateStatus` is the slowest cadence in the app
-(an HTTP request, daily); `dismissUpdate` and `setUpdateChecks` write
-preferences that outlive the call; and `downloadUpdate`, `cancelUpdateDownload`
-and `installUpdate` do something no combination of the others can, because a
-sandboxed renderer has no filesystem — and because the decision that a download
-is trustworthy must not live on the side of the bridge that renders network
-data. **A new verb has to clear one of those three bars.** Lifecycle actions return failure as
+clear two of the three between them: `updateStatus` is the slowest cadence in
+the app (an HTTP request, daily), and `dismissUpdate` and `setUpdateChecks`
+write preferences that outlive the call. **A new verb has to clear one of those
+three bars** — and clearing one is necessary, not sufficient. `downloadUpdate`,
+`cancelUpdateDownload` and `installUpdate` all cleared the third bar squarely
+and were still removed; see "The release check" below. Lifecycle actions return failure as
 `{ ok: false, message }` data rather than throwing — a thrown main-process
 error crosses IPC as an opaque string with the real message buried.
 
@@ -541,7 +537,7 @@ status into a chip, and `ContainerCard` gets a field.
   carries the same label, so a five-service workspace would otherwise stat one
   `.git` five times a poll.
 
-### Self-update
+### The release check
 
 Once a day the main process asks GitHub for `/releases/latest` and, if
 something newer exists, says which file this machine needs and how to install
@@ -552,77 +548,38 @@ the one module that reaches the network, and it is the only one that imports
 Electron; `src/main/update/check.ts` holds the clock and the cache, takes the
 fetch as a parameter, and therefore has tests.
 
-**It does not swap the application bundle, and that is the design, not a stage
-of it.** `electron-updater` does exactly that and verifies a CODE signature to
-decide it is safe; these builds have none — cosign is a different thing and does
-not substitute — so Squirrel.Mac refuses the swap outright and everywhere else
-it would overwrite a binary the OS never checked.
+**It CHECKS. It does not download and it does not install** — the banner links
+to the artefact and the user takes it from there. Two things make that the
+design rather than a stage of it:
 
-### Fetching and verifying the download
+- **It cannot swap the application bundle.** `electron-updater` does exactly
+  that and verifies a CODE signature to decide it is safe; these builds have
+  none — cosign is a different thing and does not substitute — so Squirrel.Mac
+  refuses the swap outright and everywhere else it would overwrite a binary the
+  OS never checked.
+- **So an in-app download ended where a browser download ends**, at an installer
+  the user runs and clicks through a Gatekeeper or SmartScreen warning. It saved
+  one download and cost a Sigstore/TUF verification chain in the main process —
+  three crypto dependencies, a BoringSSL shim, and a hard requirement that
+  `tuf-repo-cdn.sigstore.dev` be reachable or the app REFUSE to install, in
+  wording a user cannot tell apart from "this release is forged". An updater
+  that works on some networks and cries tampering on others is worse than one
+  that hands you a link.
 
-What it DOES do is the half that needs no certificate, in the pure
-`src/models/download.ts` plus shells in `src/main/update/`:
+That happened: `downloadUpdate`, `cancelUpdateDownload`, `installUpdate`,
+`src/models/download.ts`, `src/main/update/{download,trust,verify}.ts`,
+`crypto-compat.ts` and `@sigstore/*` were all removed together. **Do not
+reintroduce them piecemeal.** The way back is a code-signing certificate plus
+`electron-updater`, which does the download, the verification AND the swap; a
+hand-rolled fetch is a worse version of a thing a certificate gives you outright.
 
-1. **Plan** — resolve the artefact, its `<name>.sigstore.json` and
-   `sha256sums.txt` out of the release. All three are release ASSETS, held to
-   the same `RELEASE_URL_PREFIX` rule as everything else out of that payload,
-   never URLs built by concatenation.
-2. **Fetch** — stream to `userData/updates`, capped, with progress.
-3. **Verify** — SHA-256 against the manifest, then the Sigstore bundle against a
-   TUF-fetched trust root.
-4. **Apply** — `shell.openPath` and let the OS install. Except the AppImage.
+Verification did not go away, it moved. `release.yml` still cosign-signs every
+artefact and still attaches `sha256sums.txt` and one `.sigstore.json` per file;
+the commands to check them are in the release notes, where a network that blocks
+Sigstore costs a user one manual step instead of the whole update path. See
+`docs/supply-chain.md`.
 
-Six rules hold this together:
-
-- **A missing signature is a REFUSAL, never a downgrade to checksum-only.**
-  Otherwise an attacker who can add an asset to a release disables the signature
-  check by omitting one. Same for a missing `sha256sums.txt`.
-- **The certificate identity is the point.** Any workflow on GitHub can get a
-  cert from the same issuer, so a bundle that merely verifies proves nothing.
-  `signerIdentity` pins the SAN to
-  `.github/workflows/release.yml@refs/tags/<tag>` and the issuer to GitHub's
-  Actions token service. **That string is a contract with `release.yml`** —
-  renaming the workflow, or moving the signing step into a reusable one, makes
-  every installed copy refuse the next release.
-- **`safeAssetFileName` is an allow-list and refuses rather than sanitises.** The
-  name arrives over the network and becomes a path. Rewriting a hostile name
-  into a safe one produces a file that no longer matches its line in
-  `sha256sums.txt`, so the failure would surface as a bogus integrity error.
-  No spaces: `electron-builder.yml` sets `nsis.artifactName` so the installer
-  is `boxwarden-setup-<version>-<arch>.exe` rather than the spaced default,
-  which is what lets the allow-list stay this narrow. First and last characters
-  must be alphanumeric, which stops the trailing dot or space Windows strips
-  _after_ validation.
-- **`verifying` is a state of its own, and nothing is installable during it.**
-  That is the window in which the whole file is on disk and unvouched-for. A
-  file boxwarden wrote itself carries no `com.apple.quarantine` attribute, so
-  Gatekeeper's first-launch check does not fire — **this verification is the
-  only gate, not a second opinion.**
-- **The AppImage is the one in-place update, and only via a same-directory
-  rename.** An AppImage is one file the user owns; a copy interrupted halfway
-  would leave them with a truncated binary and no working boxwarden.
-- **A refusal to verify says nothing useful on purpose, so it says it to the
-  log instead.** "We could not check this" must not read as "this is forged",
-  which leaves the real cause with nowhere to go: the app is a Windows GUI
-  process with no console, and nothing downstream reads the `cause`. Both
-  failures are therefore `console.error`ed in `trust.ts`, and
-  `scripts/check-sigstore.mjs` asks the same question from the command line —
-  same library, same options, same cache directory — for a machine where
-  rebuilding the app is not the fastest way to find out.
-- **Electron's crypto cannot do this unaided, and `crypto-compat.ts` is why it
-  now can.** BoringSSL has no default digest for an EC key where OpenSSL infers
-  SHA-256, and every verification here — TUF metadata and the Sigstore bundle
-  alike — runs through `crypto.verify(undefined, …)`. Both libraries read a
-  throw as "this key did not sign it", so the failure arrives as
-  `root was signed by 0/3 keys` and reads like a tampered release. Untreated it
-  makes `downloadUpdate` refuse on EVERY platform, permanently. The shim is
-  installed first in `index.ts`, no-ops on a runtime that does not need it, and
-  is meant to be deleted the day tuf-js and sigstore-js name their digests.
-- **The trust root comes from TUF, not a vendored JSON.** Sigstore rotates keys;
-  a pinned snapshot would silently turn every download into a failure on some
-  Tuesday, and an update mechanism that disables itself is worse than none.
-
-Five things the CHECK breaks on if they are forgotten:
+Five things the check breaks on if they are forgotten:
 
 - **A prerelease sorts BELOW the release it leads to.** Backwards, and everyone
   on the final 1.2.0 is prompted to "update" to the candidate it replaced.
@@ -645,10 +602,10 @@ Five things the CHECK breaks on if they are forgotten:
 
 The check is skipped entirely when `app.isPackaged` is false, so `bun run dev`
 and CI never contact GitHub — which also means `BOXWARDEN_FAKE_UPDATE=1` is the
-only way to see the banner until a release exists. The fixture drives the real
-`planDownload` over a fabricated release that carries its signature and checksum
-assets, and simulates the fetch, so the progress bar and the Install button can
-be worked on without a network — but it will not install anything.
+only way to see the banner until a release exists. The fixture folds a
+fabricated release through the real `foldUpdateStatus`, so the version
+comparison, the asset match and the install instructions on screen are the
+production ones.
 
 ### Layout and theme
 

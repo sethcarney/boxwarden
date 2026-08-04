@@ -457,44 +457,30 @@ describe('updatePanel', () => {
    * The banner promises exactly what the app can deliver, which is now more
    * than it was and still not everything: boxwarden fetches and verifies, and
    * the user installs. It must not say "unsigned" — the artefacts ARE signed
-   * with cosign, which is what makes the verification possible — and it must
-   * not imply the app installs itself, because a user who expects that and
-   * finds otherwise stops reading the banner.
+   * with cosign — and it must not imply the app fetches or installs anything,
+   * because a user who waits for that stops reading the banner.
    */
-  it('offers to fetch and verify, and still leaves the install to the user', () => {
+  it('leaves the download and the install to the user, and does not say "unsigned"', () => {
     const detail = updatePanel(updateAvailable(), NOW, false)?.detail ?? '';
-    expect(detail).toContain('fetch and verify');
-    expect(detail).toContain('still your click');
+    expect(detail).toContain('your click');
     expect(detail).not.toContain('unsigned');
+    expect(detail).not.toContain('boxwarden can fetch');
   });
 
   it('is nothing at all for every arm that is not an available update', () => {
     expect(
-      updatePanel(
-        { currentVersion: '1.1.0', download: { kind: 'idle' }, outcome: { kind: 'current' } },
-        NOW,
-        false,
-      ),
+      updatePanel({ currentVersion: '1.1.0', outcome: { kind: 'current' } }, NOW, false),
     ).toBeUndefined();
     expect(
-      updatePanel(
-        { currentVersion: '1.1.0', download: { kind: 'idle' }, outcome: { kind: 'unchecked' } },
-        NOW,
-        false,
-      ),
+      updatePanel({ currentVersion: '1.1.0', outcome: { kind: 'unchecked' } }, NOW, false),
     ).toBeUndefined();
     expect(
-      updatePanel(
-        { currentVersion: '1.1.0', download: { kind: 'idle' }, outcome: { kind: 'disabled' } },
-        NOW,
-        false,
-      ),
+      updatePanel({ currentVersion: '1.1.0', outcome: { kind: 'disabled' } }, NOW, false),
     ).toBeUndefined();
     expect(
       updatePanel(
         {
           currentVersion: '1.1.0',
-          download: { kind: 'idle' },
           outcome: { kind: 'failed', message: 'offline' },
         },
         NOW,
@@ -532,10 +518,7 @@ describe('updateSummary', () => {
 
   it('always names the running version — the app says it nowhere else', () => {
     expect(
-      updateSummary(
-        { currentVersion: '1.1.0', download: { kind: 'idle' }, outcome: { kind: 'unchecked' } },
-        NOW,
-      ).label,
+      updateSummary({ currentVersion: '1.1.0', outcome: { kind: 'unchecked' } }, NOW).label,
     ).toBe('boxwarden 1.1.0');
   });
 
@@ -547,7 +530,6 @@ describe('updateSummary', () => {
     const failed = updateSummary(
       {
         currentVersion: '1.1.0',
-        download: { kind: 'idle' },
         outcome: { kind: 'failed', message: 'GitHub answered HTTP 500.' },
       },
       NOW,
@@ -558,10 +540,7 @@ describe('updateSummary', () => {
   });
 
   it('says when checks are off, so the setting can be found again', () => {
-    const off = updateSummary(
-      { currentVersion: '1.1.0', download: { kind: 'idle' }, outcome: { kind: 'disabled' } },
-      NOW,
-    );
+    const off = updateSummary({ currentVersion: '1.1.0', outcome: { kind: 'disabled' } }, NOW);
     expect(off.label).toBe('boxwarden 1.1.0 · update checks off');
     expect(off.title).toContain('turn the daily check back on');
   });
@@ -570,7 +549,6 @@ describe('updateSummary', () => {
     const current = updateSummary(
       {
         currentVersion: '1.1.0',
-        download: { kind: 'idle' },
         checkedAt: new Date('2026-08-03T09:00:00Z'),
         outcome: { kind: 'current' },
       },
@@ -595,7 +573,6 @@ describe('updateSummary', () => {
     const dev = updateSummary(
       {
         currentVersion: '0.0.0',
-        download: { kind: 'idle' },
         outcome: { kind: 'unsupported', reason: 'This is a development build.' },
       },
       NOW,

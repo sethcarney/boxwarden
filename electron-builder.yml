@@ -99,8 +99,8 @@ nsis:
   #
   # That default is the only artefact in this repo with spaces in its name, and
   # the name is not decoration: it is looked up verbatim in `sha256sums.txt`,
-  # it is what `<name>.sigstore.json` is derived from, and it becomes a path on
-  # the user's disk when the app downloads its own update. Hyphens match the dmg
+  # it is what `<name>.sigstore.json` is derived from, and it is what `pickAsset`
+  # matches to decide which file to offer this machine. Hyphens match the dmg
   # and the AppImage; the deb's underscores are dpkg's rule rather than a style
   # choice, which is why they stay.
   #

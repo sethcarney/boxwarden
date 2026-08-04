@@ -171,25 +171,27 @@ What is still missing is everything about _trusting_ the result:
 - **Windows signing.** Unsigned, so SmartScreen interposes.
 - **ASAR integrity.** `asar: true` is on; the integrity fuse that would detect
   a tampered archive is not.
-- **Auto-update.** boxwarden **checks** once a day against `/releases/latest`,
-  and now also **fetches and verifies** the artefact for the machine it is on:
-  SHA-256 against the release's `sha256sums.txt`, then the cosign bundle beside
-  the artefact against a TUF-fetched Sigstore trust root, with the certificate
-  pinned to `.github/workflows/release.yml@refs/tags/<tag>`
-  (`src/models/download.ts`, `src/main/update/`). Both checks are required; a
-  release missing either file is refused rather than downloaded with a weaker
-  one.
+- **Auto-update.** boxwarden **checks** once a day against `/releases/latest`
+  and links to the artefact for the machine it is on. It does not download it
+  and does not install it.
 
-  What it still does not do is swap the application bundle on macOS or Windows,
-  and that half remains blocked on the item above rather than on effort:
-  `electron-updater` verifies a CODE signature to decide the swap is safe, and
-  there is none. Squirrel.Mac refuses an unsigned swap outright. So the verified
-  file is handed to the OS installer instead, and the user finishes the install.
+  It did both for one release. The download verified SHA-256 against
+  `sha256sums.txt` and the cosign bundle against a TUF-fetched Sigstore trust
+  root, and it was removed — not because it was broken in principle, but because
+  the app cannot swap its own bundle without a code signature, so the download
+  ended at the same installer the link ends at while adding a hard dependency on
+  Sigstore's CDN being reachable. On a network that blocked it, the app refused
+  to install and said so in words indistinguishable from "this release is
+  forged". See `docs/development.md#why-there-is-no-in-app-download`.
 
-  **The AppImage is the exception, and it updates itself in place today** —
-  replaced through a same-directory rename and relaunched — because an AppImage
-  is one file the user owns, with no installer to hand it to and no package
-  manager to offend. That needed no certificate and is done.
+  A real auto-update is blocked on the signing item above rather than on effort:
+  with a certificate, `electron-updater` does the download, the verification and
+  the swap as one thing, and none of the removed code would come back.
+
+  **The AppImage would be the easiest exception to make**, if in-place update
+  ever comes back for Linux alone: it is a single file the user owns, so
+  replacing it through a same-directory rename IS the install, with no installer
+  to hand off to and no package manager to offend.
 
   When there IS a certificate, the remaining work is macOS and Windows in-place
   swaps, at which point `latest*.yml` — already attached to every release — is
