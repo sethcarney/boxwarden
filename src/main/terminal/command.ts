@@ -193,12 +193,27 @@ export function containerExecArgv(options: {
   readonly cli: ContainerCli;
   readonly containerId: string;
   readonly transport?: DockerTransport;
+  /**
+   * Who to become inside the container — `remoteUser` from the dev container's
+   * own metadata. Omitted means the daemon uses the image's user, which is
+   * what happens without the flag.
+   *
+   * This is the difference between a shell that has the developer's tools and
+   * one that does not: everything a dev container installs for its user lands
+   * on that user's PATH, and `docker exec` without `-u` lands as the image's
+   * user, which is root far more often than not.
+   */
+  readonly user?: string;
   readonly script: string;
 }): readonly string[] {
-  const { cli, containerId, transport, script } = options;
+  const { cli, containerId, transport, user, script } = options;
   const url = transport === undefined ? undefined : daemonUrl(transport);
   const flags = url === undefined ? [] : daemonFlag(cli.kind, url);
-  const exec = ['exec', '-it', containerId, 'sh', '-lc', script];
+  // `-u` before the container id, which is where both CLIs want it: everything
+  // after the id is the command to run, so a flag there would be an argument
+  // to `sh` instead.
+  const asUser = user === undefined || user === '' ? [] : ['-u', user];
+  const exec = ['exec', '-it', ...asUser, containerId, 'sh', '-lc', script];
 
   if (transport?.transport === 'wsl') {
     return ['wsl.exe', '-d', transport.distro, '--', cli.kind, ...flags, ...exec];

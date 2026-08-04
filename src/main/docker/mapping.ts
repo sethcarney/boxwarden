@@ -60,6 +60,8 @@ export interface InspectResponse {
   readonly Config?: {
     readonly Image?: string;
     readonly WorkingDir?: string;
+    /** The image's configured user. `resolveRemoteUser` reads it as a last resort. */
+    readonly User?: string;
     readonly Labels?: Readonly<Record<string, string>>;
     /**
      * `KEY=VALUE` strings — and the most sensitive thing this app ever holds.
@@ -230,6 +232,74 @@ export function resolveWorkspaceFolder(
   return undefined;
 }
 
+/**
+ * Who to become inside the container — the account VS Code attaches as.
+ *
+ * `docker exec` runs as the image's configured user, which for a dev container
+ * built from a `root`-based image is root. VS Code does not: it attaches as
+ * `remoteUser`, and everything a dev container sets up for the developer —
+ * PATH entries, nvm, pyenv, cargo, the shell prompt, `~/.local/bin` — belongs
+ * to that account. A terminal opened as root is in the same container and a
+ * different world: none of the tools resolve, and the prompt is the giveaway
+ * (`root ➜ /workspaces/x` rather than `vscode@devcontainer:/workspaces/x`).
+ *
+ * Three sources, most specific first:
+ *
+ *   1. `remoteUser` from `devcontainer.metadata` — literally the field VS Code
+ *      reads for the same decision, so matching it is not a guess.
+ *   2. `containerUser`, which the spec allows instead when the container
+ *      PROCESS should run as someone other than root but no separate remote
+ *      user is named.
+ *   3. `Config.User` from the image. Passing it back explicitly is a no-op —
+ *      it is what `exec` would have used anyway — so it is here only to keep
+ *      the answer honest rather than to change anything.
+ *
+ * Undefined means "say nothing and let the daemon decide", which is exactly
+ * the behaviour this app had before. A wrong `-u` is worse than no `-u`: the
+ * daemon refuses the exec outright for a user that does not exist, and most
+ * emulators close the window of a command that exited immediately.
+ */
+export function resolveRemoteUser(inspect: InspectResponse): string | undefined {
+  const metadata = inspect.Config?.Labels?.['devcontainer.metadata'];
+  if (metadata !== undefined) {
+    const fromMetadata =
+      userFromMetadata(metadata, 'remoteUser') ?? userFromMetadata(metadata, 'containerUser');
+    if (fromMetadata !== undefined) return fromMetadata;
+  }
+
+  const imageUser = inspect.Config?.User;
+  return imageUser === undefined || imageUser === '' ? undefined : imageUser;
+}
+
+/**
+ * Read one user field out of the metadata label.
+ *
+ * LAST match wins, unlike `workspaceFolderFromMetadata` above, and the
+ * difference is not an oversight. The label is an ordered list of fragments —
+ * image metadata first, then each feature, then the devcontainer.json itself —
+ * and the spec merges single-valued properties by letting later entries
+ * override earlier ones. A feature that declares `remoteUser: root` would
+ * otherwise win over the `vscode` the developer wrote in their own config,
+ * which is the exact inversion this whole function exists to prevent.
+ */
+function userFromMetadata(raw: string, field: 'remoteUser' | 'containerUser'): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+
+  const entries = Array.isArray(parsed) ? parsed : [parsed];
+  let found: string | undefined;
+  for (const entry of entries) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const value = (entry as Record<string, unknown>)[field];
+    if (typeof value === 'string' && value !== '') found = value;
+  }
+  return found;
+}
+
 function workspaceFolderFromMetadata(raw: string): string | undefined {
   let parsed: unknown;
   try {
@@ -313,6 +383,7 @@ export function mapContainer(inspect: InspectResponse): DevContainer | undefined
   const configFileRaw = labels['devcontainer.config_file'];
   const configFile = configFileRaw === undefined ? undefined : parseLocalFolder(configFileRaw);
   const workspaceFolder = resolveWorkspaceFolder(inspect, localFolder);
+  const remoteUser = resolveRemoteUser(inspect);
 
   return {
     id: asContainerId(inspect.Id),
@@ -321,6 +392,7 @@ export function mapContainer(inspect: InspectResponse): DevContainer | undefined
     createdAt: parseDate(inspect.Created) ?? new Date(0),
     localFolder,
     ...(workspaceFolder === undefined ? {} : { workspaceFolder }),
+    ...(remoteUser === undefined ? {} : { remoteUser }),
     ...(configFile === undefined || configFile.kind === 'unresolved' ? {} : { configFile }),
     sshAgent,
     labels: devContainerLabels,

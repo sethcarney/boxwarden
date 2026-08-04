@@ -111,6 +111,21 @@ export interface DevContainer {
   readonly configFile?: HostPath;
 
   /**
+   * The account to enter the container as — what VS Code calls `remoteUser`.
+   *
+   * Optional, and absent means "let the daemon use the image's own user",
+   * which is what `docker exec` does unasked. It is not a display field: the
+   * one thing it is for is the terminal, where entering as root instead of the
+   * developer's account gives a shell with none of the dev container's tools
+   * on PATH — same container, different world.
+   *
+   * A string rather than a parsed type because it is passed straight to
+   * `docker exec -u`, which accepts a name, a uid, or `uid:gid`, and inventing
+   * a narrower model would mean rejecting forms the daemon accepts.
+   */
+  readonly remoteUser?: string;
+
+  /**
    * Whether an SSH agent socket is usable in here.
    *
    * Required, not optional, and with an `absent` arm rather than `undefined`:

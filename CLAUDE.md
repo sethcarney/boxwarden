@@ -372,6 +372,18 @@ purely in `src/main/terminal/command.ts` and spawned by `launch.ts`.
   the CLI, so leaving the choice to the CLI's default means "no such container"
   for one that is on screen. A WSL socket runs `wsl.exe -d <distro> --` and
   names the CLI bare, on the Linux side.
+- **The shell enters as the container's `remoteUser`, not as the image's user.**
+  `docker exec` without `-u` becomes whoever the IMAGE says, which for most dev
+  container base images is root — while VS Code attaches as `remoteUser`. Same
+  container, different world: nothing a dev container installs for its user is
+  on root's PATH, so the tools are missing and the prompt is the giveaway
+  (`root ➜ /workspaces/x`). `resolveRemoteUser` reads the same
+  `devcontainer.metadata` field VS Code does, falls back to `containerUser`
+  then the image's `User`, and answers `undefined` rather than guessing —
+  a `-u` at a user that does not exist makes the daemon refuse the exec.
+  LAST fragment wins, unlike `workspaceFolder`: the label is ordered image →
+  features → devcontainer.json and the spec lets later entries override, so
+  taking the first would let a feature's `root` beat the developer's own config.
 - **The shell starts in the workspace folder.** `docker exec` starts in the
   image's `WorkingDir`, which is usually `/`, so the script `cd`s to
   `workspaceFolder` first and the startup command therefore runs from there.

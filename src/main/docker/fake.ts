@@ -54,6 +54,12 @@ function fixtures(now: number): InspectResponse[] {
         Labels: {
           'devcontainer.local_folder': '/home/dev/code/webapp',
           'devcontainer.config_file': '/home/dev/code/webapp/.devcontainer/devcontainer.json',
+          // Two fragments in the order the spec writes them — a feature, then
+          // the devcontainer.json — so the fixture exercises "later wins"
+          // rather than only "a user is named". The `docker exec` line the
+          // Terminal button shows says `-u vscode` because of this.
+          'devcontainer.metadata':
+            '[{"id":"ghcr.io/devcontainers/features/common-utils:2","remoteUser":"root"},{"remoteUser":"vscode"}]',
         },
         // A working agent, the Docker Desktop way. The decoy variables beside
         // it are the point of the fixture as much as the socket is: this is
