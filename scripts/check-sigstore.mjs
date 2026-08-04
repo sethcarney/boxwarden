@@ -28,6 +28,7 @@
  *   node scripts/check-sigstore.mjs --cache "C:\\Users\\me\\AppData\\Roaming\\boxwarden\\sigstore"
  */
 
+import { generateKeyPairSync, sign, verify } from 'node:crypto';
 import { readdir } from 'node:fs/promises';
 import { homedir, platform } from 'node:os';
 import { join } from 'node:path';
@@ -119,6 +120,78 @@ async function describeCache(cachePath) {
   }
 }
 
+/** Which JavaScript runtime this is — the answer usually turns on it. */
+function runtimeLabel() {
+  const electron = process.versions['electron'];
+  const openssl = process.versions['openssl'] ?? 'none reported';
+  return electron === undefined
+    ? `plain node, openssl ${openssl}`
+    : `electron ${electron} (BoringSSL), openssl ${openssl}`;
+}
+
+/**
+ * Can this runtime verify a signature the way the TUF client asks it to?
+ *
+ * `@tufjs/models/dist/utils/verify.js` calls `crypto.verify(undefined, …)` —
+ * no digest named — and `@sigstore/core/dist/crypto.js` does the same for the
+ * signature bundle, so the entire verification chain rests on that one call
+ * shape working. Node's OpenSSL infers the digest from the key; a runtime that
+ * does not returns `false` rather than throwing, which surfaces four layers up
+ * as "root was signed by 0/3 keys" and looks for all the world like a corrupt
+ * download or a blocked CDN.
+ *
+ * Freshly generated keys, so this needs no network, no cache, and no Sigstore:
+ * if it fails here it fails on every input, and nothing below it can pass.
+ */
+function checkCrypto() {
+  const data = Buffer.from('tuf canonical metadata');
+  const results = [];
+
+  const attemptVerify = (label, fn) => {
+    try {
+      const ok = fn();
+      results.push({ label, ok, note: ok ? '' : 'returned false' });
+      return ok;
+    } catch (error) {
+      results.push({
+        label,
+        ok: false,
+        note: `threw ${error.code ?? error.name}: ${error.message}`,
+      });
+      return false;
+    }
+  };
+
+  // ECDSA P-256 is what Sigstore's TUF root keys are.
+  const ec = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const ecSig = sign('sha256', data, ec.privateKey);
+  const withoutDigest = attemptVerify('ecdsa P-256, no digest named (what tuf-js does)', () =>
+    verify(undefined, data, ec.publicKey, ecSig),
+  );
+  attemptVerify('ecdsa P-256, sha256 named explicitly', () =>
+    verify('sha256', data, ec.publicKey, ecSig),
+  );
+
+  // ed25519 REQUIRES the undefined form, so it distinguishes "this runtime
+  // cannot infer a digest" from "this runtime rejects the undefined form".
+  const ed = generateKeyPairSync('ed25519');
+  const edSig = sign(undefined, data, ed.privateKey);
+  attemptVerify('ed25519, no digest named', () => verify(undefined, data, ed.publicKey, edSig));
+
+  for (const { label, ok, note } of results) {
+    console.log(`  ${ok ? 'ok     ' : 'FAILED '} ${label}${note === '' ? '' : ` — ${note}`}`);
+  }
+
+  if (!withoutDigest) {
+    console.log('');
+    console.log('  ^ THIS IS THE FAULT. Nothing below can pass: every signature this runtime');
+    console.log('    is asked to check goes through that call, so the TUF root fails as');
+    console.log('    "signed by 0/3 keys" and the download refuses. It is the runtime, not');
+    console.log('    the network, not the cache, and not the release.');
+  }
+  return withoutDigest;
+}
+
 /** One attempt, timed — how long a failure took separates a refusal from a timeout. */
 async function attempt(label, options) {
   const started = Date.now();
@@ -149,8 +222,14 @@ if (cachePath === undefined || cachePath === '') {
 
 console.log(`platform   ${platform()}`);
 console.log(`node       ${process.version}`);
+console.log(`runtime    ${runtimeLabel()}`);
 console.log(`cache      ${cachePath}`);
 console.log(`           ${await describeCache(cachePath)}`);
+console.log('');
+
+// Before any of the TUF work, because a runtime that cannot do the primitive
+// makes everything below it a foregone conclusion.
+const cryptoOk = checkCrypto();
 console.log('');
 
 // Attempt 1: what the app tries first — a fresh refresh from Sigstore's CDN.
@@ -200,7 +279,12 @@ if (!fresh && cached !== true) {
 }
 
 console.log('');
-if (fresh) {
+if (!cryptoOk) {
+  console.log('The crypto preflight above already explains this: the refusal is this');
+  console.log("runtime's, and the same script under a plain `node` will verify the very");
+  console.log('same files. Nothing about the network, the cache or the release is wrong.');
+  process.exitCode = 1;
+} else if (fresh) {
   console.log('Sigstore is reachable and the trust root verified. The app should be able to');
   console.log('verify a download; if it still refuses, the fault is after this point —');
   console.log('the checksum, the bundle, or the certificate identity in verify.ts.');
