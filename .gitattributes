@@ -1,0 +1,27 @@
+# Check every text file out with LF, on every platform.
+#
+# Without this, git on Windows (core.autocrlf=true by default) rewrites the
+# working tree to CRLF, and two things break in ways that do not name their
+# cause:
+#
+#   - Prettier's endOfLine defaults to "lf", so `bun run format:check` reports
+#     EVERY file in the repo as misformatted. The real diff is then impossible
+#     to see, and "just run format --write" fights the checkout forever.
+#
+#   - Vite's shebang stripper removes `#!...` but leaves the trailing `\r`, so
+#     `scripts/devcontainer-open.mjs` fails to load under vitest with a bare
+#     "SyntaxError: Invalid or unexpected token" pointing at nothing. The same
+#     file imports fine under plain node, which makes it a genuinely confusing
+#     hour. See scripts/devcontainer-open.test.mjs.
+#
+# Nothing here is a preference about editors. It is the setting that makes the
+# checks mean the same thing on Windows as they do in the dev container.
+* text=auto eol=lf
+
+# Binary assets, never touched.
+*.png binary
+*.ico binary
+*.icns binary
+*.jpg binary
+*.woff binary
+*.woff2 binary

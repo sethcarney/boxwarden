@@ -1,0 +1,343 @@
+{
+  "name": "boxwarden",
+
+  // Pinned to an exact image version rather than the floating ":22" tag so a
+  // rebuild months from now produces the same toolchain. 5.0.1-22-trixie is
+  // what mcr.microsoft.com/devcontainers/typescript-node:22 resolves to as of
+  // this commit (same digest), so this is a pin, not a change of base.
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:5.0.1-22-trixie",
+
+  "features": {
+    // ---------------------------------------------------------------------
+    // Why docker-OUTSIDE-of-docker (DooD) and not docker-in-docker (DinD):
+    //
+    // boxwarden's entire job is to discover and manage the dev containers
+    // running on the developer's machine. DinD would give this container its
+    // own private, empty Docker daemon — a nested sandbox with no containers
+    // in it except the ones we create for ourselves. We would be developing
+    // against a world that looks nothing like the one the app ships into.
+    //
+    // DooD instead bind-mounts the HOST's Docker socket in, so `docker ps`
+    // and dockerode inside this container see the developer's real daemon and
+    // their real dev containers. That is what we need to test discovery,
+    // labels (devcontainer.local_folder), start/stop, and status.
+    //
+    // Two consequences that will bite if forgotten:
+    //   1. Any path we hand to the Docker API is interpreted by the HOST
+    //      daemon, so it must be a host path. Paths inside this container are
+    //      NOT meaningful to it. This is exactly the translation problem the
+    //      app has to solve anyway (see the host path translation work), so
+    //      developing this way keeps us honest.
+    //   2. We are talking to the real daemon. Containers we stop or remove
+    //      while poking at things are the developer's actual containers.
+    // ---------------------------------------------------------------------
+    //
+    // moby MUST be false on this base image. The image is pinned to Debian
+    // 'trixie' (Debian 13), and Debian does not publish the 'moby-cli' /
+    // 'moby-engine' packages for trixie. With "moby": true the feature tries
+    // to apt-install those packages and fails the build outright:
+    //   (!) The 'moby' option is not supported on debian 'trixie'
+    // Setting it false makes the feature install Docker CE from Docker's own
+    // apt repo, which does support trixie. For docker-OUTSIDE-of-docker only
+    // the client CLI matters (it talks to the host's socket), so Docker CE vs
+    // moby is functionally identical here. If the base image is ever moved
+    // back to bookworm, "moby": true becomes available again.
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1.10.0": {
+      "version": "latest",
+      "moby": false,
+      "installDockerBuildx": true,
+      "dockerDashComposeVersion": "v2"
+    },
+
+    // ---------------------------------------------------------------------
+    // Bun is the package manager and script runner ONLY. It is deliberately
+    // not the runtime, and that is not a preference we can revisit:
+    //
+    //   Electron ships its own Node embedded inside Chromium. The `electron`
+    //   binary executes main and renderer code in THAT interpreter. Running
+    //   `bun run dev` only spawns the electron binary — our app code still
+    //   runs on Electron's Node, never on Bun. There is no flag that changes
+    //   this.
+    //
+    // So the split is:
+    //   bun  -> `bun install`, `bun run <script>`
+    //   node -> electron, electron-vite, vitest, electron-builder
+    //
+    // Verified compatible: dockerode's HTTP-over-unix-socket transport
+    // behaves identically under Bun and Node, so Bun is safe for running the
+    // Docker-facing test suites.
+    //
+    // Gotcha this project WILL hit: Bun blocks dependency lifecycle scripts by
+    // default. Electron's postinstall is what downloads its ~100MB binary, so
+    // package.json needs `"trustedDependencies": ["electron"]` or the app will
+    // install "successfully" and then refuse to launch.
+    // ---------------------------------------------------------------------
+    "ghcr.io/devcontainers-extra/features/bun:1.1.0": {
+      "version": "1.3.14"
+    },
+
+    // ---------------------------------------------------------------------
+    // Claude Code. The feature also installs the VS Code extension, so it is
+    // deliberately absent from the extensions list below.
+    //
+    // Note what this pin does and does not cover: :1.0.5 pins the feature's
+    // INSTALL SCRIPT, not the CLI release. The feature always installs the
+    // latest Claude Code, which then auto-updates itself inside the container.
+    // Pinning the CLI too would mean dropping the feature and doing
+    // `npm i -g @anthropic-ai/claude-code@X.Y.Z` from a Dockerfile plus
+    // DISABLE_AUTOUPDATER — more machinery than a fast-moving dev tool is
+    // worth here, but that is the route if reproducibility ever demands it.
+    // ---------------------------------------------------------------------
+    "ghcr.io/anthropics/devcontainer-features/claude-code:1.0.5": {},
+
+    // ---------------------------------------------------------------------
+    // mdm — the CLI that manages this repo's agent instruction files (CLAUDE.md
+    // and its equivalents for other agents) and restores the skills recorded in
+    // skills-lock.json.
+    //
+    // Declared as a feature rather than scripted into post-create.sh, which is
+    // where a tool distributed as a release binary otherwise ends up: a curl,
+    // an architecture switch, and a checksum step that gets skipped. The
+    // feature is already all three — it picks mdm-linux-x64 or mdm-linux-arm64
+    // from the detected architecture, verifies the download against the
+    // release's SHA256 checksums, and installs to /usr/local/bin/mdm, which is
+    // on PATH for every user rather than only `node`. The binary is statically
+    // linked, so nothing else has to enter the image; in particular there is no
+    // Go toolchain here and this does not add one.
+    //
+    // TWO pins, and they are not the same pin — note the contrast with the
+    // claude-code entry above. `:1.0.0` pins the FEATURE (its install script),
+    // the way every other entry in this file is pinned. `version` pins the mdm
+    // RELEASE that script fetches, which is exactly the lever claude-code does
+    // not expose: with it set, a rebuild months from now installs 1.9.1 rather
+    // than whatever is newest. Set it to "latest" only if tracking mdm's head
+    // is worth giving that up.
+    //
+    // Features install at image BUILD time, before the workspace is mounted, so
+    // this can only put the binary in place. Anything that has to read the repo
+    // — `mdm skills install` — must run as a lifecycle command instead; see
+    // post-create.sh.
+    // ---------------------------------------------------------------------
+    "ghcr.io/sethcarney/mdm/mdm:1.0.0": {
+      "version": "1.9.1"
+    },
+
+    // ---------------------------------------------------------------------
+    // A display for Electron to draw into.
+    //
+    // Electron needs a window server, and a headless container has none. This
+    // feature supplies the minimum that satisfies it: Xvfb (a virtual
+    // framebuffer), fluxbox (a window manager, so windows get decorations and
+    // focus), x11vnc, and noVNC to reach it from a browser.
+    //
+    // Chosen over forwarding the host's X11 socket because that is only clean
+    // on Linux — macOS needs XQuartz and WSL's WSLg socket does not forward
+    // into a container reliably. noVNC behaves identically on all three, which
+    // is the portability this project wants. On a Linux host you can still
+    // bind-mount /tmp/.X11-unix and set DISPLAY for a lower-latency window;
+    // this feature does not prevent that, it just is not the default.
+    //
+    // Open http://localhost:6080 (password below) after the container starts.
+    // The password guards a VNC server bound inside the container, not
+    // anything reachable from the network, so it is deliberately not a secret.
+    //
+    // 1.2.8 is the MINIMUM usable version on this base image, and the reason is
+    // the same Debian 13 packaging churn that forced "moby": false above.
+    // Through 1.2.7 the feature's package list included `eterm`, a terminal
+    // emulator dropped from the archive in trixie, so the install aborts with
+    //   E: Package 'eterm' has no installation candidate
+    // and takes the whole image build down with it (exit 100). 1.2.8 removed
+    // eterm and also switched libasound2 -> libasound2-dev on trixie. Pinned to
+    // 1.2.10 (current latest) rather than the 1.2.8 floor to pick up the ALSA
+    // and desktop-init fixes that landed after it.
+    // ---------------------------------------------------------------------
+    "ghcr.io/devcontainers/features/desktop-lite:1.2.10": {
+      "password": "vscode",
+      "webPort": "6080",
+      "vncPort": "5901"
+    }
+  },
+
+  "forwardPorts": [6080],
+
+  "portsAttributes": {
+    "6080": {
+      "label": "Electron desktop (noVNC)",
+      "onAutoForward": "silent"
+    }
+  },
+
+  // ---------------------------------------------------------------------
+  // Chromium allocates its renderer shared memory out of /dev/shm, and
+  // Docker's default is 64MB — enough to start, not enough to render, so it
+  // dies partway through loading with an opaque renderer crash.
+  //
+  // Raising it here rather than launching Electron with
+  // --disable-dev-shm-usage: that flag pushes the same allocations onto disk
+  // and is an app-level workaround for what is really a container sizing
+  // problem. Fixing the container leaves the app code untouched.
+  // ---------------------------------------------------------------------
+  "runArgs": ["--shm-size=1g"],
+
+  // ---------------------------------------------------------------------
+  // Credential persistence across rebuilds.
+  //
+  // A dev container's home directory is discarded on every rebuild, so
+  // without this you re-authenticate each time. Claude Code keeps its OAuth
+  // token, settings, and session history in ~/.claude, so that path gets a
+  // named volume — which outlives the container.
+  //
+  // CLAUDE_CONFIG_DIR below is NOT optional, despite the volume being mounted
+  // at ~/.claude exactly. Claude Code splits its state across two locations:
+  //
+  //   ~/.claude/      settings, session history, backups/, projects/
+  //   ~/.claude.json  THE OAUTH SESSION, app state, personal MCP servers
+  //
+  // That second one is a file sitting BESIDE the directory, so a volume on
+  // ~/.claude alone persists everything except the login — the one thing this
+  // is for. Verified against CLI v2.1.220: with the variable unset,
+  // .claude.json is written to $HOME; with it set, .claude.json moves inside
+  // the config dir and $HOME stays clean.
+  //
+  // The tell for this bug is a startup message pointing at a backup under
+  // ~/.claude/backups/ that cannot be restored — backups/ is inside the
+  // volume, the file it was copied from was not.
+  //
+  // All three settings (mount target, CLAUDE_CONFIG_DIR, remoteUser's home)
+  // must name the same directory. A mismatch fails SILENTLY: no error, just a
+  // login prompt on every rebuild. scripts/check-devcontainer.mjs asserts it.
+  //
+  // ${devcontainerId} scopes the volume to this project, so session history
+  // and settings from other repos stay out. The tradeoff is one sign-in per
+  // project; drop the suffix for a single shared volume and one sign-in ever.
+  //
+  // Security: the token sits unencrypted in this volume. That is the same
+  // exposure as ~/.claude on the host, but it is worth knowing before adding
+  // untrusted dependencies to this container. Host secrets (~/.ssh, cloud
+  // credential files) are deliberately NOT mounted.
+  // ---------------------------------------------------------------------
+  "mounts": [
+    // -------------------------------------------------------------------
+    // The host Docker socket, and why this line exists rather than letting
+    // the docker-outside-of-docker feature mount it.
+    //
+    // That feature declares a FIXED bind mount of the host's
+    // /var/run/docker.sock onto /var/run/docker-host.sock. On a rootful
+    // Docker host that is correct and this line is a no-op restatement of
+    // it. On a ROOTLESS host — rootless Docker, or Podman, which is
+    // rootless by default — /var/run/docker.sock does not exist: the socket
+    // lives under $XDG_RUNTIME_DIR (/run/user/<uid>/podman/podman.sock for
+    // Podman, /run/user/<uid>/docker.sock for rootless Docker). The feature
+    // has no option for the HOST path, so the only lever is to restate the
+    // mount here: the CLI merges config and feature mounts and de-duplicates
+    // them by target, keeping the config's entry, so this replaces the
+    // feature's rather than colliding with it.
+    //
+    // Get this wrong and the failure is loud but deeply unhelpful. The
+    // feature's entrypoint, /usr/local/share/docker-init.sh, runs
+    // `stat -c '%g' /var/run/docker-host.sock` under `set -e` to find the
+    // socket's group. With nothing at that path stat fails, the entrypoint
+    // dies before `exec "$@"`, and the container exits 1 during startup —
+    // after a SUCCESSFUL image build. What surfaces in the Dev Containers
+    // log is the whole `docker run`/`podman run` command line and
+    // "Exit code 1", with the real cause (a one-line stat error, or a mount
+    // error from the runtime, depending on whether the runtime tolerated the
+    // missing source) far above it.
+    //
+    // BOXWARDEN_DOCKER_SOCKET is read from the environment of whatever
+    // started the editor, not from this container. For rootless Podman on
+    // WSL or Linux, export it from your shell profile and reload the window:
+    //   systemctl --user enable --now podman.socket
+    //   export BOXWARDEN_DOCKER_SOCKET="${XDG_RUNTIME_DIR}/podman/podman.sock"
+    // The default keeps rootful Docker and Docker Desktop (including its
+    // Windows named-pipe shim) working with nothing set. See
+    // docs/development.md for the full Podman walkthrough.
+    //
+    // Note this is the same socket the APP talks to, so the path translation
+    // caveat above applies unchanged: paths returned by the daemon are HOST
+    // paths.
+    // -------------------------------------------------------------------
+    "source=${localEnv:BOXWARDEN_DOCKER_SOCKET:/var/run/docker.sock},target=/var/run/docker-host.sock,type=bind",
+
+    "source=claude-code-config-${devcontainerId},target=/home/node/.claude,type=volume"
+  ],
+
+  "containerEnv": {
+    "CLAUDE_CONFIG_DIR": "/home/node/.claude",
+
+    // ---------------------------------------------------------------------
+    // Chromium's sandbox cannot work in this container, so it is turned off
+    // rather than left to fail at launch. Both of its strategies are blocked
+    // here, for reasons outside the app's reach:
+    //
+    //   setuid    node_modules lives on the bind-mounted workspace, and that
+    //             mount carries `nosuid` (it is the developer's home, which on
+    //             this machine is ecryptfs). The setuid bit on chrome-sandbox
+    //             is therefore inert and the helper runs unprivileged:
+    //               "The setuid sandbox is not running as root"
+    //   namespace Docker's default seccomp profile denies the unshare:
+    //               "Failed to move to new namespace: ... Operation not
+    //                permitted"
+    //
+    // With neither available the zygote host aborts the process outright
+    // (FATAL zygote_host_impl_linux.cc — Check failed). Note this is NOT the
+    // app's own `sandbox: true` webPreference, which stays on: that isolates
+    // the renderer from Node and is unaffected by this.
+    //
+    // Scope: development in this container only. A packaged build on a real
+    // host keeps the OS sandbox, and nothing in src/ reads this.
+    // ---------------------------------------------------------------------
+    "ELECTRON_DISABLE_SANDBOX": "1",
+
+    // ---------------------------------------------------------------------
+    // Xvfb is a framebuffer in memory with no GL driver under it, so
+    // Chromium's GPU process cannot create a surface and exits. Sometimes that
+    // degrades to software rendering; sometimes it escalates to "GPU process
+    // isn't usable. Goodbye." and kills the app during startup. This makes the
+    // safe path deterministic. Read in src/main/index.ts.
+    // ---------------------------------------------------------------------
+    "BOXWARDEN_SOFTWARE_RENDER": "1"
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "bradlc.vscode-tailwindcss",
+        "oven.bun-vscode"
+      ],
+      "settings": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+          "source.fixAll.eslint": "explicit"
+        },
+        "eslint.useFlatConfig": true,
+        // Tailwind IntelliSense does not activate on its own inside
+        // clsx/cva-style helpers; these teach it where class strings live.
+        "tailwindCSS.experimental.classRegex": [
+          ["cva\\(([^)]*)\\)", "[\"'`]([^\"'`]*).*?[\"'`]"],
+          ["cx\\(([^)]*)\\)", "(?:'|\"|`)([^']*)(?:'|\"|`)"]
+        ],
+        "typescript.tsdk": "node_modules/typescript/lib"
+      }
+    }
+  },
+
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+
+  "remoteUser": "node"
+
+
+
+  // This container previously did NOT configure a display, and expected the
+  // Electron GUI to be run on the host — the container was for main-process
+  // code, tests, and linting only. That is no longer true: desktop-lite above
+  // provides a display, so the full app runs here.
+  //
+  // Running it on the host still works and is still the lowest-latency option
+  // if you have the runtime libraries there. What changed is that it is no
+  // longer the *only* option, which matters for contributors on a machine
+  // where installing Chromium's dependencies system-wide is inconvenient.
+}

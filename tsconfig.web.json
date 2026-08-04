@@ -1,0 +1,18 @@
+{
+  // Renderer only. Chromium with context isolation: there is no Node here, so
+  // "types" deliberately omits node. Everything the UI can reach arrives
+  // through window.boxwarden, declared in src/preload/api.ts.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "types": []
+  },
+  "include": [
+    "src/renderer/**/*.ts",
+    "src/renderer/**/*.tsx",
+    "src/models/**/*.ts",
+    "src/shared/**/*.ts",
+    "src/preload/api.ts"
+  ]
+}
