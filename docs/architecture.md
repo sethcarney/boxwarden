@@ -496,7 +496,7 @@ semicolon.** Spaces are fine — every layer handles those. The rule is kept by
 ENCODING the script (base64, `encodeShellScript`) rather than by escaping it,
 because escaping means modelling three parsers correctly and encoding means
 modelling none. The bootstrap decodes it into a file inside the container and
-runs `bash -l` on that; the script's first line removes the file again.
+runs `bash` on that; the script's first line removes the file again.
 
 This is the second attempt at the same bug. The first — passing the script as
 `$0` and re-execing `bash -lc "$0"` — was correct and never arrived, because
@@ -542,6 +542,32 @@ exited immediately — so clicking Terminal would appear to do nothing at all. A
 `cd` that fails degrades to exactly the old behaviour, with one line on stderr
 naming the folder it could not enter. The path is quoted like everything else
 here, because it comes from a container label rather than from the user.
+
+**The login files, and why they are sourced silently.** The script sources
+`/etc/profile` and the first of `~/.bash_profile`, `~/.bash_login`,
+`~/.profile` — bash's own order — **with stdout redirected to `/dev/null`**,
+and then runs an interactive NON-login shell. That is deliberately what VS
+Code does: its `userEnvProbe` sources the login files once, out of band, keeps
+the environment and throws the output away, and the terminal it opens reads
+only `~/.bashrc`.
+
+boxwarden used to run `bash -l` for the terminal itself, and that put the
+profile's output on the developer's screen. On one image the result was a line
+of garbage before the prompt —
+
+```
+\]\u@devcontainer\[\]:\[\]\w\[\]$(parse_git_branch)\[\]\$ '
+```
+
+— **once, on the first load**, which is the detail that identifies it. A
+mangled command line is wrong on every line forever; a login file printing on
+the way past is wrong exactly once. The signature is `\033` consumed while
+`\[`, `\]`, `\u` and `\w` survive, i.e. an `echo -e` of a `PS1` template:
+some profile script echoes its prompt instead of only assigning it.
+
+stderr is deliberately left alone. The garbage is a *successful* echo, whereas
+a profile that actually fails is something the developer needs to see —
+redirecting both would trade a cosmetic bug for a silent one.
 
 **The startup command.** A per-container command, run inside the container
 before the interactive shell each time a terminal opens. It is deliberately

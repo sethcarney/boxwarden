@@ -390,18 +390,34 @@ purely in `src/main/terminal/command.ts` and spawned by `launch.ts`.
   rather than by escaping, because escaping means modelling three parsers
   correctly and encoding means modelling none — and it is pinned by a property
   test over the whole argv, on every transport.
-- **`sh` is never a LOGIN shell, because `/bin/sh` is dash.** The exec is
-  `sh -c <bootstrap> <base64 script>`, and the bootstrap decodes the script into
-  a file inside the container and runs `bash -l` on it. Giving `sh` a `-l` makes
-  dash source `/etc/profile` and `~/.profile`, which in a dev container are
-  written for bash — and dash's `echo` interprets backslash escapes where
-  bash's does not, so a prompt definition came out as raw escape sequences and a
-  system bell before the real shell started. That fix was written once already
-  and did not take on Windows: the bootstrap itself contained `"$0"`, so the
-  BOOTSTRAP was what arrived damaged, and `sh` fell back to running the profile
-  after all. Hence the encoding, and hence a bootstrap with no quote of its own.
-  The `sh -l` fallback survives only for an image with no bash, where dash IS
-  the shell those files were written for.
+- **Nothing is ever a LOGIN shell — the profile is sourced by the SCRIPT,
+  quietly.** The exec is `sh -c <bootstrap> <base64 script>`; the bootstrap
+  decodes the script into a file and runs `bash` on it, and the script's
+  `PROFILE` block sources `/etc/profile` and the first of
+  `~/.bash_profile`/`~/.bash_login`/`~/.profile` **with stdout to
+  `/dev/null`**. This is `userEnvProbe` in one shell: the environment is kept,
+  the chatter is not.
+
+  That is the third fix for one symptom, and each round moved the cause:
+  1. `sh -lc` made a login shell out of dash, which sourced bash's profile and
+     mangled the prompt with its escape-interpreting `echo`.
+  2. The fix for that put `"$0"` in the bootstrap, which Windows Terminal and
+     `wsl.exe` chewed up — so the BOOTSTRAP arrived damaged and `sh` ran the
+     profile anyway. Hence the encoding and a quote-free bootstrap.
+  3. It still appeared **once, on the first load** — and "once" is the whole
+     diagnosis. A mangled command line is wrong forever; a login file printing
+     on the way past is wrong exactly once. Some profile script in the image
+     ECHOES its `PS1` rather than assigning it, and `bash -l` put that on the
+     developer's screen. **VS Code's terminal is not a login shell**, which is
+     why nobody sees it there.
+
+  So: **stdout is redirected, stderr is not.** The garbage is a successful
+  `echo`; a profile that really fails is something the developer needs. And the
+  search order is bash's own, first match only — sourcing all three would run
+  `~/.profile` on a machine where `~/.bash_profile` exists to replace it.
+  The `sh` fallback survives only for an image with no bash, where dash IS the
+  shell those files were written for.
+
 - **The script owns removing the file the bootstrap wrote** (`rm -f -- "$0"`, its
   first line). Unlinking a script a shell is part-way through reading is safe —
   the descriptor keeps the inode alive — and it is what stops a long-lived

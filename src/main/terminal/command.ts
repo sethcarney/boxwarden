@@ -47,7 +47,7 @@ import type {
  *      exactly this reason.
  *
  * The symptom was a terminal that opened at `/` instead of the workspace, with
- * a stray quote and the raw prompt escape sequences that `LOGIN_BOOTSTRAP` was
+ * a stray quote and the raw prompt escape sequences that `CONTAINER_BOOTSTRAP` was
  * written to prevent — the bootstrap itself had been chewed up in transit, so
  * dash ran bash's profile after all.
  *
@@ -148,6 +148,63 @@ export function escapeForWindowsTerminal(value: string): string {
  * shell code. That is inside the container, which is the boundary that matters:
  * on the HOST the whole script remains a single argv element.
  */
+/**
+ * Source the login files for their ENVIRONMENT, not for their output.
+ *
+ * ## The bug this exists for, which is the third face of the same one
+ *
+ * A terminal opened on Windows showed a line of garbage before the prompt —
+ *
+ *     \]\u@devcontainer\[\]:\[\]\w\[\]$(parse_git_branch)\[\]\$ '
+ *
+ * — and then worked perfectly. **Once, on the first load.** That "once" is the
+ * whole diagnosis: it is not a mangled command line, which would be wrong on
+ * every line forever. It is a login file printing on the way past.
+ *
+ * The signature is `\033` consumed while `\[`, `\]`, `\u` and `\w` survive,
+ * which is what `echo -e` (or dash's `echo`) does to a `PS1` template. Some
+ * profile script in the image echoes its prompt instead of only assigning it.
+ *
+ * boxwarden was the only thing that made that visible, because it ran the
+ * developer's shell as a LOGIN shell — `bash -l` — while **VS Code's terminal
+ * is not a login shell**. VS Code sources the login files once, out of band,
+ * in `userEnvProbe`, keeps the environment and throws the output away; the
+ * terminal it then opens reads only `~/.bashrc`. Running `bash -l` for the
+ * terminal itself put that same output on the developer's screen, and on a
+ * Debian image it also ran `~/.bashrc` an extra time, non-interactively, via
+ * `~/.profile`.
+ *
+ * ## So this is `userEnvProbe`, done in one shell
+ *
+ * The profile is still sourced — dropping it would lose everything
+ * `/etc/profile.d` puts on PATH, which is most of what a dev container
+ * installs — but its stdout goes to `/dev/null`, and the shell is no longer a
+ * login shell. That is the same bargain VS Code makes, in one process instead
+ * of two.
+ *
+ * Three details worth keeping:
+ *
+ *   - **stderr is NOT redirected.** The garbage is a successful `echo`; a
+ *     profile that actually fails is something the developer needs to see, and
+ *     silencing it would trade a cosmetic bug for a silent one.
+ *   - **The search order is bash's own**: `/etc/profile`, then the FIRST of
+ *     `~/.bash_profile`, `~/.bash_login`, `~/.profile`. Sourcing all three
+ *     would run `~/.profile` on a machine where `~/.bash_profile` deliberately
+ *     replaces it.
+ *   - It lives in the SCRIPT rather than the bootstrap, so it is inside the
+ *     base64 payload and free to use quotes, loops and newlines. The bootstrap
+ *     has none of those available — see the argv rule at the top of this file.
+ */
+export const PROFILE = [
+  '[ -r /etc/profile ] && . /etc/profile > /dev/null',
+  'for boxwarden_profile in "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile"; do',
+  '  [ -r "$boxwarden_profile" ] || continue',
+  '  . "$boxwarden_profile" > /dev/null',
+  '  break',
+  'done',
+  'unset boxwarden_profile',
+].join('\n');
+
 export function containerShellScript(
   options: {
     /** Where to start. Omitted when the container did not say. */
@@ -165,16 +222,16 @@ export function containerShellScript(
   // safe: the descriptor stays open and keeps the inode alive, so nothing here
   // races with the lines below it.
   const cleanup = 'rm -f -- "$0"';
-  // INTERACTIVE, not login. The login environment is already established by
-  // `LOGIN_BOOTSTRAP`, which ran this script under `bash -lc`; what is left for
-  // the shell the developer types into is `~/.bashrc` — the prompt, the
-  // aliases, the completions. Asking for `-l` again would source the profile a
-  // second time, which is how PATH ends up with every entry twice.
+  // INTERACTIVE, not login. The login files are sourced by `PROFILE` just
+  // below, so what is left for the shell the developer types into is
+  // `~/.bashrc` — the prompt, the aliases, the completions. Asking for `-l`
+  // again would source the profile a second time, which is how PATH ends up
+  // with every entry twice.
   //
   // `$BASH` is set by bash and unset by dash, so this lands in whichever shell
   // the bootstrap actually chose without asking a second time.
   const handover = 'exec "${BASH:-sh}" -i';
-  const lines: string[] = [cleanup];
+  const lines: string[] = [cleanup, PROFILE];
 
   const folder = options.workspaceFolder?.trim();
   if (folder !== undefined && folder !== '') {
@@ -260,9 +317,9 @@ export function decodeShellScript(encoded: string): string {
  *     expansion in it is either a fixed path or `$0`, which is base64 and
  *     therefore has nothing to word-split on — so the double quotes that used
  *     to be load-bearing are not needed anywhere.
- *   - **The profile is sourced ONCE**, by `bash -l <file>`, i.e. by the shell
- *     those files were written for. The startup command inherits that
- *     environment.
+ *   - **The script chooses the shell those files were written for.** The
+ *     profile itself is sourced by the SCRIPT rather than by a `-l` here — see
+ *     `PROFILE`, and the third face of this bug that made that necessary.
  *   - **The script can be anything at all**, since it is no longer a command
  *     line. That is what makes a user-authored startup command containing
  *     quotes, newlines or semicolons a non-event.
@@ -278,9 +335,9 @@ export function decodeShellScript(encoded: string): string {
  * substitute carries its own `rm` because the script it replaced was the thing
  * that would have tidied the file away.
  *
- * The `sh -l` fallback survives for an image with no bash. On such an image
- * dash IS the shell the profile was written for, so the failure mode above
- * cannot arise.
+ * The `sh` fallback survives for an image with no bash. On such an image dash
+ * IS the shell the profile was written for, so the failure mode above cannot
+ * arise.
  *
  * ## Why this is a `&&` chain and not statements separated by `;`
  *
@@ -299,12 +356,12 @@ export function decodeShellScript(encoded: string): string {
  *     developer's shell — which is the "Ctrl-D twice to close the window" bug
  *     `containerShellScript` already avoids at its own end.
  */
-export const LOGIN_BOOTSTRAP = [
+export const CONTAINER_BOOTSTRAP = [
   'f=/tmp/.boxwarden-$$.sh',
   '((umask 077 && printf %s $0 | base64 -d > $f) 2>/dev/null || true)',
   '(test -s $f || (echo rm -f $f && echo exec sh -i) > $f)',
   'command -v bash > /dev/null 2>&1',
-  'exec bash -l $f || exec sh -l $f',
+  'exec bash $f || exec sh $f',
 ].join(' && ');
 
 /**
@@ -396,7 +453,7 @@ export function containerExecArgv(options: {
   // `sh -c <bootstrap> <encoded script>`: the script is the operand that
   // becomes `$0`, so it crosses as its own argv element and is never
   // interpolated into another shell string — and it is encoded, so no layer
-  // between here and the container can damage it either. See LOGIN_BOOTSTRAP.
+  // between here and the container can damage it either. See CONTAINER_BOOTSTRAP.
   const exec = [
     'exec',
     '-it',
@@ -404,7 +461,7 @@ export function containerExecArgv(options: {
     containerId,
     'sh',
     '-c',
-    LOGIN_BOOTSTRAP,
+    CONTAINER_BOOTSTRAP,
     encodeShellScript(script),
   ];
 

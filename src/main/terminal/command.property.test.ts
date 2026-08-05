@@ -8,6 +8,7 @@ import {
   decodeShellScript,
   posixQuote,
   posixQuoteOne,
+  PROFILE,
 } from './command.js';
 
 /**
@@ -229,9 +230,12 @@ describe('containerShellScript', () => {
           return;
         }
 
-        // Line 0 is the bootstrap's `rm -f -- "$0"`; the `cd` is the first
-        // thing the developer's shell does.
-        const cd = script.split('\n')[1] ?? '';
+        // Found by POSITION, not by searching for a line starting with `cd `:
+        // a folder may contain a newline and the text `cd `, and a search
+        // would happily find the attacker's line instead of ours. The prelude
+        // is a fixed size — the self-delete, then `PROFILE`.
+        const prelude = 1 + PROFILE.split('\n').length;
+        const cd = script.split('\n')[prelude] ?? '';
         expect(cd.startsWith('cd ')).toBe(true);
         // Read the argument the way a shell reads it — up to the first
         // UNQUOTED space — rather than by searching for the redirect that
