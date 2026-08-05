@@ -19,6 +19,7 @@ import {
   enginesFrom,
   hostPlatform,
   parseEngineSelection,
+  parseOpenInEditorMode,
   readableHostFolder,
 } from '../models/index.js';
 import { IPC } from '../shared/ipc.js';
@@ -305,7 +306,7 @@ export function registerIpcHandlers(context: IpcContext): void {
 
   handle<OpenInEditorResult>(
     IPC.openInEditor,
-    async (rawId, rawEditorId) => {
+    async (rawId, rawEditorId, rawMode) => {
       const container = known.get(rawId as ContainerId);
       if (container === undefined) {
         return {
@@ -356,7 +357,10 @@ export function registerIpcHandlers(context: IpcContext): void {
       }
 
       try {
-        await launchEditor(resolved.binaryPath, target, uri);
+        // Parsed rather than trusted: anything that is not the string
+        // 'new-window' is the default, so a malformed message can only ever
+        // ask for the less destructive of the two.
+        await launchEditor(resolved.binaryPath, target, uri, parseOpenInEditorMode(rawMode));
         return { ok: true, editorId: target.id, uri };
       } catch (error) {
         return {
@@ -429,6 +433,10 @@ export function registerIpcHandlers(context: IpcContext): void {
       }
 
       try {
+        // No mode here, and no argument for one. An unbuilt project has no
+        // container and therefore no attached window to focus or duplicate —
+        // the whole point of this verb is that the folder is opened LOCALLY so
+        // the editor can offer "Reopen in Container".
         await launchEditor(resolved.binaryPath, target, uri);
         return { ok: true, editorId: target.id, uri };
       } catch (error) {

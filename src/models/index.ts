@@ -104,8 +104,11 @@ export type {
   EditorId,
   EditorTarget,
   KnownEditorId,
+  OpenInEditorMode,
   ResolvedEditor,
 } from './editor.js';
+
+export { parseOpenInEditorMode } from './editor.js';
 
 export type { BinaryDiscovery, ResolvedBinary } from './discovery.js';
 

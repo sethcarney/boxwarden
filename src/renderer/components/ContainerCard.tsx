@@ -4,12 +4,14 @@ import type {
   EditorAttachment,
   EditorId,
   GitStatus,
+  OpenInEditorMode,
 } from '../../models/index.js';
 import { canStart, canStop, hostPathLabel, statusLabel } from '../format.js';
 import {
   branchChip,
   cardTitle,
   claudeBadge,
+  editorActions,
   editorBadge,
   stopWarning,
   openBlockedReason,
@@ -71,7 +73,8 @@ interface Props {
   readonly git?: GitStatus | undefined;
   readonly onStart: (container: DevContainer) => void;
   readonly onStop: (container: DevContainer) => void;
-  readonly onOpen: (container: DevContainer) => void;
+  /** `mode` is omitted for the ordinary open; the card only passes it for "New window". */
+  readonly onOpen: (container: DevContainer, mode?: OpenInEditorMode) => void;
   readonly onOpenTerminal: (container: DevContainer) => void;
   readonly onStartupCommandChange: (container: DevContainer, command: string) => void;
 }
@@ -112,6 +115,7 @@ export function ContainerCard({
   const attached = editorBadge(editor);
   const branch = branchChip(git);
   const warning = stopWarning([claude], [editor]);
+  const actions = editorActions(editor, editorName, blocked, dense);
 
   return (
     <article className={`card${unresolved ? ' card-degraded' : ''}`}>
@@ -225,13 +229,30 @@ export function ContainerCard({
           type="button"
           className="primary"
           disabled={busy || blocked !== undefined}
-          title={blocked ?? `Open in ${editorName}`}
+          title={actions.open.title}
           onClick={() => {
             onOpen(container);
           }}
         >
-          {dense ? 'Open' : `Open in ${editorName}`}
+          {actions.open.label}
         </button>
+
+        {/* Only once an editor is attached — see `editorActions`. Until then
+            the two buttons would do the same thing under different names. */}
+        {actions.newWindow !== undefined && (
+          <button
+            type="button"
+            className="secondary-open"
+            disabled={busy || blocked !== undefined}
+            title={actions.newWindow.title}
+            aria-label={`Open a new ${editorName} window on this container`}
+            onClick={() => {
+              onOpen(container, 'new-window');
+            }}
+          >
+            {actions.newWindow.label}
+          </button>
+        )}
 
         <button
           type="button"

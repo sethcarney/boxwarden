@@ -4,6 +4,7 @@ import type {
   DevContainer,
   EditorId,
   EngineSelection,
+  OpenInEditorMode,
   TerminalId,
 } from '../../models/index.js';
 import type { ActionResult, BoxwardenApi, DiscoverySnapshot } from '../../shared/ipc.js';
@@ -35,7 +36,14 @@ export interface DiscoveryViewModel {
   readonly stop: (container: DevContainer) => void;
   readonly startAll: (containers: readonly DevContainer[]) => void;
   readonly stopAll: (containers: readonly DevContainer[]) => void;
-  readonly open: (container: DevContainer) => void;
+  /**
+   * Open the container's workspace folder in the chosen editor.
+   *
+   * `mode` defaults to `reuse`, which focuses the window this container
+   * already has rather than opening a duplicate — see `OpenInEditorMode`. The
+   * card only offers the choice once an editor is actually attached.
+   */
+  readonly open: (container: DevContainer, mode?: OpenInEditorMode) => void;
   /** Open a shell in the container. No-op when no terminal emulator was found. */
   readonly openTerminal: (container: DevContainer) => void;
   readonly selectEngine: (selection: EngineSelection) => void;
@@ -225,12 +233,18 @@ export function useDiscovery(
   );
 
   const open = useCallback(
-    (container: DevContainer) => {
+    (container: DevContainer, mode: OpenInEditorMode = 'reuse') => {
       if (api === undefined) return;
       void withBusy([container], async (): Promise<ActionResult> => {
-        const result = await api.openInEditor(container.id, editorId);
+        const result = await api.openInEditor(container.id, editorId, mode);
         if (result.ok) {
-          showInfo(`Opening ${container.name}…`);
+          // Worded for what was asked for: "Opening" a window that already
+          // exists reads as a duplicate having been created.
+          showInfo(
+            mode === 'new-window'
+              ? `Opening a new window on ${container.name}…`
+              : `Opening ${container.name}…`,
+          );
           return { ok: true };
         }
         // Only the fallback here — `withBusy` shows the message, and setting

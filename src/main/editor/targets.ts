@@ -15,6 +15,11 @@ import type { EditorDiscovery, EditorTarget, KnownEditorId } from '../../models/
  * spawned without a shell — one is a bash script, the other a batch file Node
  * refuses to run directly. `Code.exe` accepts the same `--folder-uri` flag. See
  * the note on WINDOWS_SPAWNABLE_EXTENSIONS in resolve.ts.
+ *
+ * `newWindowFlag` is `--new-window` and not `--reuse-window`, and the asymmetry
+ * is the point: reusing is what the CLI already does when a window has the
+ * folder open, so the flag is only ever needed to ask for the OTHER thing. See
+ * `OpenInEditorMode`.
  */
 
 function vsCodeBundle(bundleId: string): EditorDiscovery {
@@ -48,6 +53,7 @@ const TARGETS: Record<KnownEditorId, EditorTarget> = {
     ],
     remoteScheme: 'vscode-remote',
     folderUriFlag: '--folder-uri',
+    newWindowFlag: '--new-window',
   },
 
   'vscode-insiders': {
@@ -69,6 +75,7 @@ const TARGETS: Record<KnownEditorId, EditorTarget> = {
     ],
     remoteScheme: 'vscode-remote',
     folderUriFlag: '--folder-uri',
+    newWindowFlag: '--new-window',
   },
 
   cursor: {
@@ -92,6 +99,7 @@ const TARGETS: Record<KnownEditorId, EditorTarget> = {
     // docs/roadmap.md, "Verify the forks".
     remoteScheme: 'vscode-remote',
     folderUriFlag: '--folder-uri',
+    newWindowFlag: '--new-window',
   },
 
   windsurf: {
@@ -113,6 +121,7 @@ const TARGETS: Record<KnownEditorId, EditorTarget> = {
     // Unverified, same caveat as Cursor.
     remoteScheme: 'vscode-remote',
     folderUriFlag: '--folder-uri',
+    newWindowFlag: '--new-window',
   },
 };
 

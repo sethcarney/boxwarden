@@ -211,6 +211,49 @@ describe('useDiscovery', () => {
     expect(result.current.engine?.label).toBe('No container engine');
   });
 
+  /**
+   * The default is FOCUS, not a new window, and it is the default all the way
+   * down: the card omits the argument, the ViewModel supplies `reuse`, and the
+   * CLI's own behaviour for a folder URI it already has open is to raise that
+   * window. Getting this backwards would mean a second window every time
+   * somebody clicked the card for a container they already had open.
+   */
+  it('asks to focus the existing window unless told otherwise', async () => {
+    const api = fakeApi({ snapshot: snapshot({ containers: [running] }) });
+    const { result } = renderHook(() => useDiscovery(api, stubNotices(), 'vscode', undefined));
+    await waitFor(() => {
+      expect(result.current.containers).toHaveLength(1);
+    });
+
+    await act(async () => {
+      result.current.open(running as DevContainer);
+      await vi.waitFor(() => {
+        expect(api.openInEditor).toHaveBeenCalledWith(running.id, 'vscode', 'reuse');
+      });
+    });
+  });
+
+  it('asks for a second window only when the card says so', async () => {
+    const api = fakeApi({ snapshot: snapshot({ containers: [running] }) });
+    const notices = stubNotices();
+    const { result } = renderHook(() => useDiscovery(api, notices, 'vscode', undefined));
+    await waitFor(() => {
+      expect(result.current.containers).toHaveLength(1);
+    });
+
+    await act(async () => {
+      result.current.open(running as DevContainer, 'new-window');
+      await vi.waitFor(() => {
+        expect(api.openInEditor).toHaveBeenCalledWith(running.id, 'vscode', 'new-window');
+      });
+    });
+    // Worded for what was asked for: "Opening webapp…" would read as a
+    // duplicate having been created when one was only brought forward.
+    expect(notices.showInfo).toHaveBeenCalledWith(
+      expect.stringContaining('Opening a new window on'),
+    );
+  });
+
   it('keeps a failed open URI for the copy button', async () => {
     const api = fakeApi({ snapshot: snapshot({ containers: [running] }) });
     api.openInEditor = vi.fn(() =>

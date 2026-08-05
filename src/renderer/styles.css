@@ -603,6 +603,30 @@ button.warn:hover:not(:disabled) {
   padding-top: 12px;
 }
 
+/*
+ * "New window", beside Focus, and only when an editor is already attached.
+ *
+ * Deliberately quieter than the button it sits next to: focusing the window
+ * that exists is the common action, and opening a second one is the deliberate
+ * one. Sizing it to `.primary`'s weight would make the pair read as a choice
+ * rather than as an action and its variant.
+ */
+.card-actions .secondary-open {
+  padding-inline: 10px;
+  font-weight: 500;
+  opacity: 0.85;
+}
+
+.card-actions .secondary-open:hover:not(:disabled) {
+  opacity: 1;
+}
+
+/* Dense is a bare `+`, so it needs to stay square rather than collapse. */
+.list[data-layout='rows'] .card-actions .secondary-open {
+  min-width: 26px;
+  padding-inline: 6px;
+}
+
 /* ---------- rows layout ---------- */
 
 /*

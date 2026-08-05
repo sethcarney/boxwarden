@@ -127,6 +127,72 @@ export function openBlockedReason(
 }
 
 /**
+ * What the card's editor buttons say, and how many there are.
+ *
+ * One action or two, decided here rather than in the card, because the decision
+ * is the interesting part: **the second button only appears when an editor is
+ * already attached.** Offering "New window" on a container nobody has open is
+ * offering a distinction without a difference — the CLI opens a new window
+ * either way — and a permanently-present button that changes meaning silently
+ * is worse than one that appears when it starts to matter.
+ *
+ * When one IS attached the two are genuinely different things, and the labels
+ * say which is which: `open` focuses the window that exists, `newWindow` adds
+ * a second on the same container. Two windows on one dev container is an
+ * ordinary way to work — one per branch, one per agent — so this is not an
+ * escape hatch, it is the other half of the feature.
+ *
+ * `blocked` wins over both: a container with no workspace folder has nothing to
+ * open in any number of windows.
+ */
+export interface EditorAction {
+  readonly label: string;
+  readonly title: string;
+}
+
+export interface EditorActions {
+  readonly open: EditorAction;
+  /** Absent unless an editor is attached — see above. */
+  readonly newWindow: EditorAction | undefined;
+}
+
+export function editorActions(
+  attachment: EditorAttachment | undefined,
+  editorName: string,
+  blocked: string | undefined,
+  dense: boolean,
+): EditorActions {
+  if (attachment?.kind !== 'attached') {
+    return {
+      open: {
+        label: dense ? 'Open' : `Open in ${editorName}`,
+        title: blocked ?? `Open in ${editorName}`,
+      },
+      newWindow: undefined,
+    };
+  }
+
+  const names = attachment.editors.map(editorDisplayName).join(', ');
+  return {
+    open: {
+      label: dense ? 'Focus' : `Focus ${editorName}`,
+      title:
+        blocked ??
+        // Says what it does AND why it can: the window is found by the folder
+        // URI, so this raises the one showing THIS container rather than
+        // whatever was last in front.
+        `Bring the ${names} window already attached to this container to the front. Nothing new is opened.`,
+    },
+    newWindow: {
+      label: dense ? '+' : 'New window',
+      title:
+        blocked ??
+        `Open a SECOND ${editorName} window on this container, alongside the one already attached.`,
+    },
+  };
+}
+
+/**
  * Why the Terminal button is disabled, or undefined when it is not.
  *
  * Two preconditions, and the order matters: a stopped container cannot be

@@ -177,7 +177,12 @@ error crosses IPC as an opaque string with the real message buried.
 
 Every verb that acts on a container or a project takes an **ID**. The main
 process resolves it against its own copy from the last scan and never acts on
-renderer-supplied data: `openInEditor` will not take a host path,
+renderer-supplied data. `openInEditor`'s optional `mode` is the one thing
+alongside an id that any container verb accepts, and it is safe on the same
+terms as `updateStatus(force)`: a closed two-arm union, parsed in the main
+process by `parseOpenInEditorMode`, that cannot name a path, a window or a
+binary — and whose default is the less destructive arm. Otherwise:
+`openInEditor` will not take a host path,
 `openProject` will not take a folder, `openTerminal` will not take a startup
 command — it reads its own stored copy — and `claudeStatus` and `gitStatus`
 drop any id that is not in the last scan. `gitStatus` is the sharpest case of
@@ -522,6 +527,16 @@ would double the poll's Docker traffic to learn nothing extra.
   ANNOTATED, the same as it is for a Claude session — `stopWarning` folds both,
   and words them differently on purpose: an agent is ENDED by stopping, a window
   is STRANDED by it.
+- **It also decides how many buttons the card has.** With a window attached, the
+  primary action becomes **Focus** and a quieter **New window** appears beside
+  it (`editorActions` in `presenters.ts`, `OpenInEditorMode` in the models).
+  The split exists ONLY then: with nothing attached the two would do the same
+  thing under different names, since the CLI opens a new window either way.
+  `reuse` passes NO flag, because the CLI's own default is to resolve the folder
+  URI against the open windows and raise the one that matches — `--reuse-window`
+  would be a different and worse thing, taking over whichever window was last
+  active. `--new-window` is therefore the only flag in the table, and the
+  asymmetry is the design rather than an omission.
 
 ### The workspace branch
 

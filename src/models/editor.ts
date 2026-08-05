@@ -31,6 +31,38 @@ export interface EditorTarget {
   readonly remoteScheme: string;
   /** Almost certainly '--folder-uri'. Same caveat as `remoteScheme`. */
   readonly folderUriFlag: string;
+  /**
+   * The flag that forces a SECOND window on a folder that already has one.
+   *
+   * Without it, `code --folder-uri X` finds the window already showing X and
+   * focuses that, which is the behaviour boxwarden wants by default: a card
+   * saying an editor is attached should offer to bring that window forward, not
+   * to open a duplicate of it. `--new-window` is how the user asks for the
+   * other thing — a second window on the same container, which is an ordinary
+   * way to work (one window per branch, one per agent).
+   *
+   * Configurable per target for the same reason as the two fields above, and
+   * with the same caveat: nobody has confirmed it against a Cursor or Windsurf
+   * install.
+   */
+  readonly newWindowFlag: string;
+}
+
+/**
+ * Which of the two things "open" means for a container an editor is already
+ * attached to.
+ *
+ * `reuse` is not "reuse whatever window is in front" — that is VS Code's `-r`,
+ * and it would hijack an unrelated window. It is the CLI's DEFAULT behaviour,
+ * which resolves the folder URI against the open windows and focuses the one
+ * that matches. The distinction matters because the wrong one of those two
+ * would replace the contents of the window a developer was looking at.
+ */
+export type OpenInEditorMode = 'reuse' | 'new-window';
+
+/** Total, so a value arriving over IPC can only ever be one of the two arms. */
+export function parseOpenInEditorMode(value: unknown): OpenInEditorMode {
+  return value === 'new-window' ? 'new-window' : 'reuse';
 }
 
 export type ResolvedEditor =

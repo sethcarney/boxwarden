@@ -128,6 +128,49 @@ describe('ContainerCard', () => {
       const button = screen.getByRole('button', { name: 'Open' });
       expect(button.getAttribute('title')).toBe('Open in VS Code Insiders');
     });
+
+    /**
+     * With a window already attached the one action becomes two, and they mean
+     * genuinely different things. Before that they would not — the CLI opens a
+     * new window either way — so the card shows one button and says "Open".
+     */
+    describe('when an editor is already attached', () => {
+      const attached = { kind: 'attached', editors: ['vscode'] } as const;
+
+      it('offers Focus and New window, and asks for the right one', async () => {
+        const container = devContainer();
+        const { onOpen } = renderCard(container, { editor: attached });
+
+        await userEvent.click(screen.getByRole('button', { name: 'Focus VS Code' }));
+        // No mode argument at all: the default is to focus, decided once in
+        // the ViewModel rather than restated by every caller.
+        expect(onOpen.mock.calls.at(-1)).toEqual([container]);
+
+        await userEvent.click(
+          screen.getByRole('button', { name: /new VS Code window on this container/i }),
+        );
+        expect(onOpen.mock.calls.at(-1)).toEqual([container, 'new-window']);
+      });
+
+      it('shows only one action while nothing is attached', () => {
+        renderCard(devContainer(), { editor: { kind: 'none' } });
+        expect(screen.queryByRole('button', { name: /new VS Code window/i })).toBeNull();
+        expect(screen.getByRole('button', { name: 'Open in VS Code' })).toBeDefined();
+      });
+
+      /** A container with nowhere to open has nowhere to open twice, either. */
+      it('disables both when there is no workspace folder', () => {
+        const { workspaceFolder: _omitted, ...rest } = devContainer();
+        renderCard(rest as DevContainer, { editor: attached });
+
+        expect(screen.getByRole('button', { name: 'Focus VS Code' }).hasAttribute('disabled')).toBe(
+          true,
+        );
+        expect(
+          screen.getByRole('button', { name: /new VS Code window/i }).hasAttribute('disabled'),
+        ).toBe(true);
+      });
+    });
   });
 
   describe('the Terminal button', () => {
