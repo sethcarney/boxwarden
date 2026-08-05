@@ -521,6 +521,16 @@ would double the poll's Docker traffic to learn nothing extra.
 - **Matched as a PATH SEGMENT** (`/.vscode-server/`), never as a bare word —
   the lesson `looksLikeClaudeCode` learned. Insiders is listed before stable
   because `.vscode-server-insiders` has `.vscode-server` as a prefix.
+- **The rows layout draws each editor's own mark** (`EditorGlyph.tsx`), not a
+  generic one. It was `⧉` — the same two-window glyph whatever was attached,
+  on a list whose entire job is telling containers apart. Inline SVG because
+  the renderer has a strict CSP and no image pipeline (`assets.d.ts` declares
+  only `*.css`, deliberately), and the colours are CSS variables for the reason
+  every colour here is: one picked against the dark surface is the one that
+  vanishes on the light one. Cursor and Windsurf get a LETTERMARK rather than
+  an approximation of their logos — an almost-right logo reads as a rendering
+  bug. The presenter supplies `{ flavour, name }` pairs because a View may not
+  call `editorDisplayName`; the lint rule enforces that.
 - **boxwarden cannot close the window, and does not try.** The `code` CLI can
   open windows and install extensions; it cannot enumerate or close them, and
   killing the host process would take unsaved buffers with it. So Stop is

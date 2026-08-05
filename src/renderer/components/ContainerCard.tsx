@@ -20,6 +20,7 @@ import {
   terminalBlockedReason,
   visiblePorts,
 } from '../presenters.js';
+import { EditorGlyph } from './EditorGlyph.js';
 import { StartupCommandField } from './StartupCommandField.js';
 import { StatusDot } from './StatusDot.js';
 
@@ -159,7 +160,19 @@ export function ContainerCard({
               title={attached.title}
               aria-label={`${attached.label} attached`}
             >
-              {dense ? attached.denseLabel : attached.label}
+              {/* Rows layout draws the editors' own marks rather than a name
+                  it has no width for. The mark is what a user recognises
+                  without reading, which is the whole job of a one-line row —
+                  and unlike the generic glyph it replaces, it says WHICH
+                  editor. `aria-label` above carries the names regardless, so
+                  nothing is lost to a reader who cannot see the shape. */}
+              {dense && attached.editors.length > 0
+                ? attached.editors.map((mark) => (
+                    <EditorGlyph key={mark.flavour} flavour={mark.flavour} name={mark.name} />
+                  ))
+                : dense
+                  ? attached.denseLabel
+                  : attached.label}
             </span>
           )}
           {badge !== undefined && (

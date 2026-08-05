@@ -47,6 +47,13 @@
   --claude: #e0a184;
   --claude-border: rgba(203, 123, 93, 0.5);
   --claude-bg: rgba(203, 123, 93, 0.14);
+  /* The attached-editor marks. Variables and not literals in the component,
+     for the reason every other colour here is: a brand blue picked against
+     the dark surface is the one that disappears on the light one. Only the
+     two VS Code flavours get a colour at all — the lettermarks take
+     `currentColor`, which is already the badge's per-theme dim text. */
+  --editor-vscode: #3c99d4;
+  --editor-insiders: #3fae5a;
   color-scheme: dark;
 }
 
@@ -71,6 +78,11 @@
   --claude: #a04a1e;
   --claude-border: rgba(160, 74, 30, 0.45);
   --claude-bg: rgba(160, 74, 30, 0.1);
+  /* Darkened rather than re-hued: still recognisably VS Code blue and VS Code
+     Insiders green, with enough contrast against white to be a shape rather
+     than a smudge. */
+  --editor-vscode: #1f74b0;
+  --editor-insiders: #1d7f3c;
   color-scheme: light;
 }
 
@@ -433,6 +445,27 @@ button.link {
   border-color: var(--border);
   color: var(--text-dim);
   font-weight: 500;
+}
+
+/*
+ * The editors' own marks, in the rows layout.
+ *
+ * `display: block` inside a flex line so the SVG sits on the text baseline
+ * rather than on the inline box's, which is what leaves an icon looking a
+ * pixel high in a badge. Two attached editors are two marks, so the badge
+ * becomes a small flex row of them.
+ */
+.badge-editor .editor-glyph {
+  display: block;
+  flex: none;
+}
+
+.list[data-layout='rows'] .badge-editor {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+  /* The mark carries the meaning; the border around it is noise at this size. */
+  padding-inline: 4px;
 }
 
 /* A Stop that would end a live session. Annotated, not disabled — only the

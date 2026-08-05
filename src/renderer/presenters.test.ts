@@ -432,6 +432,30 @@ describe('editorBadge', () => {
     expect(editorBadge({ kind: 'unknown', reason: 'x' })?.tone).toBe('unknown');
   });
 
+  /**
+   * The rows layout draws a mark per attached editor, so the badge has to carry
+   * WHICH editors rather than a count. `⧉` used to stand in for all of them,
+   * which on a card whose job is telling containers apart said only "an editor,
+   * some editor".
+   */
+  it('carries every attached flavour, and its name, for the rows layout', () => {
+    const badge = editorBadge({ kind: 'attached', editors: ['vscode', 'cursor'] });
+    expect(badge?.editors).toEqual([
+      { flavour: 'vscode', name: 'VS Code' },
+      { flavour: 'cursor', name: 'Cursor' },
+    ]);
+  });
+
+  /**
+   * `unknown` means the process table could not be read — not "an editor we did
+   * not recognise". There is no flavour to draw, and the question mark stays.
+   */
+  it('has no flavour to draw when it could not tell', () => {
+    const badge = editorBadge({ kind: 'unknown', reason: 'top failed' });
+    expect(badge?.editors).toEqual([]);
+    expect(badge?.denseLabel).toBe('?');
+  });
+
   it('renders nothing for a container with no editor, or one not yet polled', () => {
     expect(editorBadge({ kind: 'none' })).toBeUndefined();
     expect(editorBadge({ kind: 'not-applicable' })).toBeUndefined();

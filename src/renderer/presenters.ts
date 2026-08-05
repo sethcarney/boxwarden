@@ -19,6 +19,7 @@ import type {
   ClaudeStatus,
   DevContainer,
   EditorAttachment,
+  EditorFlavour,
   EndpointProbe,
   EngineSelection,
   GitStatus,
@@ -526,9 +527,29 @@ export function stopWarning(
  * shows, because this decorates a destructive button and "we could not tell"
  * must not look like "nothing is attached".
  */
+/** One attached editor: what to draw, and what to call it. */
+export interface EditorMark {
+  readonly flavour: EditorFlavour;
+  readonly name: string;
+}
+
 export interface EditorBadge {
   readonly label: string;
   readonly denseLabel: string;
+  /**
+   * Which editors, for the rows layout to draw a mark per flavour.
+   *
+   * Empty for `unknown`, which is the arm where there is no flavour to name —
+   * and where `denseLabel` is a question mark for the reason that arm exists at
+   * all.
+   *
+   * The NAME travels with the flavour rather than being looked up where the
+   * mark is drawn, and that is the layering rule rather than a convenience: a
+   * View may not call into the Model, so `editorDisplayName` is resolved here.
+   * The division is the usual one — which shape represents Cursor is a
+   * rendering decision, which containers have Cursor attached is this one.
+   */
+  readonly editors: readonly EditorMark[];
   readonly title: string;
   readonly tone: 'attached' | 'unknown';
 }
@@ -545,6 +566,7 @@ export function editorBadge(attachment: EditorAttachment | undefined): EditorBad
       return {
         label: 'Editor ?',
         denseLabel: '?',
+        editors: [],
         title: `Could not tell whether an editor is attached to this container: ${attachment.reason}`,
         tone: 'unknown',
       };
@@ -553,7 +575,14 @@ export function editorBadge(attachment: EditorAttachment | undefined): EditorBad
       const names = attachment.editors.map(editorDisplayName).join(', ');
       return {
         label: names,
-        denseLabel: '⧉',
+        // Only reached if the icons cannot render at all. It used to be `⧉` —
+        // a generic pair of windows that says an editor is attached and cannot
+        // say WHICH, on a card whose whole job is telling containers apart.
+        denseLabel: names,
+        editors: attachment.editors.map((flavour) => ({
+          flavour,
+          name: editorDisplayName(flavour),
+        })),
         title: [
           `${names} ${attachment.editors.length === 1 ? 'is' : 'are'} attached to this container.`,
           'Detected from the editor server running inside it, which outlives the window by a few minutes — so this can linger briefly after you close one.',

@@ -173,6 +173,62 @@ describe('ContainerCard', () => {
     });
   });
 
+  /**
+   * The rows layout has one line per container, so the attached-editor badge
+   * shortens to a mark. It used to shorten to `⧉` — the same two-window glyph
+   * whatever was attached — which on a list whose purpose is telling containers
+   * apart said only "an editor, some editor".
+   */
+  describe('the attached-editor badge in the rows layout', () => {
+    it('draws a mark per attached editor rather than a generic glyph', () => {
+      const { dom } = renderCard(devContainer(), {
+        dense: true,
+        editor: { kind: 'attached', editors: ['vscode', 'cursor'] },
+      });
+
+      const badge = dom.querySelector('.badge-editor');
+      expect(badge?.querySelectorAll('svg.editor-glyph')).toHaveLength(2);
+      expect(badge?.textContent).not.toContain('⧉');
+      // Titled, so the shape has a name for anyone hovering it or reading it
+      // through the accessibility tree.
+      expect([...(badge?.querySelectorAll('title') ?? [])].map((t) => t.textContent)).toEqual([
+        'VS Code',
+        'Cursor',
+      ]);
+    });
+
+    /** Nothing is lost to a reader who cannot see the shape. */
+    it('still names the editors in the badge label', () => {
+      const { dom } = renderCard(devContainer(), {
+        dense: true,
+        editor: { kind: 'attached', editors: ['vscode'] },
+      });
+      expect(dom.querySelector('.badge-editor')?.getAttribute('aria-label')).toBe(
+        'VS Code attached',
+      );
+    });
+
+    it('spells the editors out in the layouts that have room', () => {
+      const { dom } = renderCard(devContainer(), {
+        editor: { kind: 'attached', editors: ['vscode'] },
+      });
+      const badge = dom.querySelector('.badge-editor');
+      expect(badge?.textContent).toBe('VS Code');
+      expect(badge?.querySelector('svg')).toBeNull();
+    });
+
+    /** `unknown` is "could not read the process table", so there is no mark. */
+    it('keeps the question mark when it could not tell', () => {
+      const { dom } = renderCard(devContainer(), {
+        dense: true,
+        editor: { kind: 'unknown', reason: 'top failed' },
+      });
+      const badge = dom.querySelector('.badge-editor');
+      expect(badge?.querySelector('svg')).toBeNull();
+      expect(badge?.textContent).toBe('?');
+    });
+  });
+
   describe('the Terminal button', () => {
     it('is enabled and fires for a running container with an emulator installed', async () => {
       const { onOpenTerminal } = renderCard(devContainer());
