@@ -41,10 +41,24 @@ function devMetaCsp(): Plugin {
  * The two halves want OPPOSITE dependency handling, which is the least
  * obvious thing in this file — see each block.
  *
- * Note on versions: Vite is pinned to 7.x because electron-vite 5 declares no
- * support for 8, and under 8's rolldown backend dependency externalization
- * silently stopped applying — the build then tried to bundle dockerode's
- * optional native ssh2 bindings into the main process and failed.
+ * Note on versions: Vite is pinned to 7.x. electron-vite 5 declares
+ * `vite: ^5 || ^6 || ^7` and nothing wider, and under 8's rolldown backend
+ * `externalizeDeps` below silently stops applying — the build then tries to
+ * bundle dockerode's optional native ssh2 bindings into the main process and
+ * fails on `cpu-features`.
+ *
+ * A hand-written `external` array does make that build pass, and it is still
+ * the wrong trade: `externalizeDeps` reads package.json, so a list replacing it
+ * is one that has to be remembered, and the thing forgetting it produces is not
+ * a build failure but a shipped main process with ssh2 bundled — i.e. an app
+ * that works until someone points DOCKER_HOST at ssh://. The no-op is also
+ * evidence that electron-vite's plugin no longer binds to Vite's build
+ * pipeline, which is a claim about more than this one option, and `dev` is
+ * where that would surface rather than in CI.
+ *
+ * So the pin holds until electron-vite widens the peer range. @vitejs/plugin-react
+ * rides along: 6.x peers on `vite: ^8` alone, so it cannot be taken first.
+ * Both are held off in .github/dependabot.yml, with the same reason.
  */
 export default defineConfig({
   main: {
