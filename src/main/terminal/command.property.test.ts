@@ -1,7 +1,14 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { asContainerPath } from '../../models/index.js';
-import { appleScriptString, containerShellScript, posixQuote, posixQuoteOne } from './command.js';
+import {
+  appleScriptString,
+  containerExecArgv,
+  containerShellScript,
+  decodeShellScript,
+  posixQuote,
+  posixQuoteOne,
+} from './command.js';
 
 /**
  * Property-based tests for the quoting functions, which are the security
@@ -222,12 +229,60 @@ describe('containerShellScript', () => {
           return;
         }
 
-        expect(script.startsWith('cd ')).toBe(true);
+        // Line 0 is the bootstrap's `rm -f -- "$0"`; the `cd` is the first
+        // thing the developer's shell does.
+        const cd = script.split('\n')[1] ?? '';
+        expect(cd.startsWith('cd ')).toBe(true);
         // Read the argument the way a shell reads it — up to the first
         // UNQUOTED space — rather than by searching for the redirect that
         // follows. A folder containing `2>/dev/null`, or a newline, would fool
         // a search; it must not fool the shell, and it must not fool this.
-        expect(firstWord(script.slice('cd '.length))).toBe(trimmed);
+        expect(firstWord(cd.slice('cd '.length))).toBe(trimmed);
+      }),
+    );
+  });
+});
+
+describe('containerExecArgv', () => {
+  /**
+   * The argv rule from the top of `command.ts`, over every string fast-check
+   * can think of rather than the one hostile constant the example test names.
+   *
+   * A double quote or a newline in any element is a terminal that opens at `/`
+   * with a broken prompt on Windows and works perfectly everywhere else, which
+   * is the failure mode least likely to be caught by the person who wrote it.
+   */
+  it('never emits a quote, a newline or a semicolon, whatever the startup command is', () => {
+    fc.assert(
+      fc.property(fc.string(), fc.string(), (startupCommand, folder) => {
+        const argv = containerExecArgv({
+          cli: { kind: 'docker', binaryPath: '/usr/bin/docker' },
+          containerId: 'a1b2c3',
+          transport: { transport: 'wsl', distro: 'Ubuntu', socketPath: '/run/docker.sock' },
+          user: 'vscode',
+          script: containerShellScript({
+            workspaceFolder: asContainerPath(folder),
+            startupCommand,
+          }),
+        });
+
+        for (const part of argv) {
+          expect(part).not.toMatch(/["\n\r;]/);
+        }
+      }),
+    );
+  });
+
+  it('delivers the script byte for byte however hostile it is', () => {
+    fc.assert(
+      fc.property(fc.string(), (startupCommand) => {
+        const script = containerShellScript({ startupCommand });
+        const argv = containerExecArgv({
+          cli: { kind: 'docker', binaryPath: '/usr/bin/docker' },
+          containerId: 'a1b2c3',
+          script,
+        });
+        expect(decodeShellScript(argv.at(-1) ?? '')).toBe(script);
       }),
     );
   });

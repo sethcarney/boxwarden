@@ -369,18 +369,42 @@ purely in `src/main/terminal/command.ts` and spawned by `launch.ts`.
   the endpoint the container was last seen on. This app connects to every engine
   that answers; the engine selection narrows what it LISTS but does not reach
   the CLI, so leaving the choice to the CLI's default means "no such container"
-  for one that is on screen. A WSL socket runs `wsl.exe -d <distro> --` and
-  names the CLI bare, on the Linux side.
+  for one that is on screen. A WSL socket runs `wsl.exe -d <distro> --exec` and
+  names the CLI bare, on the Linux side — **`--exec` and not `--`**, because
+  without it `wsl.exe` runs the command line through the distro's default
+  shell, which parses the payload before `docker` ever sees it.
+- **No argv element may contain a double quote, a newline or a semicolon.**
+  This is the rule the whole module is shaped around, and it exists because an
+  argv array is only inert if every layer between here and the container passes
+  it along unchanged — which on Windows two layers do not. `wt new-tab a b c`
+  JOINS its arguments back into one command line, wrapping a spaced argument in
+  double quotes and doing nothing about the double quotes already inside it;
+  and `wsl.exe` without `--exec` hands the line to the distro's default shell,
+  which parses it a second time. `;` is `wt`'s own subcommand separator.
+  Spaces are fine. The rule is kept by ENCODING (`encodeShellScript`, base64)
+  rather than by escaping, because escaping means modelling three parsers
+  correctly and encoding means modelling none — and it is pinned by a property
+  test over the whole argv, on every transport.
 - **`sh` is never a LOGIN shell, because `/bin/sh` is dash.** The exec is
-  `sh -c <bootstrap> <script>`, and the bootstrap execs `bash -lc "$0"`. Giving
-  `sh` a `-l` makes dash source `/etc/profile` and `~/.profile`, which in a dev
-  container are written for bash — and dash's `echo` interprets backslash
-  escapes where bash's does not, so a prompt definition came out as raw escape
-  sequences and a system bell before the real shell started. The script rides as
-  the operand POSIX turns into `$0`, so it stays its own argv element and a
-  user-authored startup command never needs a second layer of quoting. The
-  `sh -lc` fallback survives only for an image with no bash, where dash IS the
-  shell those files were written for.
+  `sh -c <bootstrap> <base64 script>`, and the bootstrap decodes the script into
+  a file inside the container and runs `bash -l` on it. Giving `sh` a `-l` makes
+  dash source `/etc/profile` and `~/.profile`, which in a dev container are
+  written for bash — and dash's `echo` interprets backslash escapes where
+  bash's does not, so a prompt definition came out as raw escape sequences and a
+  system bell before the real shell started. That fix was written once already
+  and did not take on Windows: the bootstrap itself contained `"$0"`, so the
+  BOOTSTRAP was what arrived damaged, and `sh` fell back to running the profile
+  after all. Hence the encoding, and hence a bootstrap with no quote of its own.
+  The `sh -l` fallback survives only for an image with no bash, where dash IS
+  the shell those files were written for.
+- **The script owns removing the file the bootstrap wrote** (`rm -f -- "$0"`, its
+  first line). Unlinking a script a shell is part-way through reading is safe —
+  the descriptor keeps the inode alive — and it is what stops a long-lived
+  container accumulating one file per terminal opened.
+- **The last `exec` in the bootstrap is not in a subshell.** `exec` inside
+  `( … )` replaces the subshell and leaves the parent `sh` waiting underneath,
+  which is the "Ctrl-D twice to close the window" bug the script already avoids
+  at its own end.
 - **The handover is `exec "${BASH:-sh}" -i`, interactive rather than login.**
   The profile was sourced once by the bootstrap's `bash -lc`; asking for `-l`
   again is how PATH ends up with every entry twice. `$BASH` is set by bash and

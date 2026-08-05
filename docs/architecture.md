@@ -463,18 +463,48 @@ toolchain. It emits `vscode-remote://wsl+Ubuntu/...` instead.
 
 ## Opening a terminal
 
-"Open a shell in this container" is `docker exec -it <id> sh -lc <script>`
-running inside a terminal window. Neither half is uniform, and the assembly is
-pure — `src/main/terminal/command.ts` — with `launch.ts` doing nothing but
-spawning the result.
+"Open a shell in this container" is `docker exec -it <id> sh -c <bootstrap>
+<script>` running inside a terminal window. Neither half is uniform, and the
+assembly is pure — `src/main/terminal/command.ts` — with `launch.ts` doing
+nothing but spawning the result.
 
 **Which daemon.** boxwarden connects to _every_ engine that answers, and the
 engine selection above narrows what it lists without reaching the CLI. So the
 endpoint the container was last seen on becomes `-H unix://…` (or `--url` for
 podman). Without it, `docker exec` on a machine with two engines reports "no
 such container" for one that is plainly on screen. A socket inside a WSL distro
-cannot be opened from Windows at all, so that arm runs `wsl.exe -d <distro> --`
-and names the CLI bare, on the Linux side.
+cannot be opened from Windows at all, so that arm runs
+`wsl.exe -d <distro> --exec` and names the CLI bare, on the Linux side —
+`--exec` and not `--`, for the reason in "The argv rule" below.
+
+**The argv rule.** An argv array is only inert if every layer between here and
+the container passes it along unchanged. On Linux and macOS that holds. On
+Windows two layers rewrite it:
+
+- **Windows Terminal** does not forward an argv. `wt new-tab a b c` JOINS the
+  remaining arguments back into one command line, wrapping an argument in double
+  quotes if it contains a space and doing nothing about the double quotes
+  already inside it — so an argument holding `exec "${BASH:-sh}"` closes wt's
+  quoting early and the rest is re-split by CreateProcess. `;` is separately
+  wt's own subcommand separator.
+- **`wsl.exe`** hands a command line to the distro's DEFAULT SHELL unless
+  `--exec` is given, so the payload was parsed by bash on the Linux side before
+  `docker` ever saw it.
+
+So: **no element of the launch argv may contain a double quote, a newline or a
+semicolon.** Spaces are fine — every layer handles those. The rule is kept by
+ENCODING the script (base64, `encodeShellScript`) rather than by escaping it,
+because escaping means modelling three parsers correctly and encoding means
+modelling none. The bootstrap decodes it into a file inside the container and
+runs `bash -l` on that; the script's first line removes the file again.
+
+This is the second attempt at the same bug. The first — passing the script as
+`$0` and re-execing `bash -lc "$0"` — was correct and never arrived, because
+the BOOTSTRAP contained the double quotes, so it was the bootstrap that came
+out mangled and `sh` ran the profile after all. The symptom was identical both
+times: a terminal opened at `/` instead of the workspace, showing raw prompt
+escape sequences. A property test now asserts the rule over the whole argv, on
+every transport, with a hostile startup command in it.
 
 **Which terminal, and how it wants to be told.** `terminal/targets.ts` is a
 table of twelve emulators with three invocation styles:
@@ -516,9 +546,9 @@ here, because it comes from a container label rather than from the user.
 **The startup command.** A per-container command, run inside the container
 before the interactive shell each time a terminal opens. It is deliberately
 shell code — that is the feature — and it is deliberately shell code on the
-_container's_ side of the boundary: it travels as a single argv element the
-whole way, and where an emulator forces it into a string, the quoting above is
-what keeps it inert on the host. It is not backgrounded, so a dev server holds
+_container's_ side of the boundary: it travels encoded, as a single argv
+element, the whole way, and where an emulator forces it into a string, the
+quoting above is what keeps it inert on the host. It is not backgrounded, so a dev server holds
 the window and shows its output, and interrupting it lands in a shell rather
 than closing the terminal.
 
