@@ -189,12 +189,12 @@ describe('ContainerCard', () => {
       const badge = dom.querySelector('.badge-editor');
       expect(badge?.querySelectorAll('svg.editor-glyph')).toHaveLength(2);
       expect(badge?.textContent).not.toContain('⧉');
-      // Titled, so the shape has a name for anyone hovering it or reading it
-      // through the accessibility tree.
-      expect([...(badge?.querySelectorAll('title') ?? [])].map((t) => t.textContent)).toEqual([
-        'VS Code',
-        'Cursor',
-      ]);
+      // No <title> on any of them: an SVG title is a TOOLTIP and would win over
+      // the badge's own inside the shape's box, so hovering the mark would
+      // replace the explanation with a bare product name. The names live in
+      // `aria-label` and `title` on the badge, asserted just below.
+      expect(badge?.querySelectorAll('title')).toHaveLength(0);
+      expect(badge?.getAttribute('aria-label')).toBe('VS Code, Cursor attached');
     });
 
     /** Nothing is lost to a reader who cannot see the shape. */
@@ -470,18 +470,50 @@ describe('ContainerCard', () => {
     });
 
     /**
-     * Rows layout is one line per container, so the badge shortens to a bare
-     * count — the same trade the image row and the primary button make. The
-     * full text stays reachable through `title`, and the accessible name stays
-     * the long one so a screen reader is not left with "2".
+     * Rows layout is one line per container, so the word goes and the mark
+     * stays — the same trade the image row and the primary button make. One
+     * session leaves NO text at all: the mark already means "a session is
+     * running", and a `1` beside it is the same fact twice. The full text
+     * stays reachable through `title`, and the accessible name stays the long
+     * one so a screen reader is not left with a bare shape.
      */
-    it('shortens under dense but keeps the full text in title', () => {
-      renderCard(devContainer(), { dense: true, claude: oneSession });
+    it('shortens under dense to the mark alone, keeping the full text in title', () => {
+      const { dom } = renderCard(devContainer(), { dense: true, claude: oneSession });
 
       const badge = screen.getByLabelText('Claude');
-      expect(badge.textContent).toBe('1');
+      expect(badge.textContent).toBe('');
+      expect(dom.querySelector('.badge-claude svg')).not.toBeNull();
       expect(badge.getAttribute('title')).toContain('A Claude Code session is running');
       expect(badge.getAttribute('title')).toContain('pid 412');
+    });
+
+    it('keeps the count beside the mark when there is more than one', () => {
+      renderCard(devContainer(), {
+        dense: true,
+        claude: {
+          kind: 'running',
+          sessions: [
+            { pid: 412, command: 'claude', elapsed: '1h12m33.0s' },
+            { pid: 907, command: 'claude', elapsed: '4m8.0s' },
+          ],
+        },
+      });
+      expect(screen.getByLabelText('Claude ×2').textContent).toBe('×2');
+    });
+
+    /**
+     * The mark is drawn in EVERY layout, unlike the editor marks beside it —
+     * there is only one product here, so the shape is not distinguishing
+     * between several, it is the fastest way to recognise the badge. The WORD
+     * stays wherever it fits, because this badge guards a destructive click
+     * and a bare asterisk means nothing to somebody seeing it for the first
+     * time.
+     */
+    it('draws the mark alongside the word where there is room', () => {
+      const { dom } = renderCard(devContainer(), { claude: oneSession });
+      const badge = dom.querySelector('.badge-claude');
+      expect(badge?.querySelector('svg')).not.toBeNull();
+      expect(badge?.textContent).toBe('Claude');
     });
 
     /**

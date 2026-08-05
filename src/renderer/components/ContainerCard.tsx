@@ -20,6 +20,7 @@ import {
   terminalBlockedReason,
   visiblePorts,
 } from '../presenters.js';
+import { ClaudeGlyph } from './ClaudeGlyph.js';
 import { EditorGlyph } from './EditorGlyph.js';
 import { StartupCommandField } from './StartupCommandField.js';
 import { StatusDot } from './StatusDot.js';
@@ -167,9 +168,7 @@ export function ContainerCard({
                   editor. `aria-label` above carries the names regardless, so
                   nothing is lost to a reader who cannot see the shape. */}
               {dense && attached.editors.length > 0
-                ? attached.editors.map((mark) => (
-                    <EditorGlyph key={mark.flavour} flavour={mark.flavour} name={mark.name} />
-                  ))
+                ? attached.editors.map((flavour) => <EditorGlyph key={flavour} flavour={flavour} />)
                 : dense
                   ? attached.denseLabel
                   : attached.label}
@@ -181,6 +180,19 @@ export function ContainerCard({
               title={badge.title}
               aria-label={badge.label}
             >
+              {/* The mark in BOTH layouts, unlike the editor badge beside it,
+                  which only draws one when it has no room for a name. There is
+                  only ever one product here, so the shape is not being asked
+                  to distinguish between several — it is the fastest way to
+                  recognise the badge, which is worth its width even where
+                  there is room for text.
+
+                  The WORD stays wherever it fits, though, and the redundancy
+                  is deliberate: this badge guards a destructive click, and a
+                  bare orange asterisk means nothing to somebody who has not
+                  seen it before. Only the rows layout, which has no room for
+                  it, falls back to the mark plus a count. */}
+              <ClaudeGlyph />
               {dense ? badge.denseLabel : badge.label}
             </span>
           )}

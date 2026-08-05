@@ -72,16 +72,18 @@ const MARKS: Readonly<Record<EditorFlavour, IconType>> = {
 
 interface Props {
   readonly flavour: EditorFlavour;
-  /**
-   * The editor's display name, for the `<title>`.
-   *
-   * A prop and not a lookup, because a View may not call into the Model — see
-   * `EditorMark` in `presenters.ts`, which is where it comes from.
-   */
-  readonly name: string;
 }
 
-export function EditorGlyph({ flavour, name }: Props) {
+/*
+ * There is deliberately no `<title>` on these, and no name prop to build one
+ * from. An SVG `<title>` is a TOOLTIP that wins over the ancestor's `title`
+ * attribute inside the shape's own box, so hovering a mark would have replaced
+ * the badge's explanation with a bare product name — and the marks are the
+ * most hoverable thing in the badge. Nothing is lost: they are `aria-hidden`,
+ * and the badge carries an `aria-label` naming every editor attached.
+ */
+
+export function EditorGlyph({ flavour }: Props) {
   const Mark = MARKS[flavour];
 
   return (
@@ -90,10 +92,6 @@ export function EditorGlyph({ flavour, name }: Props) {
       // this flavour. Both are in styles.css, per the note above.
       className={`editor-glyph editor-glyph-${flavour}`}
       size={13}
-      // Renders a <title>, so the shape has a name in the accessibility tree
-      // and on hover. The badge around it is labelled too — this is the inner
-      // half, for the case where two marks sit in one badge.
-      title={name}
       aria-hidden="true"
     />
   );

@@ -295,7 +295,9 @@ describe('claudeBadge', () => {
       ],
     });
     expect(badge?.label).toBe('Claude ×2');
-    expect(badge?.denseLabel).toBe('2');
+    // The card draws the Claude mark beside this, so the label is only what
+    // the mark cannot say: how many.
+    expect(badge?.denseLabel).toBe('×2');
     expect(badge?.title).toContain('pid 412');
     expect(badge?.title).toContain('pid 907');
     expect(badge?.title).toContain('Stopping the container ends them.');
@@ -440,10 +442,10 @@ describe('editorBadge', () => {
    */
   it('carries every attached flavour, and its name, for the rows layout', () => {
     const badge = editorBadge({ kind: 'attached', editors: ['vscode', 'cursor'] });
-    expect(badge?.editors).toEqual([
-      { flavour: 'vscode', name: 'VS Code' },
-      { flavour: 'cursor', name: 'Cursor' },
-    ]);
+    expect(badge?.editors).toEqual(['vscode', 'cursor']);
+    // The names stay in the text the badge renders and announces — the marks
+    // carry no <title> of their own, see EditorGlyph.
+    expect(badge?.label).toBe('VS Code, Cursor');
   });
 
   /**

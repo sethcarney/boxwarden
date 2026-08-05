@@ -411,7 +411,18 @@ export function branchChip(status: GitStatus | undefined): BranchChip | undefine
  */
 export interface ClaudeBadge {
   readonly label: string;
-  /** Even shorter, for the rows layout — a count with no word in front of it. */
+  /**
+   * What sits beside the mark — the count, and only when it is worth stating.
+   *
+   * The card draws the Claude mark in both layouts, so the word "Claude" is
+   * carried by the shape and this is what the shape cannot say. One session is
+   * therefore the EMPTY string: the mark already means "a session is running",
+   * and a `1` next to it is the same fact twice.
+   *
+   * `?` is the one case where this is not a count, and it has to render — a
+   * card with no badge is a card saying stopping is safe, and "we could not
+   * tell" must not borrow that meaning.
+   */
   readonly denseLabel: string;
   readonly title: string;
   readonly tone: 'running' | 'unknown';
@@ -437,7 +448,7 @@ export function claudeBadge(status: ClaudeStatus | undefined): ClaudeBadge | und
       const count = status.sessions.length;
       return {
         label: count === 1 ? 'Claude' : `Claude ×${String(count)}`,
-        denseLabel: count === 1 ? '1' : String(count),
+        denseLabel: count === 1 ? '' : `×${String(count)}`,
         title: [
           count === 1
             ? 'A Claude Code session is running in this container.'
@@ -527,12 +538,6 @@ export function stopWarning(
  * shows, because this decorates a destructive button and "we could not tell"
  * must not look like "nothing is attached".
  */
-/** One attached editor: what to draw, and what to call it. */
-export interface EditorMark {
-  readonly flavour: EditorFlavour;
-  readonly name: string;
-}
-
 export interface EditorBadge {
   readonly label: string;
   readonly denseLabel: string;
@@ -543,13 +548,12 @@ export interface EditorBadge {
    * and where `denseLabel` is a question mark for the reason that arm exists at
    * all.
    *
-   * The NAME travels with the flavour rather than being looked up where the
-   * mark is drawn, and that is the layering rule rather than a convenience: a
-   * View may not call into the Model, so `editorDisplayName` is resolved here.
-   * The division is the usual one — which shape represents Cursor is a
-   * rendering decision, which containers have Cursor attached is this one.
+   * Flavours and not names, because the marks carry no `<title>`: an SVG title
+   * is a tooltip that would win over the badge's own inside the shape's box.
+   * The names are already in `label` and `title`, which is where a reader who
+   * cannot see a shape finds them.
    */
-  readonly editors: readonly EditorMark[];
+  readonly editors: readonly EditorFlavour[];
   readonly title: string;
   readonly tone: 'attached' | 'unknown';
 }
@@ -579,10 +583,7 @@ export function editorBadge(attachment: EditorAttachment | undefined): EditorBad
         // a generic pair of windows that says an editor is attached and cannot
         // say WHICH, on a card whose whole job is telling containers apart.
         denseLabel: names,
-        editors: attachment.editors.map((flavour) => ({
-          flavour,
-          name: editorDisplayName(flavour),
-        })),
+        editors: attachment.editors,
         title: [
           `${names} ${attachment.editors.length === 1 ? 'is' : 'are'} attached to this container.`,
           'Detected from the editor server running inside it, which outlives the window by a few minutes — so this can linger briefly after you close one.',

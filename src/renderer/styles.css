@@ -481,6 +481,23 @@ button.link {
   padding-inline: 4px;
 }
 
+/*
+ * The Claude badge always carries its mark, in every layout — see the note in
+ * ContainerCard. So it is a flex row here rather than only in rows mode, and
+ * the gap collapses to nothing when the label is empty (one session, where the
+ * mark already says everything a `1` would).
+ */
+.badge-claude {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.badge-claude .editor-glyph {
+  display: block;
+  flex: none;
+}
+
 /* A Stop that would end a live session. Annotated, not disabled — only the
    border changes, because the click is still allowed. */
 button.warn {
