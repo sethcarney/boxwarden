@@ -559,11 +559,29 @@ describe('ContainerCard', () => {
     });
 
     it('abbreviates a detached HEAD and keeps the whole id in the title', () => {
-      renderCard(devContainer(), {
+      const { dom } = renderCard(devContainer(), {
         git: { kind: 'detached', commit: '4f2c1ab9d3e5f70123456789abcdef0123456789' },
       });
-      const chip = screen.getByText('4f2c1ab');
-      expect(chip.getAttribute('title')).toContain('4f2c1ab9d3e5f70123456789abcdef0123456789');
+      // The title is on the CHIP, not on the name inside it — the name is its
+      // own element only so it has something to ellipsise.
+      expect(screen.getByText('4f2c1ab').className).toBe('branch-chip-name');
+      expect(dom.querySelector('.branch-chip')?.getAttribute('title')).toContain(
+        '4f2c1ab9d3e5f70123456789abcdef0123456789',
+      );
+    });
+
+    /**
+     * The name is wrapped rather than left as a bare text node, and that is not
+     * cosmetic: `text-overflow` has nothing to act on inside a flex container,
+     * so an unwrapped name is CLIPPED to nothing as the chip narrows — leaving
+     * a lone `⎇` that reads as a rendering fault rather than as a truncation.
+     */
+    it('wraps the name in its own element so it can ellipsise', () => {
+      const { dom } = renderCard(devContainer(), {
+        git: { kind: 'branch', branch: 'claude/windows-terminal-devcontainer-niu6gp' },
+      });
+      const name = dom.querySelector('.branch-chip .branch-chip-name');
+      expect(name?.textContent).toBe('claude/windows-terminal-devcontainer-niu6gp');
     });
 
     /**

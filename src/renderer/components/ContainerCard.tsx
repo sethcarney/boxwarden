@@ -138,7 +138,11 @@ export function ContainerCard({
               <span className="branch-chip-icon" aria-hidden="true">
                 ⎇
               </span>
-              {branch.text}
+              {/* Wrapped rather than left as a bare text node: `text-overflow`
+                  has nothing to act on inside a flex container, so an
+                  unwrapped name is CLIPPED to nothing on a narrow window
+                  instead of ellipsised to `clau…`. */}
+              <span className="branch-chip-name">{branch.text}</span>
             </span>
           )}
           {/* Nothing at all for `absent` — see the note on sshAgentBadge. */}
