@@ -47,11 +47,12 @@
   --claude: #e0a184;
   --claude-border: rgba(203, 123, 93, 0.5);
   --claude-bg: rgba(203, 123, 93, 0.14);
-  /* The attached-editor marks. Variables and not literals in the component,
-     for the reason every other colour here is: a brand blue picked against
-     the dark surface is the one that disappears on the light one. Only the
-     two VS Code flavours get a colour at all — the lettermarks take
-     `currentColor`, which is already the badge's per-theme dim text. */
+  /* The attached-editor marks. Here and not in EditorGlyph.tsx, for the reason
+     every other colour here is: a brand blue picked against the dark surface
+     is the one that disappears on the light one. Only the two VS Code
+     flavours get a colour of their own — Cursor's and Windsurf's marks are
+     near-black by brand, which is unreadable on this surface, so they take
+     the badge's own per-theme text colour instead. */
   --editor-vscode: #3c99d4;
   --editor-insiders: #3fae5a;
   color-scheme: dark;
@@ -454,10 +455,22 @@ button.link {
  * rather than on the inline box's, which is what leaves an icon looking a
  * pixel high in a badge. Two attached editors are two marks, so the badge
  * becomes a small flex row of them.
+ *
+ * The marks are monochrome and inherit `currentColor`, so the tint is `color`
+ * on the glyph rather than a fill baked into the component — which is what
+ * lets the light palette darken the brand blue in one place.
  */
 .badge-editor .editor-glyph {
   display: block;
   flex: none;
+}
+
+.editor-glyph-vscode {
+  color: var(--editor-vscode);
+}
+
+.editor-glyph-vscode-insiders {
+  color: var(--editor-insiders);
 }
 
 .list[data-layout='rows'] .badge-editor {

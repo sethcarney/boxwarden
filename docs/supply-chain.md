@@ -239,6 +239,41 @@ log; closing it needs a certificate, and
 [docs/roadmap.md](roadmap.md#6-packaging--signing-notarisation-updates) tracks
 that.
 
+## Third-party assets that ship in the app
+
+Everything else in this document is about code. This section is about the two
+sets of icons drawn in the renderer, because one of them carries a licence
+obligation rather than only a courtesy.
+
+Both arrive through `react-icons` (MIT), are inlined into the renderer bundle
+by Vite, and are drawn by `src/renderer/components/EditorGlyph.tsx`.
+
+| Mark                                          | Set                                                              | Licence                                                                              |
+| --------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| VS Code, VS Code Insiders, the generic window | [VS Code codicons](https://github.com/microsoft/vscode-codicons) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) — **attribution required** |
+| Cursor, Windsurf                              | [Simple Icons](https://simpleicons.org/)                         | [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/)                        |
+
+The codicons row is the one that obliges anything: CC BY 4.0 requires
+attribution wherever the work is redistributed, and boxwarden redistributes
+these inside every installer. This table is that attribution. Adding another
+editor to `EditorGlyph.tsx` means adding its set here — the same closed-set
+discipline as `ALLOWED_EXTERNAL_ORIGINS` in `advice.ts`, and with the same
+failure mode if it is forgotten: nothing breaks, and the obligation is
+silently unmet.
+
+The logos remain their owners' trademarks. They are used to identify those
+products, which is what a mark is for; boxwarden claims no affiliation with
+and no endorsement from any of them.
+
+**`react-icons` is a devDependency, and that is load-bearing.** electron-builder
+copies every PRODUCTION dependency from `node_modules` into `app.asar`
+verbatim, whether or not anything resolves it at runtime — and nothing does
+here, because Vite inlined the four icons at build time. Left in
+`dependencies`, 85 MB of package would ship in every installer to deliver four
+path strings that were already in the bundle. Confirmed by listing the asar
+before and after; `bun run package` then `bunx asar list
+release/linux-unpacked/resources/app.asar` is the check.
+
 ## What this repo cannot score, and why that is fine
 
 | Check                  | Expected | Why                                                                                                                                                                                                                         |

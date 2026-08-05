@@ -1,3 +1,6 @@
+import { SiCursor, SiWindsurf } from 'react-icons/si';
+import { VscVscode, VscVscodeInsiders, VscWindow } from 'react-icons/vsc';
+import type { IconType } from 'react-icons';
 import type { EditorFlavour } from '../../models/index.js';
 
 /**
@@ -12,36 +15,60 @@ import type { EditorFlavour } from '../../models/index.js';
  * another. A user running VS Code on one workspace and Cursor on the next got
  * the same mark on both rows.
  *
- * ## Why inline SVG and not an asset
+ * ## Where the marks come from
  *
- * The renderer runs under a strict CSP with no remote origins, and the build
- * has no image pipeline configured (`assets.d.ts` declares only `*.css`, on
- * purpose). A `<path>` in a component needs neither, costs no request, and
- * inherits `currentColor` — which matters because the badge is themed and a
- * fixed-colour PNG would be invisible on one of the two palettes.
+ * `react-icons`, which carries each product's OWN mark — including a distinct
+ * one for Insiders, which is a better answer than recolouring the stable
+ * ribbon, because that is how the two are actually told apart in a dock.
+ * Drawing approximations by hand was the alternative and it is a bad one: an
+ * almost-right logo reads as a rendering bug.
  *
- * ## The two shapes
+ * It is a **devDependency**, deliberately, and that is not a filing error.
+ * Vite inlines these four icons into the renderer bundle at build time, so
+ * nothing resolves `react-icons` at runtime — while electron-builder copies
+ * every PRODUCTION dependency into `app.asar` verbatim. Left in
+ * `dependencies`, all 85 MB of the package would ship inside every installer
+ * to deliver four path strings Vite had already inlined. Verified by listing
+ * the asar. See `docs/supply-chain.md`.
  *
- * `vscode` and `vscode-insiders` share the VS Code ribbon mark, which is the
- * thing a user recognises without reading. They are told apart by colour, the
- * way the products are: Insiders ships the same mark in green.
+ * The cost that remains is 8 kB of renderer bundle, which is the icons plus
+ * `react-icons`' tiny element-builder, and about two seconds of build time
+ * spent tree-shaking its per-set index files.
  *
- * Cursor and Windsurf get a LETTERMARK rather than a guess at their logos.
- * Drawing an approximation of somebody's brand is worse than not drawing it —
- * an almost-right logo reads as a rendering bug — and a letter in a rounded
- * square is unambiguous about being boxwarden's own shorthand. If either
- * product's mark is ever added, it belongs here beside the other, not in the
- * badge.
+ * ## Attribution — required, not courtesy
  *
- * Every arm carries a `<title>`, so the icon has an accessible name even
- * though the badge around it also has one.
+ * The VS Code marks are **codicons, under CC BY 4.0**, which obliges
+ * attribution wherever they are redistributed; the Cursor and Windsurf marks
+ * are Simple Icons, under CC0, which does not. Both notices live in
+ * `docs/supply-chain.md` alongside the rest of what this app ships. The logos
+ * themselves remain their owners' trademarks and are used here to identify
+ * those products, which is what a mark is for; boxwarden claims no
+ * affiliation.
  *
- * NOTE ON THE MARK: the VS Code logo is Microsoft's trademark. It is used here
- * to identify Microsoft's product, which is what the mark is for — the same
- * reason a file manager shows an application's icon next to its files — and
- * boxwarden claims no affiliation. If that is ever unwelcome, this is the one
- * file to change: the badge takes a flavour and does not care what is drawn.
+ * ## Why the colours are not here
+ *
+ * Every icon is monochrome and inherits `currentColor`, so the tint is a CSS
+ * rule on the class rather than a prop. That is the stylesheet's standing rule
+ * — a colour picked against the dark surface is the one that vanishes on the
+ * light one — and keeping it out of this file means the light palette can
+ * darken the brand blue without a second table to keep in step.
  */
+
+/**
+ * Flavour to mark. A table, the same shape as `editor/targets.ts` and
+ * `terminal/targets.ts`: adding a fork should be a row, not a branch.
+ *
+ * `unknown` is a server recognised as an editor's without being recognised as
+ * anyone's. A plain window says "something is attached" without claiming a
+ * product, which is the only honest thing to draw for it.
+ */
+const MARKS: Readonly<Record<EditorFlavour, IconType>> = {
+  vscode: VscVscode,
+  'vscode-insiders': VscVscodeInsiders,
+  cursor: SiCursor,
+  windsurf: SiWindsurf,
+  unknown: VscWindow,
+};
 
 interface Props {
   readonly flavour: EditorFlavour;
@@ -54,107 +81,20 @@ interface Props {
   readonly name: string;
 }
 
-/**
- * Brand colour per flavour, as a CSS VARIABLE and never a literal.
- *
- * The rule the stylesheet already keeps: a colour chosen against the dark
- * surface is the one that vanishes on the light one. The two VS Code flavours
- * are the only marks with a colour of their own — Insiders ships the same
- * shape in green, which is how its users already tell their two installs apart
- * in a dock — and both are darkened for the light palette in styles.css.
- *
- * Everything else takes `currentColor`, i.e. the badge's own per-theme dim
- * text. A lettermark does not need a brand colour to be read; it needs to be
- * legible on both palettes, which `currentColor` is by construction.
- */
-const TINT: Readonly<Record<EditorFlavour, string>> = {
-  vscode: 'var(--editor-vscode)',
-  'vscode-insiders': 'var(--editor-insiders)',
-  cursor: 'currentColor',
-  windsurf: 'currentColor',
-  unknown: 'currentColor',
-};
-
 export function EditorGlyph({ flavour, name }: Props) {
-  const fill = TINT[flavour];
+  const Mark = MARKS[flavour];
 
-  if (flavour === 'vscode' || flavour === 'vscode-insiders') {
-    return (
-      <svg
-        className="editor-glyph"
-        viewBox="0 0 24 24"
-        width="13"
-        height="13"
-        fill={fill}
-        role="img"
-        aria-hidden="true"
-      >
-        <title>{name}</title>
-        <path d="M23.15 2.587 18.21.21a1.494 1.494 0 0 0-1.705.29l-9.46 8.63-4.12-3.128a.999.999 0 0 0-1.276.057L.327 7.261A1 1 0 0 0 .326 8.74L3.899 12 .326 15.26a1 1 0 0 0 .001 1.479L1.65 17.94a.999.999 0 0 0 1.276.057l4.12-3.128 9.46 8.63a1.492 1.492 0 0 0 1.704.29l4.942-2.377A1.5 1.5 0 0 0 24 20.06V3.939a1.5 1.5 0 0 0-.85-1.352zm-5.146 14.861L10.826 12l7.178-5.448v10.896z" />
-      </svg>
-    );
-  }
-
-  if (flavour === 'cursor' || flavour === 'windsurf') {
-    return (
-      <svg
-        className="editor-glyph"
-        viewBox="0 0 24 24"
-        width="13"
-        height="13"
-        role="img"
-        aria-hidden="true"
-      >
-        <title>{name}</title>
-        <rect x="1" y="1" width="22" height="22" rx="5" fill={fill} opacity="0.22" />
-        <rect
-          x="1"
-          y="1"
-          width="22"
-          height="22"
-          rx="5"
-          fill="none"
-          stroke={fill}
-          strokeWidth="1.6"
-        />
-        <text
-          x="12"
-          y="17"
-          textAnchor="middle"
-          fontSize="13"
-          fontWeight="700"
-          fill={fill}
-          fontFamily="inherit"
-        >
-          {flavour === 'cursor' ? 'C' : 'W'}
-        </text>
-      </svg>
-    );
-  }
-
-  // An editor server we recognised as one without recognising which. A window
-  // outline says "something is attached" without claiming a product.
   return (
-    <svg
-      className="editor-glyph"
-      viewBox="0 0 24 24"
-      width="13"
-      height="13"
-      role="img"
+    <Mark
+      // Two classes: one sizes and aligns every mark, one carries the tint for
+      // this flavour. Both are in styles.css, per the note above.
+      className={`editor-glyph editor-glyph-${flavour}`}
+      size={13}
+      // Renders a <title>, so the shape has a name in the accessibility tree
+      // and on hover. The badge around it is labelled too — this is the inner
+      // half, for the case where two marks sit in one badge.
+      title={name}
       aria-hidden="true"
-    >
-      <title>{name}</title>
-      <rect
-        x="2"
-        y="4"
-        width="20"
-        height="16"
-        rx="2.5"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.8"
-      />
-      <path d="M2 9h20" stroke="currentColor" strokeWidth="1.8" />
-    </svg>
+    />
   );
 }

@@ -522,15 +522,29 @@ would double the poll's Docker traffic to learn nothing extra.
   the lesson `looksLikeClaudeCode` learned. Insiders is listed before stable
   because `.vscode-server-insiders` has `.vscode-server` as a prefix.
 - **The rows layout draws each editor's own mark** (`EditorGlyph.tsx`), not a
-  generic one. It was `⧉` — the same two-window glyph whatever was attached,
-  on a list whose entire job is telling containers apart. Inline SVG because
-  the renderer has a strict CSP and no image pipeline (`assets.d.ts` declares
-  only `*.css`, deliberately), and the colours are CSS variables for the reason
-  every colour here is: one picked against the dark surface is the one that
-  vanishes on the light one. Cursor and Windsurf get a LETTERMARK rather than
-  an approximation of their logos — an almost-right logo reads as a rendering
-  bug. The presenter supplies `{ flavour, name }` pairs because a View may not
-  call `editorDisplayName`; the lint rule enforces that.
+  generic one. It was `⧉` — the same two-window glyph whatever was attached, on
+  a list whose entire job is telling containers apart. The marks come from
+  `react-icons`, which carries each product's real logo including a distinct
+  one for Insiders; the table is flavour → component, the same shape as
+  `editor/targets.ts`. Three rules hold it together:
+  - **`react-icons` is a devDependency, and that is not a filing error.** Vite
+    inlines the icons at build time, while electron-builder copies every
+    PRODUCTION dependency into `app.asar` verbatim — so in `dependencies` it
+    would ship 85 MB inside every installer to deliver four path strings that
+    were already in the bundle. `bunx asar list release/linux-unpacked/resources/app.asar`
+    is how that was confirmed, and how to confirm it again.
+  - **The codicons are CC BY 4.0, so attribution is required**, not courteous.
+    It lives in `docs/supply-chain.md`, which is the closed set to update when
+    an editor is added — same failure mode as `ALLOWED_EXTERNAL_ORIGINS`:
+    nothing breaks, and the obligation is silently unmet.
+  - **Colours stay in `styles.css`**, on a class per flavour, for the reason
+    every colour here is: one picked against the dark surface is the one that
+    vanishes on the light one. Cursor and Windsurf are near-black by brand and
+    so take the badge's own per-theme text colour instead.
+
+  The presenter supplies `{ flavour, name }` pairs because a View may not call
+  `editorDisplayName`; the lint rule enforces that.
+
 - **boxwarden cannot close the window, and does not try.** The `code` CLI can
   open windows and install extensions; it cannot enumerate or close them, and
   killing the host process would take unsaved buffers with it. So Stop is
