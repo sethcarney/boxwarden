@@ -4,6 +4,7 @@ import { devContainer } from './test-fixtures.js';
 import {
   branchChip,
   claudeBadge,
+  editorActions,
   editorBadge,
   stopWarning,
   containerCountLabel,
@@ -294,7 +295,9 @@ describe('claudeBadge', () => {
       ],
     });
     expect(badge?.label).toBe('Claude ×2');
-    expect(badge?.denseLabel).toBe('2');
+    // The card draws the Claude mark beside this, so the label is only what
+    // the mark cannot say: how many.
+    expect(badge?.denseLabel).toBe('×2');
     expect(badge?.title).toContain('pid 412');
     expect(badge?.title).toContain('pid 907');
     expect(badge?.title).toContain('Stopping the container ends them.');
@@ -431,10 +434,112 @@ describe('editorBadge', () => {
     expect(editorBadge({ kind: 'unknown', reason: 'x' })?.tone).toBe('unknown');
   });
 
+  /**
+   * The rows layout draws a mark per attached editor, so the badge has to carry
+   * WHICH editors rather than a count. `⧉` used to stand in for all of them,
+   * which on a card whose job is telling containers apart said only "an editor,
+   * some editor".
+   */
+  it('carries every attached flavour, and its name, for the rows layout', () => {
+    const badge = editorBadge({ kind: 'attached', editors: ['vscode', 'cursor'] });
+    expect(badge?.editors).toEqual(['vscode', 'cursor']);
+    // The names stay in the text the badge renders and announces — the marks
+    // carry no <title> of their own, see EditorGlyph.
+    expect(badge?.label).toBe('VS Code, Cursor');
+  });
+
+  /**
+   * `unknown` means the process table could not be read — not "an editor we did
+   * not recognise". There is no flavour to draw, and the question mark stays.
+   */
+  it('has no flavour to draw when it could not tell', () => {
+    const badge = editorBadge({ kind: 'unknown', reason: 'top failed' });
+    expect(badge?.editors).toEqual([]);
+    expect(badge?.denseLabel).toBe('?');
+  });
+
   it('renders nothing for a container with no editor, or one not yet polled', () => {
     expect(editorBadge({ kind: 'none' })).toBeUndefined();
     expect(editorBadge({ kind: 'not-applicable' })).toBeUndefined();
     expect(editorBadge(undefined)).toBeUndefined();
+  });
+});
+
+describe('editorActions', () => {
+  /**
+   * The second button appears only once there is a window to distinguish it
+   * from. Before that, "Open" and "New window" would do the same thing under
+   * two names — and a button that changes meaning without changing appearance
+   * is worse than one that arrives when it starts to matter.
+   */
+  it('offers one action until an editor is attached', () => {
+    for (const attachment of [
+      undefined,
+      { kind: 'none' } as const,
+      { kind: 'not-applicable' } as const,
+      { kind: 'unknown', reason: 'top failed' } as const,
+    ]) {
+      const actions = editorActions(attachment, 'VS Code', undefined, false);
+      expect(actions.open.label).toBe('Open in VS Code');
+      expect(actions.newWindow).toBeUndefined();
+    }
+  });
+
+  it('splits into focus and new window once one is', () => {
+    const actions = editorActions(
+      { kind: 'attached', editors: ['vscode'] },
+      'VS Code',
+      undefined,
+      false,
+    );
+
+    expect(actions.open.label).toBe('Focus VS Code');
+    expect(actions.newWindow?.label).toBe('New window');
+    // The primary action must say it opens NOTHING — the whole reason it is
+    // worth a separate button from the one beside it.
+    expect(actions.open.title).toContain('Nothing new is opened');
+    expect(actions.newWindow?.title).toContain('SECOND');
+  });
+
+  it('names the attached editor, which need not be the chosen one', () => {
+    // The badge reports what is running in the container; the button spawns
+    // the editor the user picked in the header. A Cursor server left running
+    // in a container is exactly when saying "the Cursor window" matters.
+    const actions = editorActions(
+      { kind: 'attached', editors: ['cursor'] },
+      'VS Code',
+      undefined,
+      false,
+    );
+    expect(actions.open.title).toContain('Cursor');
+    expect(actions.newWindow?.title).toContain('VS Code');
+  });
+
+  it('shortens both for the rows layout, keeping the full text in the title', () => {
+    const actions = editorActions(
+      { kind: 'attached', editors: ['vscode'] },
+      'VS Code',
+      undefined,
+      true,
+    );
+    expect(actions.open.label).toBe('Focus');
+    expect(actions.newWindow?.label).toBe('+');
+    expect(actions.newWindow?.title).toContain('VS Code');
+  });
+
+  /**
+   * A container with no workspace folder has nothing to open in any number of
+   * windows, so the reason wins over both tooltips rather than only the first.
+   */
+  it('lets the blocked reason speak for both buttons', () => {
+    const actions = editorActions(
+      { kind: 'attached', editors: ['vscode'] },
+      'VS Code',
+      'This container does not record which folder to open.',
+      false,
+    );
+    expect(actions.open.title).toBe('This container does not record which folder to open.');
+    expect(actions.newWindow?.title).toBe('This container does not record which folder to open.');
   });
 });
 

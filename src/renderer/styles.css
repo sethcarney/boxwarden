@@ -47,6 +47,14 @@
   --claude: #e0a184;
   --claude-border: rgba(203, 123, 93, 0.5);
   --claude-bg: rgba(203, 123, 93, 0.14);
+  /* The attached-editor marks. Here and not in EditorGlyph.tsx, for the reason
+     every other colour here is: a brand blue picked against the dark surface
+     is the one that disappears on the light one. Only the two VS Code
+     flavours get a colour of their own — Cursor's and Windsurf's marks are
+     near-black by brand, which is unreadable on this surface, so they take
+     the badge's own per-theme text colour instead. */
+  --editor-vscode: #3c99d4;
+  --editor-insiders: #3fae5a;
   color-scheme: dark;
 }
 
@@ -71,6 +79,11 @@
   --claude: #a04a1e;
   --claude-border: rgba(160, 74, 30, 0.45);
   --claude-bg: rgba(160, 74, 30, 0.1);
+  /* Darkened rather than re-hued: still recognisably VS Code blue and VS Code
+     Insiders green, with enough contrast against white to be a shape rather
+     than a smudge. */
+  --editor-vscode: #1f74b0;
+  --editor-insiders: #1d7f3c;
   color-scheme: light;
 }
 
@@ -327,6 +340,11 @@ button.link {
   display: flex;
   align-items: center;
   gap: 8px;
+  /* Grows into the space the right-hand badges do not use, so the branch chip
+     beside the name is bounded by the WINDOW rather than by a number in this
+     file. `min-width: 0` is what lets the two children below ellipsise at all —
+     a flex item's floor is its content width until you say otherwise. */
+  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -337,6 +355,14 @@ button.link {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  /* Shrinks half as readily as the branch chip beside it: the name is what
+     identifies the card, so the chip gives up room first. No floor here, and
+     that is deliberate — two floors that cannot both be honoured is how the
+     row ends up CLIPPED rather than ellipsised, which looks like a bug where
+     an ellipsis looks like a choice. The chip's own floor is the one that
+     binds, and once it is reached the remainder falls here. */
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
 .card-head-right {
@@ -364,13 +390,30 @@ button.link {
  * `feature/some-long-description` truncates, and the whole thing stays in the
  * `title`.
  */
+/*
+ * Bounded by the room on the line, not by a fixed width.
+ *
+ * This used to carry `max-width: 22ch`, which truncated `feat/some-long-thing`
+ * on a window with several inches to spare — the one situation where an
+ * ellipsis is pure loss. A branch name is a thing people compare at a glance,
+ * so cutting it short while space goes unused is the worst of both.
+ *
+ * `flex-shrink: 4` is the priority when the line genuinely does run out: the
+ * chip gives up room several times faster than the container name beside it,
+ * because the name is what identifies the card. It stops at the floor below,
+ * after which the remainder falls on the name. Both ellipsise, and both keep
+ * the full text in `title`.
+ */
 .branch-chip {
-  flex: 0 1 auto;
-  min-width: 0;
+  flex: 0 4 auto;
+  /* A floor of its own, or the chip shrinks to the icon and its `overflow:
+     hidden` clips the name away entirely — a lone `⎇` that reads as a
+     rendering fault. Roughly the icon plus five characters, which is enough to
+     tell `main` from `feat/…`. */
+  min-width: 9ch;
   display: inline-flex;
   align-items: baseline;
   gap: 4px;
-  max-width: 22ch;
   font-size: 10px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--text-dim);
@@ -386,6 +429,21 @@ button.link {
 .branch-chip-icon {
   flex: 0 0 auto;
   opacity: 0.75;
+}
+
+/*
+ * The name inside the chip, as its own element so it can ellipsise.
+ *
+ * `text-overflow` applies to a block box, not to an anonymous flex item, so
+ * while this was a bare text node the branch simply disappeared as the chip
+ * shrank. `min-width: 0` here is what lets it ellipsise INSIDE the chip; the
+ * chip's own floor above is what stops the whole thing collapsing first.
+ */
+.branch-chip-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* No branch is checked out, which is a state worth telling apart from a branch
@@ -433,6 +491,56 @@ button.link {
   border-color: var(--border);
   color: var(--text-dim);
   font-weight: 500;
+}
+
+/*
+ * The editors' own marks, in the rows layout.
+ *
+ * `display: block` inside a flex line so the SVG sits on the text baseline
+ * rather than on the inline box's, which is what leaves an icon looking a
+ * pixel high in a badge. Two attached editors are two marks, so the badge
+ * becomes a small flex row of them.
+ *
+ * The marks are monochrome and inherit `currentColor`, so the tint is `color`
+ * on the glyph rather than a fill baked into the component — which is what
+ * lets the light palette darken the brand blue in one place.
+ */
+.badge-editor .editor-glyph {
+  display: block;
+  flex: none;
+}
+
+.editor-glyph-vscode {
+  color: var(--editor-vscode);
+}
+
+.editor-glyph-vscode-insiders {
+  color: var(--editor-insiders);
+}
+
+.list[data-layout='rows'] .badge-editor {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+  /* The mark carries the meaning; the border around it is noise at this size. */
+  padding-inline: 4px;
+}
+
+/*
+ * The Claude badge always carries its mark, in every layout — see the note in
+ * ContainerCard. So it is a flex row here rather than only in rows mode, and
+ * the gap collapses to nothing when the label is empty (one session, where the
+ * mark already says everything a `1` would).
+ */
+.badge-claude {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.badge-claude .editor-glyph {
+  display: block;
+  flex: none;
 }
 
 /* A Stop that would end a live session. Annotated, not disabled — only the
@@ -603,6 +711,30 @@ button.warn:hover:not(:disabled) {
   padding-top: 12px;
 }
 
+/*
+ * "New window", beside Focus, and only when an editor is already attached.
+ *
+ * Deliberately quieter than the button it sits next to: focusing the window
+ * that exists is the common action, and opening a second one is the deliberate
+ * one. Sizing it to `.primary`'s weight would make the pair read as a choice
+ * rather than as an action and its variant.
+ */
+.card-actions .secondary-open {
+  padding-inline: 10px;
+  font-weight: 500;
+  opacity: 0.85;
+}
+
+.card-actions .secondary-open:hover:not(:disabled) {
+  opacity: 1;
+}
+
+/* Dense is a bare `+`, so it needs to stay square rather than collapse. */
+.list[data-layout='rows'] .card-actions .secondary-open {
+  min-width: 26px;
+  padding-inline: 6px;
+}
+
 /* ---------- rows layout ---------- */
 
 /*
@@ -638,12 +770,6 @@ button.warn:hover:not(:disabled) {
 .list[data-layout='rows'] .badge {
   padding: 1px 6px;
   font-size: 10px;
-}
-
-/* One line per container: the name gets the room, and the branch keeps enough
-   to be recognised. The full name is in `title` either way. */
-.list[data-layout='rows'] .branch-chip {
-  max-width: 14ch;
 }
 
 .list[data-layout='rows'] .card-meta {

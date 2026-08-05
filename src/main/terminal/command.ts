@@ -25,6 +25,42 @@ import type {
  * Terminal and iTerm2 have no command-line interface, only AppleScript — and
  * for those the quoting below is the guarantee instead, which is why it is a
  * pure function with tests rather than a template literal at the call site.
+ *
+ * ## THE ARGV RULE, and why Windows forced it
+ *
+ * An argv array is only inert if every layer between here and the container
+ * passes it along unchanged. On Linux and macOS that is true. **On Windows it
+ * is not**, and there are two layers that rewrite it:
+ *
+ *   1. **Windows Terminal.** `wt new-tab a b c` does not forward an argv. It
+ *      JOINS the remaining arguments back into one command line, wrapping an
+ *      argument in double quotes if it contains a space and doing nothing about
+ *      double quotes already inside it. An argument holding `exec "${BASH:-sh}"`
+ *      therefore closes wt's quoting early, and whatever followed is re-split
+ *      by CreateProcess as separate arguments. (microsoft/terminal#9313 is
+ *      users discovering this by trial and error.)
+ *
+ *   2. **`wsl.exe`.** Without `--exec` a command line is handed to the distro's
+ *      DEFAULT SHELL, which parses it again — so `$0`, `$(…)` and quotes in the
+ *      payload are expanded on the Linux side of the boundary before the
+ *      container ever sees them. `containerExecArgv` passes `--exec` for
+ *      exactly this reason.
+ *
+ * The symptom was a terminal that opened at `/` instead of the workspace, with
+ * a stray quote and the raw prompt escape sequences that `CONTAINER_BOOTSTRAP` was
+ * written to prevent — the bootstrap itself had been chewed up in transit, so
+ * dash ran bash's profile after all.
+ *
+ * So the rule this file now keeps, and `command.test.ts` pins over a hostile
+ * startup command on every transport:
+ *
+ * > **No element of the launch argv may contain a double quote, a newline or a
+ * > carriage return.**
+ *
+ * Spaces are fine — every layer above handles those. It is the quote and the
+ * newline that no layer handles. The rule is kept by encoding the script (see
+ * `encodeShellScript`) rather than by escaping anything, because escaping means
+ * modelling three parsers correctly and encoding means modelling none.
  */
 
 /**
@@ -112,6 +148,70 @@ export function escapeForWindowsTerminal(value: string): string {
  * shell code. That is inside the container, which is the boundary that matters:
  * on the HOST the whole script remains a single argv element.
  */
+/**
+ * Source the login files for their ENVIRONMENT, not for their output.
+ *
+ * ## The bug this exists for, which is the third face of the same one
+ *
+ * A terminal opened on Windows showed a line of garbage before the prompt —
+ *
+ *     \]\u@devcontainer\[\]:\[\]\w\[\]$(parse_git_branch)\[\]\$ '
+ *
+ * — and then worked perfectly. **Once, on the first load.** That "once" is the
+ * whole diagnosis: it is not a mangled command line, which would be wrong on
+ * every line forever. It is a login file printing on the way past.
+ *
+ * The signature is `\033` consumed while `\[`, `\]`, `\u` and `\w` survive,
+ * which is what `echo -e` (or dash's `echo`) does to a `PS1` template. Some
+ * profile script in the image echoes its prompt instead of only assigning it.
+ *
+ * boxwarden was the only thing that made that visible, because it ran the
+ * developer's shell as a LOGIN shell — `bash -l` — while **VS Code's terminal
+ * is not a login shell**. VS Code sources the login files once, out of band,
+ * in `userEnvProbe`, keeps the environment and throws the output away; the
+ * terminal it then opens reads only `~/.bashrc`. Running `bash -l` for the
+ * terminal itself put that same output on the developer's screen, and on a
+ * Debian image it also ran `~/.bashrc` an extra time, non-interactively, via
+ * `~/.profile`.
+ *
+ * ## So this is `userEnvProbe`, done in one shell
+ *
+ * The profile is still sourced — dropping it would lose everything
+ * `/etc/profile.d` puts on PATH, which is most of what a dev container
+ * installs — but its stdout goes to `/dev/null`, and the shell is no longer a
+ * login shell. That is the same bargain VS Code makes, in one process instead
+ * of two.
+ *
+ * Three details worth keeping:
+ *
+ *   - **BOTH streams are discarded**, and that reverses an earlier decision
+ *     here. Keeping stderr looked like the careful choice — the garbage is a
+ *     successful `echo`, so why hide a real failure? — and it was wrong twice
+ *     over. It did not fix the reported bug, because the noise was on stderr;
+ *     and the premise was false, because a login file's stderr in a terminal
+ *     window is not a diagnostic anybody acts on. It is the same line VS Code
+ *     draws: `userEnvProbe` keeps the environment and discards the output,
+ *     both streams, without qualification. A profile that genuinely fails
+ *     shows up as the thing it broke, which is what the developer will
+ *     actually notice.
+ *   - **The search order is bash's own**: `/etc/profile`, then the FIRST of
+ *     `~/.bash_profile`, `~/.bash_login`, `~/.profile`. Sourcing all three
+ *     would run `~/.profile` on a machine where `~/.bash_profile` deliberately
+ *     replaces it.
+ *   - It lives in the SCRIPT rather than the bootstrap, so it is inside the
+ *     base64 payload and free to use quotes, loops and newlines. The bootstrap
+ *     has none of those available — see the argv rule at the top of this file.
+ */
+export const PROFILE = [
+  '[ -r /etc/profile ] && . /etc/profile > /dev/null 2>&1',
+  'for boxwarden_profile in "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile"; do',
+  '  [ -r "$boxwarden_profile" ] || continue',
+  '  . "$boxwarden_profile" > /dev/null 2>&1',
+  '  break',
+  'done',
+  'unset boxwarden_profile',
+].join('\n');
+
 export function containerShellScript(
   options: {
     /** Where to start. Omitted when the container did not say. */
@@ -119,16 +219,26 @@ export function containerShellScript(
     readonly startupCommand?: string;
   } = {},
 ): string {
-  // INTERACTIVE, not login. The login environment is already established by
-  // `LOGIN_BOOTSTRAP`, which ran this script under `bash -lc`; what is left for
-  // the shell the developer types into is `~/.bashrc` — the prompt, the
-  // aliases, the completions. Asking for `-l` again would source the profile a
-  // second time, which is how PATH ends up with every entry twice.
+  // This script is never a command-line argument — `CONTAINER_BOOTSTRAP`
+  // decodes it into a file inside the container and runs that. So it is free to
+  // contain quotes and newlines, which is the whole point of the encoding, and
+  // it is also responsible for tidying the file away.
+  //
+  // `$0` is the script's own path, set by `bash -l <file>` and by `sh -l
+  // <file>` alike. Unlinking a script a shell is part-way through reading is
+  // safe: the descriptor stays open and keeps the inode alive, so nothing here
+  // races with the lines below it.
+  const cleanup = 'rm -f -- "$0"';
+  // INTERACTIVE, not login. The login files are sourced by `PROFILE` just
+  // below, so what is left for the shell the developer types into is
+  // `~/.bashrc` — the prompt, the aliases, the completions. Asking for `-l`
+  // again would source the profile a second time, which is how PATH ends up
+  // with every entry twice.
   //
   // `$BASH` is set by bash and unset by dash, so this lands in whichever shell
   // the bootstrap actually chose without asking a second time.
   const handover = 'exec "${BASH:-sh}" -i';
-  const lines: string[] = [];
+  const lines: string[] = [cleanup, PROFILE];
 
   const folder = options.workspaceFolder?.trim();
   if (folder !== undefined && folder !== '') {
@@ -146,6 +256,32 @@ export function containerShellScript(
 
   lines.push(handover);
   return lines.join('\n');
+}
+
+/**
+ * The script, as a single argv element that no host-side parser can damage.
+ *
+ * Base64 and not an escape scheme, for the reason given at the top of this
+ * file: escaping means modelling Windows Terminal's joiner, the C runtime's
+ * command-line parser and `wsl.exe` correctly and forever, while encoding means
+ * modelling none of them. The alphabet is `A-Za-z0-9+/=` — no quote, no
+ * newline, no space, no semicolon — so there is nothing left for any of those
+ * layers to interpret, and the same string reaches the container on every
+ * platform.
+ *
+ * It costs one thing worth naming: the command boxwarden offers to copy when a
+ * terminal cannot be opened is no longer readable. It is still correct, and it
+ * still pastes and runs, which is what that fallback is for — and a single
+ * unquoted token survives a paste into PowerShell or cmd rather better than the
+ * multi-line quoted script it replaces.
+ */
+export function encodeShellScript(script: string): string {
+  return Buffer.from(script, 'utf8').toString('base64');
+}
+
+/** Inverse of the above, for tests and for explaining a command line in diagnostics. */
+export function decodeShellScript(encoded: string): string {
+  return Buffer.from(encoded, 'base64').toString('utf8');
 }
 
 /**
@@ -167,28 +303,73 @@ export function containerShellScript(
  *
  * — the `\033[…` colour codes consumed as real escapes, the `\[`/`\]` prompt
  * markers left as text, and any `\a` in a title sequence ringing the system
- * bell. Then `exec bash -l` took over and the session was fine, which is what
- * made it look cosmetic rather than like a shell running the wrong files.
+ * bell.
+ *
+ * ## Why it kept happening on Windows after the first fix
+ *
+ * The first fix passed the script as `$0` and had the bootstrap re-exec
+ * `bash -lc "$0"`. That is correct, and on Windows it never arrived: the
+ * bootstrap contains double quotes, and both `wt` and a shell-mode `wsl.exe`
+ * rewrite an argument that has them (see the top of this file). What reached
+ * the container was a fragment, `sh` fell back to running the profile itself,
+ * and the same garbled prompt appeared — from the same cause, two layers away
+ * from where anyone was looking.
  *
  * ## What this does instead
  *
- * `sh -c <bootstrap> <script>` — POSIX makes the operand after the command
- * string `$0`, so the script arrives as a positional parameter rather than
- * interpolated into another string. No second layer of quoting exists to get
- * wrong, which matters because that script contains a user-authored startup
- * command.
+ * The script arrives base64-encoded as `$0`, and the bootstrap writes it into a
+ * file inside the container before running it. That buys three things at once:
  *
- * The bootstrap then execs `bash -lc "$0"`, so the profile is sourced ONCE, by
- * the shell it was written for. The startup command inherits that environment —
- * strictly better than before, where it ran under a login dash and could miss
- * anything `~/.profile` put on PATH.
+ *   - **The bootstrap contains no quote and no newline of its own.** Every
+ *     expansion in it is either a fixed path or `$0`, which is base64 and
+ *     therefore has nothing to word-split on — so the double quotes that used
+ *     to be load-bearing are not needed anywhere.
+ *   - **The script chooses the shell those files were written for.** The
+ *     profile itself is sourced by the SCRIPT rather than by a `-l` here — see
+ *     `PROFILE`, and the third face of this bug that made that necessary.
+ *   - **The script can be anything at all**, since it is no longer a command
+ *     line. That is what makes a user-authored startup command containing
+ *     quotes, newlines or semicolons a non-event.
  *
- * The `sh -lc` fallback survives for an image with no bash at all. It is the
- * old behaviour, and on such an image dash IS the shell the profile was written
- * for, so the failure mode above cannot arise.
+ * `(umask 077 && …)` in a subshell so the file is never briefly world-readable
+ * — it holds the user's startup command, which is the one thing here that might
+ * carry a secret — and so the umask is restored before the developer's shell
+ * inherits it.
+ *
+ * `test -s` is the guard for an image with no `base64` at all: rather than
+ * running an empty script and closing the window instantly — which is how a
+ * button appears to do nothing — it degrades to a bare interactive shell. That
+ * substitute carries its own `rm` because the script it replaced was the thing
+ * that would have tidied the file away.
+ *
+ * The `sh` fallback survives for an image with no bash. On such an image dash
+ * IS the shell the profile was written for, so the failure mode above cannot
+ * arise.
+ *
+ * ## Why this is a `&&` chain and not statements separated by `;`
+ *
+ * `;` is Windows Terminal's own subcommand separator, so one inside an argument
+ * has to be escaped as `\;` and un-escaped again by a parser this repo has
+ * never run — the exact kind of dependence on an unverified layer that the
+ * argv rule at the top of this file exists to end. `&&`, `||` and `|` mean
+ * nothing to `wt`, so the chain crosses untouched. `escapeForWindowsTerminal`
+ * stays, and now has nothing left to escape.
+ *
+ * The short-circuiting is load-bearing, so it is worth reading once:
+ *
+ *   - `… || true` keeps a failed decode from skipping the guard behind it.
+ *   - the last `exec` is deliberately NOT in a subshell. `exec` inside `( … )`
+ *     replaces the SUBSHELL, leaving the parent `sh` waiting underneath the
+ *     developer's shell — which is the "Ctrl-D twice to close the window" bug
+ *     `containerShellScript` already avoids at its own end.
  */
-export const LOGIN_BOOTSTRAP =
-  'if command -v bash > /dev/null 2>&1; then exec bash -lc "$0"; else exec sh -lc "$0"; fi';
+export const CONTAINER_BOOTSTRAP = [
+  'f=/tmp/.boxwarden-$$.sh',
+  '((umask 077 && printf %s $0 | base64 -d > $f) 2>/dev/null || true)',
+  '(test -s $f || (echo rm -f $f && echo exec sh -i) > $f)',
+  'command -v bash > /dev/null 2>&1',
+  'exec bash $f || exec sh $f',
+].join(' && ');
 
 /**
  * `DOCKER_HOST`-style URL for a transport, as the CLI spells it.
@@ -233,11 +414,24 @@ function daemonFlag(cli: ContainerCliKind, url: string): readonly string[] {
 /**
  * The full argv that opens a shell in a container, ready to hand to a terminal.
  *
+ * Every element it returns satisfies the argv rule at the top of this file — no
+ * double quote, no newline — which is what lets `terminalLaunch` hand it to
+ * Windows Terminal without inventing an escape scheme for it.
+ *
  * The WSL arm is the interesting one. A socket inside a WSL2 distro cannot be
  * opened from Windows at all (see the `wsl` arm of `DockerTransport`), so the
- * exec has to happen on the Linux side: `wsl.exe -d <distro> --` and then the
- * distro's own CLI, by bare name because a Windows path would be meaningless
- * there. Everywhere else the host CLI is used at its resolved absolute path.
+ * exec has to happen on the Linux side: `wsl.exe -d <distro> --exec` and then
+ * the distro's own CLI, by bare name because a Windows path would be
+ * meaningless there. Everywhere else the host CLI is used at its resolved
+ * absolute path.
+ *
+ * **`--exec` and not `--`**, and the difference is the whole Windows bug.
+ * `wsl.exe` runs a command line through the distro's DEFAULT SHELL unless
+ * `--exec` is given, so `--` meant the payload was parsed by bash on the Linux
+ * side before `docker` ever saw it: the quotes became bash's quotes, `$0`
+ * became bash's `$0`, and what arrived at the container was a mangled
+ * fragment. `--exec` hands the arguments across as an argv, which is what every
+ * other transport here already does.
  */
 export function containerExecArgv(options: {
   readonly cli: ContainerCli;
@@ -263,13 +457,23 @@ export function containerExecArgv(options: {
   // after the id is the command to run, so a flag there would be an argument
   // to `sh` instead.
   const asUser = user === undefined || user === '' ? [] : ['-u', user];
-  // `sh -c <bootstrap> <script>`: the script is the operand that becomes `$0`,
-  // so it crosses as its own argv element and is never interpolated into
-  // another shell string. See LOGIN_BOOTSTRAP for why `sh` is not given `-l`.
-  const exec = ['exec', '-it', ...asUser, containerId, 'sh', '-c', LOGIN_BOOTSTRAP, script];
+  // `sh -c <bootstrap> <encoded script>`: the script is the operand that
+  // becomes `$0`, so it crosses as its own argv element and is never
+  // interpolated into another shell string — and it is encoded, so no layer
+  // between here and the container can damage it either. See CONTAINER_BOOTSTRAP.
+  const exec = [
+    'exec',
+    '-it',
+    ...asUser,
+    containerId,
+    'sh',
+    '-c',
+    CONTAINER_BOOTSTRAP,
+    encodeShellScript(script),
+  ];
 
   if (transport?.transport === 'wsl') {
-    return ['wsl.exe', '-d', transport.distro, '--', cli.kind, ...flags, ...exec];
+    return ['wsl.exe', '-d', transport.distro, '--exec', cli.kind, ...flags, ...exec];
   }
   return [cli.binaryPath, ...flags, ...exec];
 }

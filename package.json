@@ -1,6 +1,6 @@
 {
   "name": "boxwarden",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "Local dev container management: lists the dev containers on your machine and reattaches your editor to them.",
@@ -56,6 +56,7 @@
     "globals": "^17.8.0",
     "jsdom": "^30.0.1",
     "prettier": "^3.9.6",
+    "react-icons": "^5.7.0",
     "typescript": "6.0.3",
     "typescript-eslint": "^8.65.0",
     "vite": "^7",

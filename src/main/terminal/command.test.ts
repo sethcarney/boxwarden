@@ -3,10 +3,13 @@ import type { TerminalTarget } from '../../models/index.js';
 import { asContainerPath } from '../../models/index.js';
 import {
   appleScriptString,
-  LOGIN_BOOTSTRAP,
+  CONTAINER_BOOTSTRAP,
+  PROFILE,
   containerExecArgv,
   containerShellScript,
   daemonUrl,
+  decodeShellScript,
+  encodeShellScript,
   escapeForWindowsTerminal,
   posixQuote,
   posixQuoteOne,
@@ -95,10 +98,10 @@ describe('escapeForWindowsTerminal', () => {
 
 describe('containerShellScript', () => {
   /**
-   * INTERACTIVE, not login: `LOGIN_BOOTSTRAP` already ran this script under
-   * `bash -lc`, so the profile is sourced once and what remains for the shell
-   * the developer types into is ~/.bashrc. `$BASH` lands in whichever shell the
-   * bootstrap chose without asking twice.
+   * INTERACTIVE, not login: `PROFILE` above has already sourced the login
+   * files, so what remains for the shell the developer types into is
+   * ~/.bashrc. `$BASH` lands in whichever shell the bootstrap chose without
+   * asking twice.
    */
   it('hands over to an interactive shell, the one the bootstrap already chose', () => {
     expect(containerShellScript()).toContain('exec "${BASH:-sh}" -i');
@@ -122,9 +125,73 @@ describe('containerShellScript', () => {
   });
 
   it('separates with a newline, not a semicolon, so a trailing comment cannot swallow the handover', () => {
-    expect(containerShellScript({ startupCommand: 'echo hi # note' })).toBe(
-      `echo hi # note\n${containerShellScript()}`,
-    );
+    const lines = containerShellScript({ startupCommand: 'echo hi # note' }).split('\n');
+    expect(lines.at(-2)).toBe('echo hi # note');
+    expect(lines.at(-1)).toBe('exec "${BASH:-sh}" -i');
+  });
+
+  /**
+   * The bootstrap decodes this script into a file inside the container, so the
+   * script owns removing it. `$0` is that file's path under both `bash <file>`
+   * and `sh <file>`, and unlinking a script a shell is part-way through
+   * reading is safe — the descriptor keeps the inode alive.
+   */
+  it('removes the file the bootstrap wrote before anything else runs', () => {
+    expect(containerShellScript().split('\n')[0]).toBe('rm -f -- "$0"');
+  });
+
+  /**
+   * THE THIRD FACE OF THE PROMPT BUG.
+   *
+   * The garbled prompt came back once more, and the giveaway was "only on the
+   * first load" — a mangled command line is wrong on every line forever, while
+   * a login file printing on the way past is wrong exactly once. Some profile
+   * script in the image ECHOES its `PS1` instead of only assigning it, which
+   * `echo -e` renders as `\033` consumed and `\[ \] \u \w` left literal.
+   *
+   * boxwarden was the only thing showing it, because it ran the developer's
+   * shell as a LOGIN shell where VS Code's terminal is not one. So the login
+   * files are still sourced — dropping them would lose everything
+   * /etc/profile.d puts on PATH — but for their environment, not their output.
+   */
+  it('sources the login files with their output discarded', () => {
+    const script = containerShellScript();
+    expect(script).toContain('. /etc/profile > /dev/null 2>&1');
+    expect(script).toContain('. "$boxwarden_profile" > /dev/null 2>&1');
+  });
+
+  /**
+   * BOTH streams, and this reverses an earlier decision. Keeping stderr looked
+   * careful — the garbage is a SUCCESSFUL echo, so why hide a real failure? —
+   * and it was wrong twice: the reported noise turned out to be on stderr, and
+   * a login file's stderr in a terminal window is not a diagnostic anybody
+   * acts on. It is the line VS Code draws too.
+   */
+  it('discards stderr as well, which is where the noise actually was', () => {
+    for (const line of PROFILE.split('\n')) {
+      if (!line.includes('. ')) continue;
+      expect(line).toContain('> /dev/null 2>&1');
+    }
+  });
+
+  /**
+   * bash's own order: /etc/profile, then the FIRST of three. Sourcing all
+   * three would run ~/.profile on a machine where ~/.bash_profile exists
+   * precisely to replace it.
+   */
+  it("follows bash's login-file search order, first match only", () => {
+    expect(PROFILE).toContain('"$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile"');
+    expect(PROFILE).toContain('break');
+  });
+
+  /** Before the workspace and before the startup command, which both want the env. */
+  it('establishes the environment before anything uses it', () => {
+    const script = containerShellScript({
+      workspaceFolder: asContainerPath('/workspaces/webapp'),
+      startupCommand: 'bun run dev',
+    });
+    expect(script.indexOf('/etc/profile')).toBeLessThan(script.indexOf('cd '));
+    expect(script.indexOf('cd ')).toBeLessThan(script.indexOf('bun run dev'));
   });
 
   it('treats a blank or whitespace-only command as no command', () => {
@@ -136,7 +203,7 @@ describe('containerShellScript', () => {
    * `docker exec` starts in the image's WorkingDir, which for most base images
    * is `/`. A terminal opened on a workspace has to land IN the workspace.
    */
-  it('enters the workspace folder before anything else runs', () => {
+  it('enters the workspace folder before the startup command runs', () => {
     const script = containerShellScript({
       workspaceFolder: asContainerPath('/workspaces/webapp'),
       startupCommand: 'bun run dev',
@@ -221,6 +288,9 @@ describe('daemonUrl', () => {
 describe('containerExecArgv', () => {
   const cli = { kind: 'docker', binaryPath: '/usr/bin/docker' } as const;
 
+  /** The script as it leaves this module: encoded, so it is one inert token. */
+  const encoded = (script: string) => encodeShellScript(script);
+
   /**
    * `docker exec` without `-u` enters as the IMAGE's user, which for most dev
    * container base images is root — while VS Code attaches as `remoteUser`.
@@ -244,8 +314,8 @@ describe('containerExecArgv', () => {
       CONTAINER_ID,
       'sh',
       '-c',
-      LOGIN_BOOTSTRAP,
-      'exec sh -l',
+      CONTAINER_BOOTSTRAP,
+      encoded('exec sh -l'),
     ]);
   });
 
@@ -281,7 +351,7 @@ describe('containerExecArgv', () => {
       script: 'exec sh -l',
     });
 
-    expect(argv.slice(0, 4)).toEqual(['wsl.exe', '-d', 'dev', '--']);
+    expect(argv.slice(0, 4)).toEqual(['wsl.exe', '-d', 'dev', '--exec']);
     expect(argv.indexOf('-u')).toBeLessThan(argv.indexOf(CONTAINER_ID));
   });
 
@@ -305,8 +375,8 @@ describe('containerExecArgv', () => {
       CONTAINER_ID,
       'sh',
       '-c',
-      LOGIN_BOOTSTRAP,
-      'exec sh -l',
+      CONTAINER_BOOTSTRAP,
+      encoded('exec sh -l'),
     ]);
   });
 
@@ -329,8 +399,8 @@ describe('containerExecArgv', () => {
       CONTAINER_ID,
       'sh',
       '-c',
-      LOGIN_BOOTSTRAP,
-      'exec sh -l',
+      CONTAINER_BOOTSTRAP,
+      encoded('exec sh -l'),
     ]);
   });
 
@@ -352,7 +422,7 @@ describe('containerExecArgv', () => {
       'wsl.exe',
       '-d',
       'Ubuntu',
-      '--',
+      '--exec',
       'podman',
       '--url',
       'unix:///run/user/1000/podman.sock',
@@ -361,24 +431,120 @@ describe('containerExecArgv', () => {
       CONTAINER_ID,
       'sh',
       '-c',
-      LOGIN_BOOTSTRAP,
-      'exec sh -l',
+      CONTAINER_BOOTSTRAP,
+      encoded('exec sh -l'),
     ]);
   });
 
   it('keeps a hostile startup command in exactly one argv element', () => {
-    const argv = containerExecArgv({
-      cli,
-      containerId: CONTAINER_ID,
-      script: containerShellScript({ startupCommand: HOSTILE }),
-    });
-    // Not split, not escaped, not interpreted: one element, passed through.
-    expect(argv.filter((part) => part.includes('rm -rf $HOME'))).toHaveLength(1);
-    expect(argv.at(-1)).toContain(HOSTILE);
+    const script = containerShellScript({ startupCommand: HOSTILE });
+    const argv = containerExecArgv({ cli, containerId: CONTAINER_ID, script });
+
+    // Not split, not escaped, not interpreted: one element, and it decodes back
+    // to exactly the script that went in.
+    expect(argv.filter((part) => part === encoded(script))).toHaveLength(1);
+    expect(decodeShellScript(argv.at(-1) ?? '')).toBe(script);
+    expect(decodeShellScript(argv.at(-1) ?? '')).toContain(HOSTILE);
   });
 });
 
-describe('LOGIN_BOOTSTRAP', () => {
+/**
+ * THE ARGV RULE.
+ *
+ * On Linux and macOS an argv array reaches the container unchanged, and these
+ * assertions are free. On Windows two layers rewrite it — `wt` joins the
+ * arguments back into a command line and wraps a spaced one in double quotes
+ * without escaping the double quotes already inside it, and `wsl.exe` without
+ * `--exec` hands the line to the distro's default shell to parse again.
+ *
+ * That is what made the garbled prompt survive the fix that was supposed to
+ * end it: the bootstrap held `"$0"`, so it was the BOOTSTRAP that arrived
+ * damaged, two layers away from where anyone was looking.
+ *
+ * So the rule is checked over the whole argv, on every transport, with a
+ * hostile startup command in it. A double quote or a newline anywhere in here
+ * is a terminal that opens at `/` with a broken prompt on somebody's Windows
+ * machine, and nowhere else.
+ */
+describe('the launch argv survives every Windows quoting layer', () => {
+  const script = containerShellScript({
+    workspaceFolder: asContainerPath(`/workspaces/it's a "folder"`),
+    startupCommand: HOSTILE,
+  });
+
+  const transports = {
+    'no transport': undefined,
+    unix: { transport: 'unix', socketPath: '/var/run/docker.sock' },
+    npipe: { transport: 'npipe', pipeName: '\\\\.\\pipe\\docker_engine' },
+    wsl: { transport: 'wsl', distro: 'Ubuntu', socketPath: '/run/docker.sock' },
+  } as const;
+
+  for (const [name, transport] of Object.entries(transports)) {
+    it(`holds no quote, newline or semicolon over ${name}`, () => {
+      const argv = containerExecArgv({
+        cli: { kind: 'docker', binaryPath: 'C:\\Program Files\\Docker\\docker.exe' },
+        containerId: CONTAINER_ID,
+        ...(transport === undefined ? {} : { transport }),
+        user: 'vscode',
+        script,
+      });
+
+      for (const part of argv) {
+        // Spaces are fine — every layer above handles those. These three are
+        // the ones no layer handles.
+        expect(part).not.toContain('"');
+        expect(part).not.toMatch(/[\n\r]/);
+        // `;` is wt's own subcommand separator. Escaping it means trusting a
+        // parser this repo has never run, so nothing emits one.
+        expect(part).not.toContain(';');
+      }
+    });
+  }
+
+  it('reaches the container as the script that went in', () => {
+    const argv = containerExecArgv({
+      cli: { kind: 'docker', binaryPath: '/usr/bin/docker' },
+      containerId: CONTAINER_ID,
+      script,
+    });
+    expect(decodeShellScript(argv.at(-1) ?? '')).toBe(script);
+  });
+
+  /**
+   * `wsl.exe` runs a command line through the distro's DEFAULT SHELL unless
+   * `--exec` is given. With `--` the payload was parsed by bash on the Linux
+   * side before `docker` ever saw it — quotes became bash's quotes and `$0`
+   * became bash's `$0`.
+   */
+  it('does not let a shell inside the distro parse the payload first', () => {
+    const argv = containerExecArgv({
+      cli: { kind: 'docker', binaryPath: '' },
+      containerId: CONTAINER_ID,
+      transport: { transport: 'wsl', distro: 'Ubuntu', socketPath: '/run/docker.sock' },
+      script,
+    });
+
+    expect(argv.slice(0, 4)).toEqual(['wsl.exe', '-d', 'Ubuntu', '--exec']);
+    expect(argv).not.toContain('--');
+  });
+});
+
+describe('encodeShellScript', () => {
+  it('round-trips a script with everything in it that breaks a command line', () => {
+    const script = `cd 'a b'\nprintf '%s\\n' "it's \\"quoted\\"; really"\nexec "\${BASH:-sh}" -i`;
+    expect(decodeShellScript(encodeShellScript(script))).toBe(script);
+  });
+
+  it('emits nothing outside the base64 alphabet, on one line', () => {
+    // The whole point: no quote, no space, no newline, no semicolon, so there
+    // is nothing left for any host-side parser to interpret.
+    expect(encodeShellScript(containerShellScript({ startupCommand: HOSTILE }))).toMatch(
+      /^[A-Za-z0-9+/]+={0,2}$/,
+    );
+  });
+});
+
+describe('CONTAINER_BOOTSTRAP', () => {
   const cli = { kind: 'docker', binaryPath: '/usr/bin/docker' } as const;
 
   /**
@@ -396,18 +562,52 @@ describe('LOGIN_BOOTSTRAP', () => {
     expect(argv[argv.indexOf('sh') + 1]).toBe('-c');
   });
 
-  it('runs the script under a login BASH when the container has one', () => {
-    expect(LOGIN_BOOTSTRAP).toContain('command -v bash');
-    expect(LOGIN_BOOTSTRAP).toContain('exec bash -lc "$0"');
+  it('runs the script under BASH when the container has one', () => {
+    expect(CONTAINER_BOOTSTRAP).toContain('command -v bash');
+    expect(CONTAINER_BOOTSTRAP).toContain('exec bash $f');
   });
 
   /**
-   * The fallback is the old behaviour, and it is safe precisely where it
-   * applies: on an image with no bash, dash IS the shell those profile files
-   * were written for.
+   * The fallback is safe precisely where it applies: on an image with no bash,
+   * dash IS the shell those profile files were written for.
    */
-  it('still gives a login shell to an image that has no bash', () => {
-    expect(LOGIN_BOOTSTRAP).toContain('exec sh -lc "$0"');
+  it('falls back to sh for an image that has no bash', () => {
+    expect(CONTAINER_BOOTSTRAP).toContain('exec sh $f');
+  });
+
+  /**
+   * NOT a login shell, and that is the fix for the third face of the prompt
+   * bug. `bash -l` sources the login files with their output on the
+   * developer's terminal — which is how a profile that ECHOES its prompt
+   * instead of assigning it ended up on screen, once, before the real prompt.
+   * VS Code's terminal is not a login shell either; `PROFILE` inside the
+   * script sources those files for their environment and discards the chatter.
+   */
+  it('does not make a login shell, which would put profile output on screen', () => {
+    expect(CONTAINER_BOOTSTRAP).not.toContain('bash -l');
+    expect(CONTAINER_BOOTSTRAP).not.toContain('sh -l');
+  });
+
+  /**
+   * The bootstrap is the argument that used to arrive damaged on Windows,
+   * because it contained `"$0"`. It now expands only `$0`, which is base64 and
+   * so has nothing to word-split on — no quote is needed anywhere in it.
+   */
+  it('needs no quote of its own, which is why it survives the trip', () => {
+    expect(CONTAINER_BOOTSTRAP).not.toContain('"');
+    expect(CONTAINER_BOOTSTRAP).not.toContain("'");
+    expect(CONTAINER_BOOTSTRAP).not.toMatch(/[\n\r;]/);
+  });
+
+  /**
+   * `exec` inside `( … )` replaces the SUBSHELL, leaving the parent `sh`
+   * waiting underneath the developer's shell — the "Ctrl-D twice" bug
+   * `containerShellScript` avoids at its own end.
+   */
+  it('execs in the parent shell, not in a subshell', () => {
+    const handover = CONTAINER_BOOTSTRAP.slice(CONTAINER_BOOTSTRAP.indexOf('exec bash'));
+    expect(handover).not.toContain('(');
+    expect(CONTAINER_BOOTSTRAP.endsWith('exec bash $f || exec sh $f')).toBe(true);
   });
 
   /**
@@ -420,16 +620,16 @@ describe('LOGIN_BOOTSTRAP', () => {
     const script = containerShellScript({ startupCommand: HOSTILE });
     const argv = containerExecArgv({ cli, containerId: CONTAINER_ID, script });
 
-    expect(argv.at(-1)).toBe(script);
-    expect(argv.at(-2)).toBe(LOGIN_BOOTSTRAP);
+    expect(decodeShellScript(argv.at(-1) ?? '')).toBe(script);
+    expect(argv.at(-2)).toBe(CONTAINER_BOOTSTRAP);
     // The bootstrap is a constant: nothing the user or a label can influence
     // reaches it.
-    expect(LOGIN_BOOTSTRAP).not.toContain(HOSTILE);
+    expect(CONTAINER_BOOTSTRAP).not.toContain(HOSTILE);
   });
 
   it('keeps the bootstrap in front of the container id, so it is the command', () => {
     const argv = containerExecArgv({ cli, containerId: CONTAINER_ID, script: 'x' });
-    expect(argv.indexOf(CONTAINER_ID)).toBeLessThan(argv.indexOf(LOGIN_BOOTSTRAP));
+    expect(argv.indexOf(CONTAINER_ID)).toBeLessThan(argv.indexOf(CONTAINER_BOOTSTRAP));
   });
 });
 

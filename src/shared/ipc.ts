@@ -9,6 +9,7 @@ import type {
   EngineSelection,
   EngineSummary,
   GitStatus,
+  OpenInEditorMode,
   ProjectId,
   ProjectScan,
   TerminalId,
@@ -215,7 +216,21 @@ export interface BoxwardenApi {
   start(id: ContainerId): Promise<ActionResult>;
   stop(id: ContainerId): Promise<ActionResult>;
   listEditors(): Promise<readonly EditorOption[]>;
-  openInEditor(id: ContainerId, editorId: EditorId): Promise<OpenInEditorResult>;
+  /**
+   * Open a container's workspace folder in an editor.
+   *
+   * `mode` is the third input the renderer supplies anywhere in this surface,
+   * and it is safe for the same reason `updateStatus(force)` is: a closed
+   * two-arm union, parsed in the main process, that cannot name a path, a
+   * window or a binary. It chooses between focusing the window this container
+   * already has and opening a second one — and it defaults to focusing, so an
+   * older renderer that omits it gets the behaviour this verb has always had.
+   */
+  openInEditor(
+    id: ContainerId,
+    editorId: EditorId,
+    mode?: OpenInEditorMode,
+  ): Promise<OpenInEditorResult>;
   /**
    * The sixth verb, and the only one added since the surface was fixed at five.
    * It earns the channel rather than looping over an existing one because it

@@ -1,8 +1,15 @@
 import { spawn } from 'node:child_process';
-import type { EditorTarget } from '../../models/index.js';
+import type { EditorTarget, OpenInEditorMode } from '../../models/index.js';
 
 /**
  * Launch an editor at a `vscode-remote://` URI.
+ *
+ * `mode` decides whether an already-open window on this folder is FOCUSED or
+ * duplicated. `reuse` passes no flag at all, because the CLI's own default is
+ * to resolve the folder URI against the open windows and raise the one that
+ * matches — which is the behaviour a card showing "VS Code attached" should
+ * offer. `--reuse-window` would be a different and worse thing: it takes over
+ * whichever window was last active, whatever the developer had in it.
  *
  * Two deliberate choices, both security-relevant:
  *
@@ -19,9 +26,18 @@ import type { EditorTarget } from '../../models/index.js';
  *     with it. Without this the editor is a child process in our process
  *     group and dies with us.
  */
-export function launchEditor(binaryPath: string, target: EditorTarget, uri: string): Promise<void> {
+export function launchEditor(
+  binaryPath: string,
+  target: EditorTarget,
+  uri: string,
+  mode: OpenInEditorMode = 'reuse',
+): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn(binaryPath, [target.folderUriFlag, uri], {
+    const args =
+      mode === 'new-window'
+        ? [target.newWindowFlag, target.folderUriFlag, uri]
+        : [target.folderUriFlag, uri];
+    const child = spawn(binaryPath, args, {
       detached: true,
       stdio: 'ignore',
       shell: false,
