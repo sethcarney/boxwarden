@@ -411,10 +411,19 @@ purely in `src/main/terminal/command.ts` and spawned by `launch.ts`.
      developer's screen. **VS Code's terminal is not a login shell**, which is
      why nobody sees it there.
 
-  So: **stdout is redirected, stderr is not.** The garbage is a successful
-  `echo`; a profile that really fails is something the developer needs. And the
-  search order is bash's own, first match only — sourcing all three would run
-  `~/.profile` on a machine where `~/.bash_profile` exists to replace it.
+  **BOTH streams are discarded**, and that reverses a call made in round 3.
+  Keeping stderr looked careful — the garbage is a successful `echo`, so why
+  hide a real failure? — and it was wrong twice: the noise turned out to be on
+  stderr, and a login file's stderr in a terminal window is not a diagnostic
+  anybody acts on. It is the line VS Code draws too. The search order is bash's
+  own, first match only — sourcing all three would run `~/.profile` on a
+  machine where `~/.bash_profile` exists to replace it.
+
+  **What this deliberately does NOT silence** is `~/.bashrc` under the final
+  interactive shell. That is the one VS Code runs as well, so noise from there
+  is a dotfile bug rather than something boxwarden should be hiding. `bash -lc
+true` versus `bash -ic true`, run in the container, is how the two are told
+  apart.
   The `sh` fallback survives only for an image with no bash, where dash IS the
   shell those files were written for.
 

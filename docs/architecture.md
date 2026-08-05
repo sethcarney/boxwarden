@@ -565,9 +565,17 @@ the way past is wrong exactly once. The signature is `\033` consumed while
 `\[`, `\]`, `\u` and `\w` survive, i.e. an `echo -e` of a `PS1` template:
 some profile script echoes its prompt instead of only assigning it.
 
-stderr is deliberately left alone. The garbage is a *successful* echo, whereas
-a profile that actually fails is something the developer needs to see —
-redirecting both would trade a cosmetic bug for a silent one.
+Both streams are discarded. Keeping stderr was tried first, on the theory that
+the garbage is a *successful* echo and a profile that genuinely fails is worth
+seeing — and it was wrong twice over: the reported noise was on stderr, and a
+login file's stderr in a terminal window is not a diagnostic anybody acts on.
+VS Code discards both without qualification, and a profile that really breaks
+announces itself as the thing it broke.
+
+What is deliberately NOT silenced is `~/.bashrc` under the final interactive
+shell — VS Code runs that too, so noise from there is a dotfile bug rather than
+something to hide. Inside the container, `bash -lc true` and `bash -ic true`
+(both with stdin from `/dev/null`, and both capturing `2>&1`) separate the two.
 
 **The startup command.** A per-container command, run inside the container
 before the interactive shell each time a terminal opens. It is deliberately

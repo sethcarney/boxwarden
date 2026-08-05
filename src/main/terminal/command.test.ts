@@ -156,18 +156,22 @@ describe('containerShellScript', () => {
    */
   it('sources the login files with their output discarded', () => {
     const script = containerShellScript();
-    expect(script).toContain('. /etc/profile > /dev/null');
-    expect(script).toContain('. "$boxwarden_profile" > /dev/null');
+    expect(script).toContain('. /etc/profile > /dev/null 2>&1');
+    expect(script).toContain('. "$boxwarden_profile" > /dev/null 2>&1');
   });
 
   /**
-   * stderr is deliberately NOT redirected. The garbage is a SUCCESSFUL echo; a
-   * profile that actually fails is something the developer needs to see, and
-   * silencing it would trade a cosmetic bug for a silent one.
+   * BOTH streams, and this reverses an earlier decision. Keeping stderr looked
+   * careful — the garbage is a SUCCESSFUL echo, so why hide a real failure? —
+   * and it was wrong twice: the reported noise turned out to be on stderr, and
+   * a login file's stderr in a terminal window is not a diagnostic anybody
+   * acts on. It is the line VS Code draws too.
    */
-  it('leaves stderr alone, so a profile that really fails still says so', () => {
-    expect(PROFILE).not.toContain('2>');
-    expect(PROFILE).not.toContain('&1');
+  it('discards stderr as well, which is where the noise actually was', () => {
+    for (const line of PROFILE.split('\n')) {
+      if (!line.includes('. ')) continue;
+      expect(line).toContain('> /dev/null 2>&1');
+    }
   });
 
   /**

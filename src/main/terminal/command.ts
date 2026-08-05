@@ -184,9 +184,16 @@ export function escapeForWindowsTerminal(value: string): string {
  *
  * Three details worth keeping:
  *
- *   - **stderr is NOT redirected.** The garbage is a successful `echo`; a
- *     profile that actually fails is something the developer needs to see, and
- *     silencing it would trade a cosmetic bug for a silent one.
+ *   - **BOTH streams are discarded**, and that reverses an earlier decision
+ *     here. Keeping stderr looked like the careful choice — the garbage is a
+ *     successful `echo`, so why hide a real failure? — and it was wrong twice
+ *     over. It did not fix the reported bug, because the noise was on stderr;
+ *     and the premise was false, because a login file's stderr in a terminal
+ *     window is not a diagnostic anybody acts on. It is the same line VS Code
+ *     draws: `userEnvProbe` keeps the environment and discards the output,
+ *     both streams, without qualification. A profile that genuinely fails
+ *     shows up as the thing it broke, which is what the developer will
+ *     actually notice.
  *   - **The search order is bash's own**: `/etc/profile`, then the FIRST of
  *     `~/.bash_profile`, `~/.bash_login`, `~/.profile`. Sourcing all three
  *     would run `~/.profile` on a machine where `~/.bash_profile` deliberately
@@ -196,10 +203,10 @@ export function escapeForWindowsTerminal(value: string): string {
  *     has none of those available — see the argv rule at the top of this file.
  */
 export const PROFILE = [
-  '[ -r /etc/profile ] && . /etc/profile > /dev/null',
+  '[ -r /etc/profile ] && . /etc/profile > /dev/null 2>&1',
   'for boxwarden_profile in "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile"; do',
   '  [ -r "$boxwarden_profile" ] || continue',
-  '  . "$boxwarden_profile" > /dev/null',
+  '  . "$boxwarden_profile" > /dev/null 2>&1',
   '  break',
   'done',
   'unset boxwarden_profile',
