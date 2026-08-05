@@ -239,7 +239,70 @@ deliberately does not answer, in rough order of how often they will be missed:
   `none` — for it. That is the trade that buys the whole feature its cost of two
   file reads; the alternative is an `exec` per container.
 
-## 9. Smaller things
+## 9. Port forwarding, and why the terminal cannot provide it
+
+A dev server started from boxwarden's terminal is not reachable on
+`localhost:3000` the way one started from a VS Code terminal is. This comes up
+as "the terminal is broken", so it is worth being exact about where the
+forwarding actually happens.
+
+**It is not the shell's doing, in either case.** VS Code's port forwarding is a
+service of the vscode-server running INSIDE the container plus the VS Code
+client on the host; the two hold a tunnel open and the client binds the host
+port. A shell — whether spawned by the server, by `docker exec`, or by
+`devcontainer exec` — has no part in it. So "spawn the terminal exactly the way
+VS Code does" would not deliver forwarding: there is nothing to spawn it into.
+This is the same reason the ports the card lists are the DAEMON's published
+ports (`-p`) and never VS Code's forwarded ones.
+
+Which means, with a VS Code window attached, a server started from boxwarden's
+terminal _should_ be forwarded anyway — `remote.autoForwardPorts` defaults to
+watching the container's running processes, not VS Code's own terminal output,
+so it does not care which shell started the process. Two things break that, and
+neither is boxwarden:
+
+- **No window is attached.** Nothing is forwarding, and nothing will. The card's
+  editor badge is the honest indicator of this.
+- **`remote.autoForwardPortsSource` has flipped to `hybrid`.** VS Code switches
+  it automatically once twenty ports have been forwarded in a session, and in a
+  dev container it then stops detecting ports — see
+  [microsoft/vscode#200795](https://github.com/microsoft/vscode/issues/200795)
+  and
+  [microsoft/vscode-remote-release#10926](https://github.com/microsoft/vscode-remote-release/issues/10926).
+  It is written to user settings, so it persists. Setting it back to `process`
+  is the fix.
+
+What boxwarden could do, in increasing order of cost:
+
+- **Say so.** The card knows the container's published ports, and it knows
+  whether an editor is attached. A container with a dev server and neither a
+  published port nor an attached editor is a diagnosable state, and an advisory
+  is the cheap half of this whole entry.
+- **Publish at build time.** `appPort` in `devcontainer.json` is a real `-p`,
+  so the port is reachable with no editor running at all. boxwarden already
+  reads and copies `devcontainer.json` for the unbuilt-project flow; offering
+  the edit is a small step from there. It needs a rebuild, which is the catch.
+- **Forward it itself.** A TCP listener in the main process relaying into the
+  container. There is no way to do that over the Docker API alone without a
+  relay binary in the container (`socat`, or a helper container on
+  `--network container:<id>`), so it is a real feature with a real dependency,
+  not an afternoon. It would also be the first thing boxwarden runs inside
+  somebody's container, which is a line this app has been deliberate about not
+  crossing — see the `top`-never-`exec` rule for Claude Code presence.
+
+One smaller piece of VS Code parity is genuinely missing and unrelated to any
+of the above: **`remoteEnv` is not applied to the terminal.** `containerEnv`
+lands in `Config.Env` and so is inherited by `docker exec`, but `remoteEnv` is
+applied by the vscode-server, so a boxwarden shell does not have it. It is in
+the `devcontainer.metadata` label, beside `remoteUser` and `workspaceFolder`
+which are already read from there. The reason it was not done with those is the
+environment rule in `mapping.ts`: `remoteEnv` values can be
+`${containerEnv:VAR}` references, resolving them means reading `Config.Env`, and
+the resolved result must then NOT cross IPC into the renderer's snapshot. That
+means a main-process-only map keyed by container id, which is a small piece of
+plumbing the backend does not have yet.
+
+## 10. Smaller things
 
 - **Attached containers.** Containers attached to rather than created by the
   extension use a different authority (`attached-container+<hex of JSON>`).
