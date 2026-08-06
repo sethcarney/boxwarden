@@ -5,6 +5,12 @@ coverage/
 bun.lock
 node_modules/
 
+# Written by scripts/generate-icons.mjs, never by hand. Formatting it here
+# would couple the generator's JSON.stringify output to Prettier's preferences,
+# so regenerating the icons after an unrelated Prettier upgrade would fail
+# `bun run check` for a file nobody edited.
+resources/icons/manifest.json
+
 # JSONC with comments that Prettier's json parser would mangle. The comments
 # in devcontainer.json carry the reasoning for docker-outside-of-docker and the
 # credential-persistence setup, and they are the most valuable thing in the file.

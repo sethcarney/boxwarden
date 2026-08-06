@@ -34,6 +34,9 @@ bun run package      # build + electron-builder --dir: unpacked app, no installe
 bun run dist         # build + installers for the host OS, into release/
 bun run dist:mac / dist:linux / dist:win
 
+bun run icons:generate          # regenerate resources/icons/ from resources/icon.png (needs ImageMagick)
+bun run check:icons             # the Linux icon set is complete and current — part of `check`
+
 bun run check:release-version   # tag vs package.json — run before tagging, not part of `check`
 
 bun run devcontainer:open   # devcontainer up, then attach an editor to it (scripts/devcontainer-open.mjs)
@@ -859,6 +862,47 @@ silently fail. Then a fourth job generates SLSA provenance.
   It reads `github.action_ref` at runtime to pick its own binary release, and a
   SHA resolves to nothing. It looks exactly like the mistake everything else
   here is guarding against, which is why the comment beside it is long.
+
+### The application icon
+
+One 1024px source (`resources/icon.png`) for macOS and Windows, and a committed
+directory of eight sizes (`resources/icons/`) for Linux. The split is not
+tidiness — `.icns` and `.ico` are containers that hold every size in one file,
+and Linux has no equivalent.
+
+**A Linux desktop resolves an icon by NAME, through a closed set of sizes.** The
+installed `.desktop` entry says `Icon=boxwarden`, never a path, and the lookup
+searches the subdirectories of `/usr/share/icons/hicolor/` **that hicolor's own
+`index.theme` declares** — 16, 22, 24, 32, 36, 48, 64, 72, 96, 128, 192, 256,
+512, and no more. electron-builder passes a single PNG through unresized, so
+`icon: resources/icon.png` installed exactly one file, into `hicolor/1024x1024/`,
+which is not on that list. The build succeeded, the deb installed, the PNG
+landed on disk, and Linux Mint drew a generic gear in its menu while macOS and
+Windows were correct. **This is the third closed set in this repo that fails
+silently** — the other two are `ALLOWED_EXTERNAL_ORIGINS` and the release
+workflow's artefact names — and it is the only one where the failure is a
+picture rather than a missing feature, which is why it survived three releases.
+
+Four things follow:
+
+- **The sizes are committed, not built.** A CI runner has no image tooling, and
+  the fallback for a missing icon is a placeholder rather than an error.
+  `bun run icons:generate` needs ImageMagick and is run by a human;
+  `bun run check:icons` is pure Node and runs in `bun run check`.
+- **`check:icons` IS in `bun run check`**, unlike `check:release-version`, whose
+  assertions are false on an ordinary branch. Every assertion here is true on
+  every branch, and the thing it guards has no other symptom.
+- **`manifest.json` records the source's SHA-256** because nothing else can
+  notice that the artwork was replaced and the sizes were not: the stale PNGs
+  are valid files at the right dimensions showing the previous icon.
+- **`linuxWindowIcon()` is a separate surface from the launcher icon.** X11 and
+  Wayland give a window its icon either from `_NET_WM_ICON`, which Electron only
+  sets when handed an `icon`, or by matching WM_CLASS against an installed
+  `.desktop` entry — and the second route does not exist for an AppImage run out
+  of the downloads folder. So `extraResources` stages the 256px file beside the
+  packaged app, outside the asar because the loader is native code that does not
+  go through Electron's asar shim. 256 and not 1024: `_NET_WM_ICON` is
+  uncompressed ARGB over the wire.
 
 ## Supply chain
 
