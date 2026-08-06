@@ -36,7 +36,10 @@ const api: BoxwardenApi = {
   start: (id) => ipcRenderer.invoke(IPC.start, id),
   stop: (id) => ipcRenderer.invoke(IPC.stop, id),
   listEditors: () => ipcRenderer.invoke(IPC.listEditors),
-  openInEditor: (id, editorId) => ipcRenderer.invoke(IPC.openInEditor, id, editorId),
+  // `mode` is a two-arm union, not a window handle or a path — see the note on
+  // openInEditor in shared/ipc.ts. The main process parses it back to one of
+  // its two values regardless of what arrives.
+  openInEditor: (id, editorId, mode) => ipcRenderer.invoke(IPC.openInEditor, id, editorId, mode),
   selectEngine: (selection) => ipcRenderer.invoke(IPC.selectEngine, selection),
   scanProjects: () => ipcRenderer.invoke(IPC.scanProjects),
   openProject: (id, editorId) => ipcRenderer.invoke(IPC.openProject, id, editorId),

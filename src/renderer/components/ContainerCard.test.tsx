@@ -128,6 +128,105 @@ describe('ContainerCard', () => {
       const button = screen.getByRole('button', { name: 'Open' });
       expect(button.getAttribute('title')).toBe('Open in VS Code Insiders');
     });
+
+    /**
+     * With a window already attached the one action becomes two, and they mean
+     * genuinely different things. Before that they would not — the CLI opens a
+     * new window either way — so the card shows one button and says "Open".
+     */
+    describe('when an editor is already attached', () => {
+      const attached = { kind: 'attached', editors: ['vscode'] } as const;
+
+      it('offers Focus and New window, and asks for the right one', async () => {
+        const container = devContainer();
+        const { onOpen } = renderCard(container, { editor: attached });
+
+        await userEvent.click(screen.getByRole('button', { name: 'Focus VS Code' }));
+        // No mode argument at all: the default is to focus, decided once in
+        // the ViewModel rather than restated by every caller.
+        expect(onOpen.mock.calls.at(-1)).toEqual([container]);
+
+        await userEvent.click(
+          screen.getByRole('button', { name: /new VS Code window on this container/i }),
+        );
+        expect(onOpen.mock.calls.at(-1)).toEqual([container, 'new-window']);
+      });
+
+      it('shows only one action while nothing is attached', () => {
+        renderCard(devContainer(), { editor: { kind: 'none' } });
+        expect(screen.queryByRole('button', { name: /new VS Code window/i })).toBeNull();
+        expect(screen.getByRole('button', { name: 'Open in VS Code' })).toBeDefined();
+      });
+
+      /** A container with nowhere to open has nowhere to open twice, either. */
+      it('disables both when there is no workspace folder', () => {
+        const { workspaceFolder: _omitted, ...rest } = devContainer();
+        renderCard(rest as DevContainer, { editor: attached });
+
+        expect(screen.getByRole('button', { name: 'Focus VS Code' }).hasAttribute('disabled')).toBe(
+          true,
+        );
+        expect(
+          screen.getByRole('button', { name: /new VS Code window/i }).hasAttribute('disabled'),
+        ).toBe(true);
+      });
+    });
+  });
+
+  /**
+   * The rows layout has one line per container, so the attached-editor badge
+   * shortens to a mark. It used to shorten to `⧉` — the same two-window glyph
+   * whatever was attached — which on a list whose purpose is telling containers
+   * apart said only "an editor, some editor".
+   */
+  describe('the attached-editor badge in the rows layout', () => {
+    it('draws a mark per attached editor rather than a generic glyph', () => {
+      const { dom } = renderCard(devContainer(), {
+        dense: true,
+        editor: { kind: 'attached', editors: ['vscode', 'cursor'] },
+      });
+
+      const badge = dom.querySelector('.badge-editor');
+      expect(badge?.querySelectorAll('svg.editor-glyph')).toHaveLength(2);
+      expect(badge?.textContent).not.toContain('⧉');
+      // No <title> on any of them: an SVG title is a TOOLTIP and would win over
+      // the badge's own inside the shape's box, so hovering the mark would
+      // replace the explanation with a bare product name. The names live in
+      // `aria-label` and `title` on the badge, asserted just below.
+      expect(badge?.querySelectorAll('title')).toHaveLength(0);
+      expect(badge?.getAttribute('aria-label')).toBe('VS Code, Cursor attached');
+    });
+
+    /** Nothing is lost to a reader who cannot see the shape. */
+    it('still names the editors in the badge label', () => {
+      const { dom } = renderCard(devContainer(), {
+        dense: true,
+        editor: { kind: 'attached', editors: ['vscode'] },
+      });
+      expect(dom.querySelector('.badge-editor')?.getAttribute('aria-label')).toBe(
+        'VS Code attached',
+      );
+    });
+
+    it('spells the editors out in the layouts that have room', () => {
+      const { dom } = renderCard(devContainer(), {
+        editor: { kind: 'attached', editors: ['vscode'] },
+      });
+      const badge = dom.querySelector('.badge-editor');
+      expect(badge?.textContent).toBe('VS Code');
+      expect(badge?.querySelector('svg')).toBeNull();
+    });
+
+    /** `unknown` is "could not read the process table", so there is no mark. */
+    it('keeps the question mark when it could not tell', () => {
+      const { dom } = renderCard(devContainer(), {
+        dense: true,
+        editor: { kind: 'unknown', reason: 'top failed' },
+      });
+      const badge = dom.querySelector('.badge-editor');
+      expect(badge?.querySelector('svg')).toBeNull();
+      expect(badge?.textContent).toBe('?');
+    });
   });
 
   describe('the Terminal button', () => {
@@ -371,18 +470,50 @@ describe('ContainerCard', () => {
     });
 
     /**
-     * Rows layout is one line per container, so the badge shortens to a bare
-     * count — the same trade the image row and the primary button make. The
-     * full text stays reachable through `title`, and the accessible name stays
-     * the long one so a screen reader is not left with "2".
+     * Rows layout is one line per container, so the word goes and the mark
+     * stays — the same trade the image row and the primary button make. One
+     * session leaves NO text at all: the mark already means "a session is
+     * running", and a `1` beside it is the same fact twice. The full text
+     * stays reachable through `title`, and the accessible name stays the long
+     * one so a screen reader is not left with a bare shape.
      */
-    it('shortens under dense but keeps the full text in title', () => {
-      renderCard(devContainer(), { dense: true, claude: oneSession });
+    it('shortens under dense to the mark alone, keeping the full text in title', () => {
+      const { dom } = renderCard(devContainer(), { dense: true, claude: oneSession });
 
       const badge = screen.getByLabelText('Claude');
-      expect(badge.textContent).toBe('1');
+      expect(badge.textContent).toBe('');
+      expect(dom.querySelector('.badge-claude svg')).not.toBeNull();
       expect(badge.getAttribute('title')).toContain('A Claude Code session is running');
       expect(badge.getAttribute('title')).toContain('pid 412');
+    });
+
+    it('keeps the count beside the mark when there is more than one', () => {
+      renderCard(devContainer(), {
+        dense: true,
+        claude: {
+          kind: 'running',
+          sessions: [
+            { pid: 412, command: 'claude', elapsed: '1h12m33.0s' },
+            { pid: 907, command: 'claude', elapsed: '4m8.0s' },
+          ],
+        },
+      });
+      expect(screen.getByLabelText('Claude ×2').textContent).toBe('×2');
+    });
+
+    /**
+     * The mark is drawn in EVERY layout, unlike the editor marks beside it —
+     * there is only one product here, so the shape is not distinguishing
+     * between several, it is the fastest way to recognise the badge. The WORD
+     * stays wherever it fits, because this badge guards a destructive click
+     * and a bare asterisk means nothing to somebody seeing it for the first
+     * time.
+     */
+    it('draws the mark alongside the word where there is room', () => {
+      const { dom } = renderCard(devContainer(), { claude: oneSession });
+      const badge = dom.querySelector('.badge-claude');
+      expect(badge?.querySelector('svg')).not.toBeNull();
+      expect(badge?.textContent).toBe('Claude');
     });
 
     /**
@@ -428,11 +559,29 @@ describe('ContainerCard', () => {
     });
 
     it('abbreviates a detached HEAD and keeps the whole id in the title', () => {
-      renderCard(devContainer(), {
+      const { dom } = renderCard(devContainer(), {
         git: { kind: 'detached', commit: '4f2c1ab9d3e5f70123456789abcdef0123456789' },
       });
-      const chip = screen.getByText('4f2c1ab');
-      expect(chip.getAttribute('title')).toContain('4f2c1ab9d3e5f70123456789abcdef0123456789');
+      // The title is on the CHIP, not on the name inside it — the name is its
+      // own element only so it has something to ellipsise.
+      expect(screen.getByText('4f2c1ab').className).toBe('branch-chip-name');
+      expect(dom.querySelector('.branch-chip')?.getAttribute('title')).toContain(
+        '4f2c1ab9d3e5f70123456789abcdef0123456789',
+      );
+    });
+
+    /**
+     * The name is wrapped rather than left as a bare text node, and that is not
+     * cosmetic: `text-overflow` has nothing to act on inside a flex container,
+     * so an unwrapped name is CLIPPED to nothing as the chip narrows — leaving
+     * a lone `⎇` that reads as a rendering fault rather than as a truncation.
+     */
+    it('wraps the name in its own element so it can ellipsise', () => {
+      const { dom } = renderCard(devContainer(), {
+        git: { kind: 'branch', branch: 'claude/windows-terminal-devcontainer-niu6gp' },
+      });
+      const name = dom.querySelector('.branch-chip .branch-chip-name');
+      expect(name?.textContent).toBe('claude/windows-terminal-devcontainer-niu6gp');
     });
 
     /**

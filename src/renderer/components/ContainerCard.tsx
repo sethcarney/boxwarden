@@ -4,12 +4,14 @@ import type {
   EditorAttachment,
   EditorId,
   GitStatus,
+  OpenInEditorMode,
 } from '../../models/index.js';
 import { canStart, canStop, hostPathLabel, statusLabel } from '../format.js';
 import {
   branchChip,
   cardTitle,
   claudeBadge,
+  editorActions,
   editorBadge,
   stopWarning,
   openBlockedReason,
@@ -18,6 +20,8 @@ import {
   terminalBlockedReason,
   visiblePorts,
 } from '../presenters.js';
+import { ClaudeGlyph } from './ClaudeGlyph.js';
+import { EditorGlyph } from './EditorGlyph.js';
 import { StartupCommandField } from './StartupCommandField.js';
 import { StatusDot } from './StatusDot.js';
 
@@ -71,7 +75,8 @@ interface Props {
   readonly git?: GitStatus | undefined;
   readonly onStart: (container: DevContainer) => void;
   readonly onStop: (container: DevContainer) => void;
-  readonly onOpen: (container: DevContainer) => void;
+  /** `mode` is omitted for the ordinary open; the card only passes it for "New window". */
+  readonly onOpen: (container: DevContainer, mode?: OpenInEditorMode) => void;
   readonly onOpenTerminal: (container: DevContainer) => void;
   readonly onStartupCommandChange: (container: DevContainer, command: string) => void;
 }
@@ -112,6 +117,7 @@ export function ContainerCard({
   const attached = editorBadge(editor);
   const branch = branchChip(git);
   const warning = stopWarning([claude], [editor]);
+  const actions = editorActions(editor, editorName, blocked, dense);
 
   return (
     <article className={`card${unresolved ? ' card-degraded' : ''}`}>
@@ -132,7 +138,11 @@ export function ContainerCard({
               <span className="branch-chip-icon" aria-hidden="true">
                 ⎇
               </span>
-              {branch.text}
+              {/* Wrapped rather than left as a bare text node: `text-overflow`
+                  has nothing to act on inside a flex container, so an
+                  unwrapped name is CLIPPED to nothing on a narrow window
+                  instead of ellipsised to `clau…`. */}
+              <span className="branch-chip-name">{branch.text}</span>
             </span>
           )}
           {/* Nothing at all for `absent` — see the note on sshAgentBadge. */}
@@ -155,7 +165,17 @@ export function ContainerCard({
               title={attached.title}
               aria-label={`${attached.label} attached`}
             >
-              {dense ? attached.denseLabel : attached.label}
+              {/* Rows layout draws the editors' own marks rather than a name
+                  it has no width for. The mark is what a user recognises
+                  without reading, which is the whole job of a one-line row —
+                  and unlike the generic glyph it replaces, it says WHICH
+                  editor. `aria-label` above carries the names regardless, so
+                  nothing is lost to a reader who cannot see the shape. */}
+              {dense && attached.editors.length > 0
+                ? attached.editors.map((flavour) => <EditorGlyph key={flavour} flavour={flavour} />)
+                : dense
+                  ? attached.denseLabel
+                  : attached.label}
             </span>
           )}
           {badge !== undefined && (
@@ -164,6 +184,19 @@ export function ContainerCard({
               title={badge.title}
               aria-label={badge.label}
             >
+              {/* The mark in BOTH layouts, unlike the editor badge beside it,
+                  which only draws one when it has no room for a name. There is
+                  only ever one product here, so the shape is not being asked
+                  to distinguish between several — it is the fastest way to
+                  recognise the badge, which is worth its width even where
+                  there is room for text.
+
+                  The WORD stays wherever it fits, though, and the redundancy
+                  is deliberate: this badge guards a destructive click, and a
+                  bare orange asterisk means nothing to somebody who has not
+                  seen it before. Only the rows layout, which has no room for
+                  it, falls back to the mark plus a count. */}
+              <ClaudeGlyph />
               {dense ? badge.denseLabel : badge.label}
             </span>
           )}
@@ -225,13 +258,30 @@ export function ContainerCard({
           type="button"
           className="primary"
           disabled={busy || blocked !== undefined}
-          title={blocked ?? `Open in ${editorName}`}
+          title={actions.open.title}
           onClick={() => {
             onOpen(container);
           }}
         >
-          {dense ? 'Open' : `Open in ${editorName}`}
+          {actions.open.label}
         </button>
+
+        {/* Only once an editor is attached — see `editorActions`. Until then
+            the two buttons would do the same thing under different names. */}
+        {actions.newWindow !== undefined && (
+          <button
+            type="button"
+            className="secondary-open"
+            disabled={busy || blocked !== undefined}
+            title={actions.newWindow.title}
+            aria-label={`Open a new ${editorName} window on this container`}
+            onClick={() => {
+              onOpen(container, 'new-window');
+            }}
+          >
+            {actions.newWindow.label}
+          </button>
+        )}
 
         <button
           type="button"

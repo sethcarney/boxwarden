@@ -180,7 +180,12 @@ error crosses IPC as an opaque string with the real message buried.
 
 Every verb that acts on a container or a project takes an **ID**. The main
 process resolves it against its own copy from the last scan and never acts on
-renderer-supplied data: `openInEditor` will not take a host path,
+renderer-supplied data. `openInEditor`'s optional `mode` is the one thing
+alongside an id that any container verb accepts, and it is safe on the same
+terms as `updateStatus(force)`: a closed two-arm union, parsed in the main
+process by `parseOpenInEditorMode`, that cannot name a path, a window or a
+binary — and whose default is the less destructive arm. Otherwise:
+`openInEditor` will not take a host path,
 `openProject` will not take a folder, `openTerminal` will not take a startup
 command — it reads its own stored copy — and `claudeStatus` and `gitStatus`
 drop any id that is not in the last scan. `gitStatus` is the sharpest case of
@@ -372,18 +377,67 @@ purely in `src/main/terminal/command.ts` and spawned by `launch.ts`.
   the endpoint the container was last seen on. This app connects to every engine
   that answers; the engine selection narrows what it LISTS but does not reach
   the CLI, so leaving the choice to the CLI's default means "no such container"
-  for one that is on screen. A WSL socket runs `wsl.exe -d <distro> --` and
-  names the CLI bare, on the Linux side.
-- **`sh` is never a LOGIN shell, because `/bin/sh` is dash.** The exec is
-  `sh -c <bootstrap> <script>`, and the bootstrap execs `bash -lc "$0"`. Giving
-  `sh` a `-l` makes dash source `/etc/profile` and `~/.profile`, which in a dev
-  container are written for bash — and dash's `echo` interprets backslash
-  escapes where bash's does not, so a prompt definition came out as raw escape
-  sequences and a system bell before the real shell started. The script rides as
-  the operand POSIX turns into `$0`, so it stays its own argv element and a
-  user-authored startup command never needs a second layer of quoting. The
-  `sh -lc` fallback survives only for an image with no bash, where dash IS the
+  for one that is on screen. A WSL socket runs `wsl.exe -d <distro> --exec` and
+  names the CLI bare, on the Linux side — **`--exec` and not `--`**, because
+  without it `wsl.exe` runs the command line through the distro's default
+  shell, which parses the payload before `docker` ever sees it.
+- **No argv element may contain a double quote, a newline or a semicolon.**
+  This is the rule the whole module is shaped around, and it exists because an
+  argv array is only inert if every layer between here and the container passes
+  it along unchanged — which on Windows two layers do not. `wt new-tab a b c`
+  JOINS its arguments back into one command line, wrapping a spaced argument in
+  double quotes and doing nothing about the double quotes already inside it;
+  and `wsl.exe` without `--exec` hands the line to the distro's default shell,
+  which parses it a second time. `;` is `wt`'s own subcommand separator.
+  Spaces are fine. The rule is kept by ENCODING (`encodeShellScript`, base64)
+  rather than by escaping, because escaping means modelling three parsers
+  correctly and encoding means modelling none — and it is pinned by a property
+  test over the whole argv, on every transport.
+- **Nothing is ever a LOGIN shell — the profile is sourced by the SCRIPT,
+  quietly.** The exec is `sh -c <bootstrap> <base64 script>`; the bootstrap
+  decodes the script into a file and runs `bash` on it, and the script's
+  `PROFILE` block sources `/etc/profile` and the first of
+  `~/.bash_profile`/`~/.bash_login`/`~/.profile` **with stdout to
+  `/dev/null`**. This is `userEnvProbe` in one shell: the environment is kept,
+  the chatter is not.
+
+  That is the third fix for one symptom, and each round moved the cause:
+  1. `sh -lc` made a login shell out of dash, which sourced bash's profile and
+     mangled the prompt with its escape-interpreting `echo`.
+  2. The fix for that put `"$0"` in the bootstrap, which Windows Terminal and
+     `wsl.exe` chewed up — so the BOOTSTRAP arrived damaged and `sh` ran the
+     profile anyway. Hence the encoding and a quote-free bootstrap.
+  3. It still appeared **once, on the first load** — and "once" is the whole
+     diagnosis. A mangled command line is wrong forever; a login file printing
+     on the way past is wrong exactly once. Some profile script in the image
+     ECHOES its `PS1` rather than assigning it, and `bash -l` put that on the
+     developer's screen. **VS Code's terminal is not a login shell**, which is
+     why nobody sees it there.
+
+  **BOTH streams are discarded**, and that reverses a call made in round 3.
+  Keeping stderr looked careful — the garbage is a successful `echo`, so why
+  hide a real failure? — and it was wrong twice: the noise turned out to be on
+  stderr, and a login file's stderr in a terminal window is not a diagnostic
+  anybody acts on. It is the line VS Code draws too. The search order is bash's
+  own, first match only — sourcing all three would run `~/.profile` on a
+  machine where `~/.bash_profile` exists to replace it.
+
+  **What this deliberately does NOT silence** is `~/.bashrc` under the final
+  interactive shell. That is the one VS Code runs as well, so noise from there
+  is a dotfile bug rather than something boxwarden should be hiding. `bash -lc
+true` versus `bash -ic true`, run in the container, is how the two are told
+  apart.
+  The `sh` fallback survives only for an image with no bash, where dash IS the
   shell those files were written for.
+
+- **The script owns removing the file the bootstrap wrote** (`rm -f -- "$0"`, its
+  first line). Unlinking a script a shell is part-way through reading is safe —
+  the descriptor keeps the inode alive — and it is what stops a long-lived
+  container accumulating one file per terminal opened.
+- **The last `exec` in the bootstrap is not in a subshell.** `exec` inside
+  `( … )` replaces the subshell and leaves the parent `sh` waiting underneath,
+  which is the "Ctrl-D twice to close the window" bug the script already avoids
+  at its own end.
 - **The handover is `exec "${BASH:-sh}" -i`, interactive rather than login.**
   The profile was sourced once by the bootstrap's `bash -lc`; asking for `-l`
   again is how PATH ends up with every entry twice. `$BASH` is set by bash and
@@ -495,12 +549,46 @@ would double the poll's Docker traffic to learn nothing extra.
 - **Matched as a PATH SEGMENT** (`/.vscode-server/`), never as a bare word —
   the lesson `looksLikeClaudeCode` learned. Insiders is listed before stable
   because `.vscode-server-insiders` has `.vscode-server` as a prefix.
+- **The rows layout draws each editor's own mark** (`EditorGlyph.tsx`), not a
+  generic one. It was `⧉` — the same two-window glyph whatever was attached, on
+  a list whose entire job is telling containers apart. The marks come from
+  `react-icons`, which carries each product's real logo including a distinct
+  one for Insiders; the table is flavour → component, the same shape as
+  `editor/targets.ts`. Three rules hold it together:
+  - **`react-icons` is a devDependency, and that is not a filing error.** Vite
+    inlines the icons at build time, while electron-builder copies every
+    PRODUCTION dependency into `app.asar` verbatim — so in `dependencies` it
+    would ship 85 MB inside every installer to deliver four path strings that
+    were already in the bundle. `bunx asar list release/linux-unpacked/resources/app.asar`
+    is how that was confirmed, and how to confirm it again.
+  - **The codicons are CC BY 4.0, so attribution is required**, not courteous.
+    It lives in `docs/supply-chain.md`, which is the closed set to update when
+    an editor is added — same failure mode as `ALLOWED_EXTERNAL_ORIGINS`:
+    nothing breaks, and the obligation is silently unmet.
+  - **Colours stay in `styles.css`**, on a class per flavour, for the reason
+    every colour here is: one picked against the dark surface is the one that
+    vanishes on the light one. Cursor and Windsurf are near-black by brand and
+    so take the badge's own per-theme text colour instead.
+
+  The presenter supplies `{ flavour, name }` pairs because a View may not call
+  `editorDisplayName`; the lint rule enforces that.
+
 - **boxwarden cannot close the window, and does not try.** The `code` CLI can
   open windows and install extensions; it cannot enumerate or close them, and
   killing the host process would take unsaved buffers with it. So Stop is
   ANNOTATED, the same as it is for a Claude session — `stopWarning` folds both,
   and words them differently on purpose: an agent is ENDED by stopping, a window
   is STRANDED by it.
+- **It also decides how many buttons the card has.** With a window attached, the
+  primary action becomes **Focus** and a quieter **New window** appears beside
+  it (`editorActions` in `presenters.ts`, `OpenInEditorMode` in the models).
+  The split exists ONLY then: with nothing attached the two would do the same
+  thing under different names, since the CLI opens a new window either way.
+  `reuse` passes NO flag, because the CLI's own default is to resolve the folder
+  URI against the open windows and raise the one that matches — `--reuse-window`
+  would be a different and worse thing, taking over whichever window was last
+  active. `--new-window` is therefore the only flag in the table, and the
+  asymmetry is the design rather than an omission.
 
 ### The workspace branch
 

@@ -19,6 +19,7 @@ import type {
   ClaudeStatus,
   DevContainer,
   EditorAttachment,
+  EditorFlavour,
   EndpointProbe,
   EngineSelection,
   GitStatus,
@@ -124,6 +125,72 @@ export function openBlockedReason(
   }
   if (!editorAvailable) return `${editorName} was not found on this machine.`;
   return undefined;
+}
+
+/**
+ * What the card's editor buttons say, and how many there are.
+ *
+ * One action or two, decided here rather than in the card, because the decision
+ * is the interesting part: **the second button only appears when an editor is
+ * already attached.** Offering "New window" on a container nobody has open is
+ * offering a distinction without a difference — the CLI opens a new window
+ * either way — and a permanently-present button that changes meaning silently
+ * is worse than one that appears when it starts to matter.
+ *
+ * When one IS attached the two are genuinely different things, and the labels
+ * say which is which: `open` focuses the window that exists, `newWindow` adds
+ * a second on the same container. Two windows on one dev container is an
+ * ordinary way to work — one per branch, one per agent — so this is not an
+ * escape hatch, it is the other half of the feature.
+ *
+ * `blocked` wins over both: a container with no workspace folder has nothing to
+ * open in any number of windows.
+ */
+export interface EditorAction {
+  readonly label: string;
+  readonly title: string;
+}
+
+export interface EditorActions {
+  readonly open: EditorAction;
+  /** Absent unless an editor is attached — see above. */
+  readonly newWindow: EditorAction | undefined;
+}
+
+export function editorActions(
+  attachment: EditorAttachment | undefined,
+  editorName: string,
+  blocked: string | undefined,
+  dense: boolean,
+): EditorActions {
+  if (attachment?.kind !== 'attached') {
+    return {
+      open: {
+        label: dense ? 'Open' : `Open in ${editorName}`,
+        title: blocked ?? `Open in ${editorName}`,
+      },
+      newWindow: undefined,
+    };
+  }
+
+  const names = attachment.editors.map(editorDisplayName).join(', ');
+  return {
+    open: {
+      label: dense ? 'Focus' : `Focus ${editorName}`,
+      title:
+        blocked ??
+        // Says what it does AND why it can: the window is found by the folder
+        // URI, so this raises the one showing THIS container rather than
+        // whatever was last in front.
+        `Bring the ${names} window already attached to this container to the front. Nothing new is opened.`,
+    },
+    newWindow: {
+      label: dense ? '+' : 'New window',
+      title:
+        blocked ??
+        `Open a SECOND ${editorName} window on this container, alongside the one already attached.`,
+    },
+  };
 }
 
 /**
@@ -344,7 +411,18 @@ export function branchChip(status: GitStatus | undefined): BranchChip | undefine
  */
 export interface ClaudeBadge {
   readonly label: string;
-  /** Even shorter, for the rows layout — a count with no word in front of it. */
+  /**
+   * What sits beside the mark — the count, and only when it is worth stating.
+   *
+   * The card draws the Claude mark in both layouts, so the word "Claude" is
+   * carried by the shape and this is what the shape cannot say. One session is
+   * therefore the EMPTY string: the mark already means "a session is running",
+   * and a `1` next to it is the same fact twice.
+   *
+   * `?` is the one case where this is not a count, and it has to render — a
+   * card with no badge is a card saying stopping is safe, and "we could not
+   * tell" must not borrow that meaning.
+   */
   readonly denseLabel: string;
   readonly title: string;
   readonly tone: 'running' | 'unknown';
@@ -370,7 +448,7 @@ export function claudeBadge(status: ClaudeStatus | undefined): ClaudeBadge | und
       const count = status.sessions.length;
       return {
         label: count === 1 ? 'Claude' : `Claude ×${String(count)}`,
-        denseLabel: count === 1 ? '1' : String(count),
+        denseLabel: count === 1 ? '' : `×${String(count)}`,
         title: [
           count === 1
             ? 'A Claude Code session is running in this container.'
@@ -463,6 +541,19 @@ export function stopWarning(
 export interface EditorBadge {
   readonly label: string;
   readonly denseLabel: string;
+  /**
+   * Which editors, for the rows layout to draw a mark per flavour.
+   *
+   * Empty for `unknown`, which is the arm where there is no flavour to name —
+   * and where `denseLabel` is a question mark for the reason that arm exists at
+   * all.
+   *
+   * Flavours and not names, because the marks carry no `<title>`: an SVG title
+   * is a tooltip that would win over the badge's own inside the shape's box.
+   * The names are already in `label` and `title`, which is where a reader who
+   * cannot see a shape finds them.
+   */
+  readonly editors: readonly EditorFlavour[];
   readonly title: string;
   readonly tone: 'attached' | 'unknown';
 }
@@ -479,6 +570,7 @@ export function editorBadge(attachment: EditorAttachment | undefined): EditorBad
       return {
         label: 'Editor ?',
         denseLabel: '?',
+        editors: [],
         title: `Could not tell whether an editor is attached to this container: ${attachment.reason}`,
         tone: 'unknown',
       };
@@ -487,7 +579,11 @@ export function editorBadge(attachment: EditorAttachment | undefined): EditorBad
       const names = attachment.editors.map(editorDisplayName).join(', ');
       return {
         label: names,
-        denseLabel: '⧉',
+        // Only reached if the icons cannot render at all. It used to be `⧉` —
+        // a generic pair of windows that says an editor is attached and cannot
+        // say WHICH, on a card whose whole job is telling containers apart.
+        denseLabel: names,
+        editors: attachment.editors,
         title: [
           `${names} ${attachment.editors.length === 1 ? 'is' : 'are'} attached to this container.`,
           'Detected from the editor server running inside it, which outlives the window by a few minutes — so this can linger briefly after you close one.',

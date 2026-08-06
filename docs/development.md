@@ -234,7 +234,7 @@ resolves a real emulator and builds a real exec line, then fails at the daemon
 that is not there — which is the correct outcome, and still exercises emulator
 resolution, quoting, and the startup-command round trip. Because the fixtures
 round-robin across the three fake engines, one in three of them produces a
-`wsl.exe -d dev --` command line, which is the arm of `containerExecArgv` least
+`wsl.exe -d dev --exec` command line, which is the arm of `containerExecArgv` least
 likely to be looked at otherwise.
 
 ## Why there is no in-app download
