@@ -25,20 +25,68 @@ export interface DisclosureViewModel {
  * genuinely stateful decision widens. Keeping it in this layer also means the
  * slice-and-count pairing above is unit-testable without mounting anything.
  */
-export function useDisclosure(initiallyExpanded = false): DisclosureViewModel {
-  const [expanded, setExpanded] = useState(initiallyExpanded);
+/**
+ * Read a remembered open/closed state, falling back to the default.
+ *
+ * Same shape and the same failure posture as `loadView`: a disabled or full
+ * store is not worth interrupting anyone over, so it degrades to the default
+ * for this run rather than throwing during a render.
+ */
+function loadExpanded(key: string | undefined, fallback: boolean): boolean {
+  if (key === undefined) return fallback;
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw === null ? fallback : raw === 'true';
+  } catch {
+    return fallback;
+  }
+}
+
+function saveExpanded(key: string, expanded: boolean): void {
+  try {
+    window.localStorage.setItem(key, String(expanded));
+  } catch {
+    // See `saveView` — the choice still applies for this run.
+  }
+}
+
+export function useDisclosure(
+  initiallyExpanded = false,
+  /**
+   * Remember the state under this key, in localStorage.
+   *
+   * Optional because the two things this hook does are different in kind. A
+   * truncated LIST re-collapses on every render of a fresh scan and should:
+   * "show 12 more" is about one listing. A PANEL the user folded away is a
+   * standing preference, and re-opening it on every launch is how a collapse
+   * button stops being used. localStorage and not `preferences.json`, for the
+   * reason the layout is there too — the main process makes no decision from it.
+   */
+  storageKey?: string,
+): DisclosureViewModel {
+  // A lazy initialiser, so a panel the user collapsed is not painted open for
+  // one frame and then folded — the same reason `loadView` is one.
+  const [expanded, setExpanded] = useState(() => loadExpanded(storageKey, initiallyExpanded));
+
+  const remember = useCallback(
+    (next: boolean) => {
+      if (storageKey !== undefined) saveExpanded(storageKey, next);
+      return next;
+    },
+    [storageKey],
+  );
 
   const expand = useCallback(() => {
-    setExpanded(true);
-  }, []);
+    setExpanded(remember(true));
+  }, [remember]);
 
   const collapse = useCallback(() => {
-    setExpanded(false);
-  }, []);
+    setExpanded(remember(false));
+  }, [remember]);
 
   const toggle = useCallback(() => {
-    setExpanded((value) => !value);
-  }, []);
+    setExpanded((value) => remember(!value));
+  }, [remember]);
 
   const reveal = useCallback(
     <T>(items: readonly T[], limit: number) => {

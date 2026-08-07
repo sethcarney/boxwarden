@@ -30,6 +30,22 @@ function vsCodeBundle(bundleId: string): EditorDiscovery {
   };
 }
 
+/**
+ * Cursor's bundle ships its CLI as `bin/cursor`, not `bin/code`.
+ *
+ * `vsCodeBundle` hardcodes the latter, which is right for the two Microsoft
+ * builds and wrong here — a Cursor installed outside /Applications would fail
+ * the bundle strategy and then miss the hardcoded /Applications path below it,
+ * so it would not be found at all.
+ */
+function cursorBundle(): EditorDiscovery {
+  return {
+    kind: 'macos-bundle',
+    bundleId: 'com.todesktop.230313mzl4w4u92',
+    cliRelativePath: 'Contents/Resources/app/bin/cursor',
+  };
+}
+
 const TARGETS: Record<KnownEditorId, EditorTarget> = {
   vscode: {
     id: 'vscode',
@@ -83,13 +99,25 @@ const TARGETS: Record<KnownEditorId, EditorTarget> = {
     displayName: 'Cursor',
     discovery: [
       { kind: 'path-lookup', command: 'cursor' },
-      vsCodeBundle('com.todesktop.230313mzl4w4u92'),
+      cursorBundle(),
       {
         kind: 'well-known-dir',
         paths: [
           '/Applications/Cursor.app/Contents/Resources/app/bin/cursor',
           '/usr/bin/cursor',
           '/usr/local/bin/cursor',
+          // The CLI shim, BEFORE the executable beside it, and that order is
+          // the fix for a real bug rather than a preference: Cursor.exe no
+          // longer opens the IDE — it opens the agents surface, with a button
+          // to get from there to an editor — so resolving to it produces a
+          // window with no workspace in it. The shim is the documented way to
+          // open a folder and lands in the IDE directly.
+          //
+          // A `.cmd`, which needs `cmd.exe /c` to run at all; see
+          // src/models/windows-launch.ts. Costless to list even if a given
+          // install does not have it — a path that is not there simply falls
+          // through to the next entry, which is the previous behaviour.
+          '%LOCALAPPDATA%\\Programs\\cursor\\resources\\app\\bin\\cursor.cmd',
           '%LOCALAPPDATA%\\Programs\\cursor\\Cursor.exe',
         ],
       },
@@ -114,6 +142,9 @@ const TARGETS: Record<KnownEditorId, EditorTarget> = {
           '/Applications/Windsurf.app/Contents/Resources/app/bin/windsurf',
           '/usr/bin/windsurf',
           '/usr/local/bin/windsurf',
+          // Same shape as Cursor's, and listed for the same reason — the shim
+          // is the documented entry point. Unverified against a real install.
+          '%LOCALAPPDATA%\\Programs\\Windsurf\\resources\\app\\bin\\windsurf.cmd',
           '%LOCALAPPDATA%\\Programs\\Windsurf\\Windsurf.exe',
         ],
       },

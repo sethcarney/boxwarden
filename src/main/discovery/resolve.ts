@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { platform } from 'node:os';
 import { promisify } from 'node:util';
 import type { BinaryDiscovery, ResolvedBinary } from '../../models/index.js';
+import { isWindowsShim } from '../../models/index.js';
 
 /**
  * Find a program on this machine, given an ordered list of strategies.
@@ -47,8 +48,30 @@ export function isSpawnableOnWindows(path: string): boolean {
  * spawn with ENOENT, a message that sends the user looking for a missing file
  * that is right there.
  */
-async function isExecutable(path: string, os: NodeJS.Platform): Promise<boolean> {
-  if (os === 'win32' && !isSpawnableOnWindows(path)) return false;
+/**
+ * `allowShim` is what separates a path WE named from one PATH happened to
+ * return, and the distinction is deliberate.
+ *
+ * A `.cmd` cannot be spawned directly (see `WINDOWS_SPAWNABLE_EXTENSIONS`), but
+ * it CAN be run through `cmd.exe /c` when every argument is inert — see
+ * src/models/windows-launch.ts. That is worth doing for a path the target table
+ * chose or the user configured, because those are deliberate: Cursor's own CLI
+ * shim is the right program to launch and the executable beside it is not.
+ *
+ * It is NOT worth doing for `path-lookup`, which returns whatever the PATH
+ * happens to hold in whatever order. VS Code ships `bin\code` (a bash script)
+ * ahead of `bin\code.cmd` there, and quietly switching it from the `Code.exe`
+ * it resolves today to a shim behind an extra parsing layer would be a
+ * behaviour change to a working path, made for no reason.
+ */
+async function isExecutable(
+  path: string,
+  os: NodeJS.Platform,
+  allowShim = false,
+): Promise<boolean> {
+  if (os === 'win32' && !isSpawnableOnWindows(path) && !(allowShim && isWindowsShim(path))) {
+    return false;
+  }
   try {
     await access(path, constants.X_OK);
     return true;
@@ -147,7 +170,8 @@ async function tryStrategy(
 ): Promise<string | undefined> {
   switch (strategy.kind) {
     case 'explicit-path':
-      return (await isExecutable(strategy.binaryPath, os)) ? strategy.binaryPath : undefined;
+      // The user named this one, so a shim is allowed — see `isExecutable`.
+      return (await isExecutable(strategy.binaryPath, os, true)) ? strategy.binaryPath : undefined;
 
     case 'path-lookup': {
       const found = await pathLookup(strategy.command, os);
@@ -165,7 +189,8 @@ async function tryStrategy(
         // Windows entries carry %LOCALAPPDATA% / %ProgramFiles% references;
         // POSIX ones have no % in them and pass through untouched.
         const path = candidate.includes('%') ? expandWindowsPath(candidate, env) : candidate;
-        if (path !== undefined && (await isExecutable(path, os))) return path;
+        // The table named this one, so a shim is allowed — see `isExecutable`.
+        if (path !== undefined && (await isExecutable(path, os, true))) return path;
       }
       return undefined;
   }

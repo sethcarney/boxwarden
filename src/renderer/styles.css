@@ -2037,3 +2037,43 @@ button.foot-update:hover:not(:disabled) {
 .branch-count.behind {
   color: var(--text-dim);
 }
+
+/*
+ * A panel heading that is also its disclosure control.
+ *
+ * Strips the global button chrome back to nothing — this has to look like the
+ * `<h2>` it contains, not like a control sitting next to one. The whole bar is
+ * the hit target rather than a chevron beside it, which is what makes it
+ * usable without aiming.
+ */
+.disclosure-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: inherit;
+  text-align: left;
+}
+
+.disclosure-heading:hover:not(:disabled) {
+  border-color: transparent;
+  color: var(--accent);
+}
+
+.disclosure-heading h2 {
+  margin: 0;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* Fixed width so the title does not shift sideways as the caret turns. */
+.disclosure-caret {
+  flex: 0 0 auto;
+  width: 1em;
+  color: var(--text-dim);
+  font-size: 10px;
+}

@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import type { EditorTarget, OpenInEditorMode } from '../../models/index.js';
+import { cmdShimLaunch, isWindowsShim } from '../../models/index.js';
 
 /**
  * Launch an editor at a `vscode-remote://` URI.
@@ -37,7 +38,22 @@ export function launchEditor(
       mode === 'new-window'
         ? [target.newWindowFlag, target.folderUriFlag, uri]
         : [target.folderUriFlag, uri];
-    const child = spawn(binaryPath, args, {
+
+    // A `.cmd` cannot be spawned directly and must not be run with
+    // `shell: true`, so it goes through `cmd.exe /c` — and only when every
+    // argument is inert to cmd's parser. See src/models/windows-launch.ts for
+    // why that is an allowlist and why a refusal is the right failure.
+    const shim = isWindowsShim(binaryPath) ? cmdShimLaunch(binaryPath, args) : undefined;
+    if (isWindowsShim(binaryPath) && shim === undefined) {
+      reject(
+        new Error(
+          `Refusing to launch ${binaryPath} through cmd.exe: the folder URI or the path to the launcher contains a character cmd would interpret. Copy the URI and open it by hand.`,
+        ),
+      );
+      return;
+    }
+
+    const child = spawn(shim?.file ?? binaryPath, shim?.args ?? args, {
       detached: true,
       stdio: 'ignore',
       shell: false,
