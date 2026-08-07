@@ -592,37 +592,6 @@ would double the poll's Docker traffic to learn nothing extra.
   active. `--new-window` is therefore the only flag in the table, and the
   asymmetry is the design rather than an omission.
 
-### Finding an editor, and the `.cmd` problem
-
-`editor/targets.ts` is a data table; `discovery/resolve.ts` walks it. Two things
-are worth knowing before touching either:
-
-- **An editor's GUI executable is not always its IDE.** Cursor's `Cursor.exe`
-  opens the agents surface, not an editor, so resolving to it produced a window
-  with no workspace in it and looked exactly like a boxwarden bug. The CLI shim
-  beside it is the documented way to open a folder, and it is listed FIRST for
-  that reason. Never assume the `.exe` accepts `--folder-uri` because VS Code's
-  does.
-- **A `.cmd` cannot be spawned, and must not be run with `shell: true`.** Node
-  refuses one outright (CVE-2024-27980). `src/models/windows-launch.ts` runs it
-  through `cmd.exe /d /c` and makes that safe by ALLOWLIST — every argument must
-  consist only of characters cmd does not interpret, and a launch that does not
-  qualify is refused rather than escaped. Escaping means modelling cmd's parser
-  forever; this models none of it. It fails closed, and the caller still has a
-  copyable URI.
-  - A shim is only accepted from a path the TABLE named or the USER named, never
-    from `path-lookup`. PATH returns whatever order it likes — VS Code ships
-    `bin\code` ahead of `bin\code.cmd` there — and quietly moving a working
-    editor onto an extra parsing layer is a change nobody asked for.
-- **`BOXWARDEN_EDITOR_<ID>`** overrides the path for one editor
-  (`BOXWARDEN_EDITOR_CURSOR`, `BOXWARDEN_EDITOR_VSCODE_INSIDERS`). It goes at
-  the front of the discovery list. It exists because an editor can move its own
-  entry point, and when that happens this table is wrong on somebody's machine
-  until a release fixes it.
-- **The setup page lists what each editor resolved to.** Same standing
-  inventory as `EndpointAttempts` for sockets, and it exists because "found" on
-  its own cannot distinguish a CLI from a GUI binary.
-
 ### The workspace branch
 
 Each card says which branch its workspace folder is on, read from `.git/HEAD`

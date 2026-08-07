@@ -83,37 +83,3 @@ export type ResolvedEditor =
  * a raw hex string cannot be passed where a built authority is expected.
  */
 export type DevContainerAuthority = string & { readonly __brand: 'DevContainerAuthority' };
-
-/**
- * The environment variable that overrides where one editor lives.
- *
- * `BOXWARDEN_EDITOR_CURSOR`, `BOXWARDEN_EDITOR_VSCODE_INSIDERS`, and so on —
- * the id upper-cased with dashes turned into underscores.
- */
-export function editorOverrideVariable(id: EditorId): string {
-  return `BOXWARDEN_EDITOR_${id.toUpperCase().replace(/-/g, '_')}`;
-}
-
-/**
- * A user's explicit path for an editor, as a discovery strategy to put at the
- * FRONT of the target's list.
- *
- * The escape hatch the `explicit-path` arm was always shaped for, and the
- * reason to add it now is concrete: an editor can move its own entry point —
- * Cursor's executable stopped being the IDE — and when that happens the table
- * in this repo is wrong on somebody's machine until a release fixes it. A
- * variable means they are not waiting for one.
- *
- * It is a PATH and not a command line: no arguments, no shell, nothing this
- * app then has to parse. What it can do is name a different binary, which is
- * exactly the decision the table is otherwise making for them.
- */
-export function editorOverride(
-  id: EditorId,
-  env: Readonly<Record<string, string | undefined>>,
-): EditorDiscovery | undefined {
-  const binaryPath = env[editorOverrideVariable(id)]?.trim();
-  return binaryPath === undefined || binaryPath === ''
-    ? undefined
-    : { kind: 'explicit-path', binaryPath };
-}

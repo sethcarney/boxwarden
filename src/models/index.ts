@@ -133,11 +133,9 @@ export type {
   ResolvedEditor,
 } from './editor.js';
 
-export { editorOverride, editorOverrideVariable, parseOpenInEditorMode } from './editor.js';
+export { parseOpenInEditorMode } from './editor.js';
 
 export type { BinaryDiscovery, ResolvedBinary } from './discovery.js';
-export type { CmdShimLaunch } from './windows-launch.js';
-export { cmdShimLaunch, isCmdSafeArgument, isWindowsShim } from './windows-launch.js';
 
 export type {
   InstallKind,

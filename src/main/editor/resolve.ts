@@ -1,6 +1,5 @@
 import { platform } from 'node:os';
 import type { EditorTarget, ResolvedEditor } from '../../models/index.js';
-import { editorOverride } from '../../models/index.js';
 import { resolveBinary } from '../discovery/resolve.js';
 
 /**
@@ -17,13 +16,7 @@ export async function resolveEditor(
   os: NodeJS.Platform = platform(),
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): Promise<ResolvedEditor> {
-  // A user override goes at the FRONT, which is what `EditorTarget.discovery`
-  // documents as the place for one: it beats every guess this repo ships,
-  // including a well-known path that has gone stale because an editor moved
-  // its own entry point.
-  const override = editorOverride(target.id, env);
-  const strategies = override === undefined ? target.discovery : [override, ...target.discovery];
-  const found = await resolveBinary(strategies, os, env);
+  const found = await resolveBinary(target.discovery, os, env);
   return found.ok
     ? { ok: true, target, binaryPath: found.binaryPath, via: found.via }
     : { ok: false, target, code: found.code };
