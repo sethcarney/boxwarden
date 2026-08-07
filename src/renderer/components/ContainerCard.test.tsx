@@ -462,7 +462,9 @@ describe('ContainerCard', () => {
   describe('the Claude Code badge', () => {
     const oneSession: ClaudeStatus = {
       kind: 'running',
-      sessions: [{ pid: 412, command: 'claude', elapsed: '1h12m33.0s' }],
+      sessions: [
+        { pid: 412, command: 'claude', activity: { kind: 'idle' }, elapsed: '1h12m33.0s' },
+      ],
     };
 
     it('renders when a session is running', () => {
@@ -488,8 +490,8 @@ describe('ContainerCard', () => {
         claude: {
           kind: 'running',
           sessions: [
-            { pid: 412, command: 'claude', elapsed: '1h12m33.0s' },
-            { pid: 907, command: 'claude', elapsed: '4m8.0s' },
+            { pid: 412, command: 'claude', activity: { kind: 'idle' }, elapsed: '1h12m33.0s' },
+            { pid: 907, command: 'claude', activity: { kind: 'idle' }, elapsed: '4m8.0s' },
           ],
         },
       });
@@ -524,8 +526,8 @@ describe('ContainerCard', () => {
         claude: {
           kind: 'running',
           sessions: [
-            { pid: 412, command: 'claude', elapsed: '1h12m33.0s' },
-            { pid: 907, command: 'claude', elapsed: '4m8.0s' },
+            { pid: 412, command: 'claude', activity: { kind: 'idle' }, elapsed: '1h12m33.0s' },
+            { pid: 907, command: 'claude', activity: { kind: 'idle' }, elapsed: '4m8.0s' },
           ],
         },
       });
@@ -565,7 +567,10 @@ describe('ContainerCard', () => {
   describe('the Stop button when a session is live', () => {
     it('warns in the title and stays clickable', async () => {
       const { onStop } = renderCard(devContainer(), {
-        claude: { kind: 'running', sessions: [{ pid: 412, command: 'claude' }] },
+        claude: {
+          kind: 'running',
+          sessions: [{ pid: 412, command: 'claude', activity: { kind: 'idle' } }],
+        },
       });
 
       const stop = screen.getByRole('button', { name: 'Stop' });

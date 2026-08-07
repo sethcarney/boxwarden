@@ -17,7 +17,7 @@ const STOPPED = devContainer({
 
 const SESSION: ClaudeStatus = {
   kind: 'running',
-  sessions: [{ pid: 412, command: 'claude', elapsed: '1h12m33.0s' }],
+  sessions: [{ pid: 412, command: 'claude', activity: { kind: 'idle' }, elapsed: '1h12m33.0s' }],
 };
 
 describe('useClaudeStatus', () => {

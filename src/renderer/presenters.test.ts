@@ -279,7 +279,9 @@ describe('claudeBadge', () => {
   it('names one session without a count, and says what stopping costs', () => {
     const badge = claudeBadge({
       kind: 'running',
-      sessions: [{ pid: 412, command: 'claude', elapsed: '1h12m33.0s' }],
+      sessions: [
+        { pid: 412, command: 'claude', activity: { kind: 'idle' }, elapsed: '1h12m33.0s' },
+      ],
     });
     expect(badge?.label).toBe('Claude');
     expect(badge?.tone).toBe('running');
@@ -291,8 +293,8 @@ describe('claudeBadge', () => {
     const badge = claudeBadge({
       kind: 'running',
       sessions: [
-        { pid: 412, command: 'claude', elapsed: '1h12m33.0s' },
-        { pid: 907, command: 'claude', elapsed: '4m8.0s' },
+        { pid: 412, command: 'claude', activity: { kind: 'idle' }, elapsed: '1h12m33.0s' },
+        { pid: 907, command: 'claude', activity: { kind: 'idle' }, elapsed: '4m8.0s' },
       ],
     });
     expect(badge?.label).toBe('Claude ×2');
@@ -311,19 +313,24 @@ describe('claudeBadge', () => {
    */
   it('says "up" for an elapsed duration and "since" for a start time', () => {
     expect(
-      claudeBadge({ kind: 'running', sessions: [{ pid: 1, command: 'claude', elapsed: '4m8.0s' }] })
-        ?.title,
+      claudeBadge({
+        kind: 'running',
+        sessions: [{ pid: 1, command: 'claude', activity: { kind: 'idle' }, elapsed: '4m8.0s' }],
+      })?.title,
     ).toContain('up 4m8.0s');
 
     expect(
       claudeBadge({
         kind: 'running',
-        sessions: [{ pid: 1, command: 'claude', startTime: '10:31' }],
+        sessions: [{ pid: 1, command: 'claude', activity: { kind: 'idle' }, startTime: '10:31' }],
       })?.title,
     ).toContain('since 10:31');
 
     expect(
-      claudeBadge({ kind: 'running', sessions: [{ pid: 1, command: 'claude' }] })?.title,
+      claudeBadge({
+        kind: 'running',
+        sessions: [{ pid: 1, command: 'claude', activity: { kind: 'idle' } }],
+      })?.title,
     ).toContain('uptime not reported');
   });
 
@@ -358,18 +365,18 @@ describe('stopWarning', () => {
   /** The compose case: "Stop all" reaches services whose cards nobody read. */
   it('aggregates across a group and pluralises', () => {
     const one: readonly (ClaudeStatus | undefined)[] = [
-      { kind: 'running', sessions: [{ pid: 1, command: 'claude' }] },
+      { kind: 'running', sessions: [{ pid: 1, command: 'claude', activity: { kind: 'idle' } }] },
       { kind: 'none' },
     ];
     expect(stopWarning(one)).toBe('A Claude Code session is running in here. Stopping ends it.');
 
     const several: readonly (ClaudeStatus | undefined)[] = [
-      { kind: 'running', sessions: [{ pid: 1, command: 'claude' }] },
+      { kind: 'running', sessions: [{ pid: 1, command: 'claude', activity: { kind: 'idle' } }] },
       {
         kind: 'running',
         sessions: [
-          { pid: 2, command: 'claude' },
-          { pid: 3, command: 'claude' },
+          { pid: 2, command: 'claude', activity: { kind: 'idle' } },
+          { pid: 3, command: 'claude', activity: { kind: 'idle' } },
         ],
       },
     ];
@@ -399,7 +406,7 @@ describe('stopWarning and the editor', () => {
 
   it('carries both warnings at once, since Stop does both things', () => {
     const warning = stopWarning(
-      [{ kind: 'running', sessions: [{ pid: 1, command: 'claude' }] }],
+      [{ kind: 'running', sessions: [{ pid: 1, command: 'claude', activity: { kind: 'idle' } }] }],
       [{ kind: 'attached', editors: ['vscode'] }],
     );
     expect(warning).toContain('Claude Code session');

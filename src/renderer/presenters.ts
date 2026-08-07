@@ -24,6 +24,7 @@ import type {
   EndpointProbe,
   EngineSelection,
   GitStatus,
+  SessionActivity,
   PortBinding,
   SshAgentState,
   UpdateInstructions,
@@ -33,6 +34,7 @@ import {
   attachedEditorsIn,
   branchSwitchBlockedReason,
   editorDisplayName,
+  isWorking,
   projectName,
   shortCommit,
   treeBlockedReason,
@@ -546,7 +548,14 @@ export interface ClaudeBadge {
    */
   readonly denseLabel: string;
   readonly title: string;
-  readonly tone: 'running' | 'unknown';
+  /**
+   * `working` is a third tone rather than a flag, so the stylesheet decides how
+   * loud it is in one place. It is deliberately NOT a new arm of
+   * `ClaudeStatus`: a session that is working is still a session that is
+   * present, and splitting the status would make every existing check about
+   * presence ask two questions instead of one.
+   */
+  readonly tone: 'running' | 'working' | 'unknown';
 }
 
 export function claudeBadge(status: ClaudeStatus | undefined): ClaudeBadge | undefined {
@@ -567,8 +576,20 @@ export function claudeBadge(status: ClaudeStatus | undefined): ClaudeBadge | und
 
     case 'running': {
       const count = status.sessions.length;
+      const working = isWorking(status);
       return {
-        label: count === 1 ? 'Claude' : `Claude ×${String(count)}`,
+        // The word only appears when it is TRUE. An idle session reads exactly
+        // as it did before this signal existed, so "working" stays a thing the
+        // eye catches rather than a label every card carries.
+        label: working
+          ? count === 1
+            ? 'Claude · working'
+            : `Claude ×${String(count)} · working`
+          : count === 1
+            ? 'Claude'
+            : `Claude ×${String(count)}`,
+        // Rows layout has room for a mark and a count and nothing else, so the
+        // state rides the TONE there instead of the text.
         denseLabel: count === 1 ? '' : `×${String(count)}`,
         title: [
           count === 1
@@ -577,7 +598,7 @@ export function claudeBadge(status: ClaudeStatus | undefined): ClaudeBadge | und
           ...status.sessions.map(describeSession),
           count === 1 ? 'Stopping the container ends it.' : 'Stopping the container ends them.',
         ].join('\n'),
-        tone: 'running',
+        tone: working ? 'working' : 'running',
       };
     }
   }
@@ -598,7 +619,35 @@ function describeSession(session: ClaudeSession): string {
       : session.startTime !== undefined
         ? `since ${session.startTime}`
         : 'uptime not reported';
-  return `  pid ${String(session.pid)} · ${age}`;
+  return `  pid ${String(session.pid)} · ${age} · ${describeActivity(session.activity)}`;
+}
+
+/**
+ * One session's activity, in the tooltip.
+ *
+ * `unknown` says what it means — "not measured yet" — rather than staying
+ * silent, because on the first poll after launch EVERY session reads that way
+ * and a blank there looks like a bug rather than like a baseline being taken.
+ */
+function describeActivity(activity: SessionActivity): string {
+  switch (activity.kind) {
+    case 'idle':
+      return 'idle';
+    case 'unknown':
+      return 'activity not measured yet';
+    case 'working':
+      // Naming the signal is what makes a wrong badge diagnosable: "running a
+      // command" and "using CPU" fail for different reasons and are fixed in
+      // different places.
+      switch (activity.signal) {
+        case 'subprocess':
+          return 'working — running a command';
+        case 'cpu':
+          return 'working — using CPU';
+        case 'both':
+          return 'working — running a command, using CPU';
+      }
+  }
 }
 
 /**
@@ -632,9 +681,25 @@ export function stopWarning(
     (total, status) => total + (status?.kind === 'running' ? status.sessions.length : 0),
     0,
   );
-  if (sessions === 1) lines.push('A Claude Code session is running in here. Stopping ends it.');
+  // Whether any of them is DOING something right now. It sharpens the sentence
+  // rather than adding one: "is running" and "is working right now" are the
+  // same warning at two volumes, and stacking both would push the editor
+  // warning below the fold of a tooltip.
+  const working = claude.some(isWorking);
+
+  if (sessions === 1) {
+    lines.push(
+      working
+        ? 'A Claude Code session is working in here right now. Stopping ends it mid-task.'
+        : 'A Claude Code session is running in here. Stopping ends it.',
+    );
+  }
   if (sessions > 1) {
-    lines.push(`${String(sessions)} Claude Code sessions are running in here. Stopping ends them.`);
+    lines.push(
+      working
+        ? `${String(sessions)} Claude Code sessions are running in here and at least one is working right now. Stopping ends them mid-task.`
+        : `${String(sessions)} Claude Code sessions are running in here. Stopping ends them.`,
+    );
   }
 
   // Second, and separately worded: an agent is ENDED by stopping, whereas an

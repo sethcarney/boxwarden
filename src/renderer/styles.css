@@ -754,6 +754,25 @@ button.link {
   color: var(--claude);
 }
 
+/*
+ * A session that is doing something right now.
+ *
+ * The SAME hue as `running`, turned up — filled rather than tinted, so it
+ * reads as more of the thing it already was rather than as a different fact.
+ * A second colour here would compete with the card's own status accent and
+ * with the Claude mark, on a badge whose whole job is to be recognised at a
+ * glance, and the state it marks is the loudest thing on the card already.
+ *
+ * This carries the signal on its own in rows layout, where there is room for
+ * the mark and a count and nothing else — `denseLabel` drops the word.
+ */
+.badge-claude-working {
+  border-color: var(--claude);
+  background: color-mix(in srgb, var(--claude) 22%, transparent);
+  color: var(--claude);
+  font-weight: 600;
+}
+
 /* "Could not tell" has to look different from "nothing running", which is the
    absence of a badge — not louder, just clearly uncertain. */
 .badge-claude-unknown {

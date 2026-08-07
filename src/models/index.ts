@@ -20,12 +20,16 @@ export {
   parseAttachedEditors,
 } from './editor-session.js';
 
-export type { ClaudeSession, ClaudeStatus } from './claude.js';
+export type { ClaudeCpuSample, ClaudeSession, ClaudeStatus, SessionActivity } from './claude.js';
 export {
   classifyTopFailure,
+  cpuSamplesOf,
+  foldSessionActivity,
+  isWorking,
   looksLikeClaudeCode,
   hasNoProcessTable,
   parseClaudeProcesses,
+  parseCpuTime,
   readCommandLines,
   sessionCount,
 } from './claude.js';

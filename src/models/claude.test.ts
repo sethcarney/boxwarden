@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { classifyTopFailure, looksLikeClaudeCode, parseClaudeProcesses } from './claude.js';
+import {
+  classifyTopFailure,
+  cpuSamplesOf,
+  foldSessionActivity,
+  looksLikeClaudeCode,
+  parseClaudeProcesses,
+  parseCpuTime,
+} from './claude.js';
 
 /**
  * The fixtures are real `top` shapes, and the two engine layouts are the point
@@ -36,7 +43,17 @@ describe('parseClaudeProcesses', () => {
 
       expect(status).toEqual({
         kind: 'running',
-        sessions: [{ pid: 412, command: CLI_PATH, startTime: '10:31' }],
+        sessions: [
+          {
+            pid: 412,
+            command: CLI_PATH,
+            // No previous poll to subtract from, so activity is not yet
+            // knowable — see the note on SessionActivity.
+            activity: { kind: 'unknown' },
+            cpuSeconds: 2,
+            startTime: '10:31',
+          },
+        ],
       });
     });
 
@@ -58,7 +75,15 @@ describe('parseClaudeProcesses', () => {
 
       expect(status).toEqual({
         kind: 'running',
-        sessions: [{ pid: 221, command: CLI_PATH, elapsed: '1h12m33.0s' }],
+        sessions: [
+          {
+            pid: 221,
+            command: CLI_PATH,
+            activity: { kind: 'unknown' },
+            cpuSeconds: 11,
+            elapsed: '1h12m33.0s',
+          },
+        ],
       });
     });
 
@@ -205,5 +230,232 @@ describe('classifyTopFailure', () => {
       kind: 'unknown',
       reason: 'connect ENOENT /var/run/docker.sock',
     });
+  });
+});
+
+describe('parseCpuTime', () => {
+  it('reads the HH:MM:SS docker prints', () => {
+    expect(parseCpuTime('00:00:04')).toBe(4);
+    expect(parseCpuTime('01:02:03')).toBe(3_723);
+  });
+
+  it('reads MM:SS and a bare count of seconds', () => {
+    expect(parseCpuTime('02:30')).toBe(150);
+    expect(parseCpuTime('7')).toBe(7);
+  });
+
+  /** ps switches to this once a process has burned more than a day of CPU. */
+  it('reads the DD-HH:MM:SS form', () => {
+    expect(parseCpuTime('2-01:00:00')).toBe(2 * 86_400 + 3_600);
+  });
+
+  it('keeps fractional seconds, which podman can emit', () => {
+    expect(parseCpuTime('00:00:04.500')).toBe(4.5);
+  });
+
+  /**
+   * Answers nothing rather than guessing. The value goes straight into a
+   * subtraction, and a wrong number there is a wrong ACTIVITY — where
+   * `undefined` is merely "not measured", which the fold handles.
+   */
+  it('refuses anything it does not recognise', () => {
+    expect(parseCpuTime('')).toBeUndefined();
+    expect(parseCpuTime('   ')).toBeUndefined();
+    expect(parseCpuTime('n/a')).toBeUndefined();
+    expect(parseCpuTime('1:2:3:4')).toBeUndefined();
+    expect(parseCpuTime('-5')).toBeUndefined();
+  });
+});
+
+describe('foldSessionActivity', () => {
+  it('reports working when CPU was consumed since the last poll', () => {
+    expect(
+      foldSessionActivity({ hasSubprocess: false, cpuSeconds: 12, previousCpuSeconds: 9 }),
+    ).toEqual({ kind: 'working', signal: 'cpu' });
+  });
+
+  /**
+   * The instantaneous half. A tool call is a child process, and it shows on the
+   * very first reading — before there is any CPU baseline to subtract from.
+   */
+  it('reports working when a subprocess is running, with no baseline at all', () => {
+    expect(
+      foldSessionActivity({
+        hasSubprocess: true,
+        cpuSeconds: undefined,
+        previousCpuSeconds: undefined,
+      }),
+    ).toEqual({ kind: 'working', signal: 'subprocess' });
+  });
+
+  it('names both signals when both fired', () => {
+    expect(
+      foldSessionActivity({ hasSubprocess: true, cpuSeconds: 12, previousCpuSeconds: 9 }),
+    ).toEqual({ kind: 'working', signal: 'both' });
+  });
+
+  it('reports idle when the counter did not move and nothing is running under it', () => {
+    expect(
+      foldSessionActivity({ hasSubprocess: false, cpuSeconds: 9, previousCpuSeconds: 9 }),
+    ).toEqual({ kind: 'idle' });
+  });
+
+  /**
+   * The first poll of a session, and the reason `unknown` exists. Saying `idle`
+   * here would put "safe to stop" on a session that might be mid-task, which is
+   * the one error this feature must not make.
+   */
+  it('reports unknown with no baseline to subtract from', () => {
+    expect(
+      foldSessionActivity({ hasSubprocess: false, cpuSeconds: 9, previousCpuSeconds: undefined }),
+    ).toEqual({ kind: 'unknown' });
+  });
+
+  it('reports unknown when the engine gave no readable TIME column', () => {
+    expect(
+      foldSessionActivity({ hasSubprocess: false, cpuSeconds: undefined, previousCpuSeconds: 9 }),
+    ).toEqual({ kind: 'unknown' });
+  });
+
+  /**
+   * The bias, pinned. Any movement counts — there is no threshold to tune,
+   * because an idle Node process blocked on its event loop consumes none, and a
+   * false `working` costs a moment's hesitation where a false `idle` costs the
+   * work in a running agent.
+   */
+  it('treats a single second of CPU as working', () => {
+    expect(
+      foldSessionActivity({ hasSubprocess: false, cpuSeconds: 10, previousCpuSeconds: 9 }),
+    ).toMatchObject({ kind: 'working' });
+  });
+
+  /** A counter that went BACKWARDS is a recycled pid, not negative work. */
+  it('does not read a counter that went backwards as working', () => {
+    expect(
+      foldSessionActivity({ hasSubprocess: false, cpuSeconds: 2, previousCpuSeconds: 9 }),
+    ).toEqual({ kind: 'idle' });
+  });
+});
+
+describe('parseClaudeProcesses — activity', () => {
+  /** `UID PID PPID C STIME TTY TIME CMD`, with TIME at index 6. */
+  function rowWithCpu(pid: string, command: string, cpu: string, ppid = '1'): string[] {
+    return ['node', pid, ppid, '0', '10:31', 'pts/0', cpu, command];
+  }
+
+  it('reports working once the CPU counter has moved between polls', () => {
+    const first = parseClaudeProcesses(DOCKER_TITLES, [rowWithCpu('412', CLI_PATH, '00:00:02')]);
+    expect(first.kind === 'running' && first.sessions[0]?.activity).toEqual({ kind: 'unknown' });
+
+    const second = parseClaudeProcesses(
+      DOCKER_TITLES,
+      [rowWithCpu('412', CLI_PATH, '00:00:09')],
+      cpuSamplesOf(first),
+    );
+    expect(second.kind === 'running' && second.sessions[0]?.activity).toEqual({
+      kind: 'working',
+      signal: 'cpu',
+    });
+  });
+
+  it('reports idle when the counter stood still', () => {
+    const first = parseClaudeProcesses(DOCKER_TITLES, [rowWithCpu('412', CLI_PATH, '00:00:02')]);
+    const second = parseClaudeProcesses(
+      DOCKER_TITLES,
+      [rowWithCpu('412', CLI_PATH, '00:00:02')],
+      cpuSamplesOf(first),
+    );
+    expect(second.kind === 'running' && second.sessions[0]?.activity).toEqual({ kind: 'idle' });
+  });
+
+  /**
+   * A tool call. The child row's PPID names the session, and it is caught on
+   * the FIRST poll — before any CPU baseline exists.
+   */
+  it('reports working when a subprocess is running under the session', () => {
+    const status = parseClaudeProcesses(DOCKER_TITLES, [
+      rowWithCpu('412', CLI_PATH, '00:00:02'),
+      rowWithCpu('998', 'bash -lc bun run test', '00:00:00', '412'),
+    ]);
+    expect(status.kind === 'running' && status.sessions[0]?.activity).toEqual({
+      kind: 'working',
+      signal: 'subprocess',
+    });
+  });
+
+  /**
+   * The child can appear before its parent in `ps` output, so the parent set is
+   * built in a pass of its own. One pass would make the answer depend on order.
+   */
+  it('finds a subprocess listed above its parent', () => {
+    const status = parseClaudeProcesses(DOCKER_TITLES, [
+      rowWithCpu('998', 'bash -lc bun run test', '00:00:00', '412'),
+      rowWithCpu('412', CLI_PATH, '00:00:02'),
+    ]);
+    expect(status.kind === 'running' && status.sessions[0]?.activity).toMatchObject({
+      kind: 'working',
+    });
+  });
+
+  it('matches baselines per pid, so a restarted session gets no stale one', () => {
+    const first = parseClaudeProcesses(DOCKER_TITLES, [rowWithCpu('412', CLI_PATH, '00:01:00')]);
+    // Same container, new process: the counter restarted with the pid.
+    const second = parseClaudeProcesses(
+      DOCKER_TITLES,
+      [rowWithCpu('500', CLI_PATH, '00:00:01')],
+      cpuSamplesOf(first),
+    );
+    expect(second.kind === 'running' && second.sessions[0]?.activity).toEqual({ kind: 'unknown' });
+  });
+
+  it('reads the podman layout the same way', () => {
+    const podman = (pid: string, cpu: string, ppid = '1') => [
+      'node',
+      pid,
+      ppid,
+      '0.310',
+      '1h12m33.0s',
+      'pts/0',
+      cpu,
+      CLI_PATH,
+    ];
+    const first = parseClaudeProcesses(PODMAN_TITLES, [podman('221', '00:00:11')]);
+    const second = parseClaudeProcesses(
+      PODMAN_TITLES,
+      [podman('221', '00:00:14')],
+      cpuSamplesOf(first),
+    );
+    expect(second.kind === 'running' && second.sessions[0]?.activity).toEqual({
+      kind: 'working',
+      signal: 'cpu',
+    });
+  });
+});
+
+describe('cpuSamplesOf', () => {
+  it('carries the pid and counter forward', () => {
+    const status = parseClaudeProcesses(DOCKER_TITLES, [
+      ['node', '412', '1', '0', '10:31', 'pts/0', '00:00:07', CLI_PATH],
+    ]);
+    expect(cpuSamplesOf(status)).toEqual([{ pid: 412, cpuSeconds: 7 }]);
+  });
+
+  it('has nothing to carry for a container with no session', () => {
+    expect(cpuSamplesOf({ kind: 'none' })).toEqual([]);
+    expect(cpuSamplesOf({ kind: 'unknown', reason: 'x' })).toEqual([]);
+  });
+
+  /**
+   * A session with no readable TIME is DROPPED rather than stored as zero. A
+   * fabricated baseline of 0 would make the very next poll read as a large
+   * burn and report `working` for a session that has been still all day.
+   */
+  it('drops a session whose CPU could not be read, rather than storing a zero', () => {
+    const noTimeColumn = ['UID', 'PID', 'PPID', 'C', 'STIME', 'TTY', 'CMD'];
+    const status = parseClaudeProcesses(noTimeColumn, [
+      ['node', '412', '1', '0', '10:31', 'pts/0', CLI_PATH],
+    ]);
+    expect(status.kind).toBe('running');
+    expect(cpuSamplesOf(status)).toEqual([]);
   });
 });
