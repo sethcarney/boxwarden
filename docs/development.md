@@ -198,30 +198,6 @@ engine picker and every WSL advisory were otherwise unreachable without owning a
 Windows machine in a particular state of disrepair, and those are exactly the
 screens that have to be right for a user whose setup does not work.
 
-## Working without a release
-
-```bash
-BOXWARDEN_FAKE_UPDATE=1 bun run dev
-```
-
-Same bargain as the fake Docker backend, for the same reason: the update banner
-only appears on a machine where a NEWER boxwarden has been published, and there
-are no releases yet. `src/main/update/fake.ts` announces a release one minor
-version above this build, carrying **every** artefact
-`.github/workflows/release.yml` attaches — both dmgs, both AppImages, both debs
-and the NSIS installer — and folds it through the real `foldUpdateStatus`. So
-the version comparison, the per-platform asset match and the install
-instructions on screen are the production ones; only the release is invented.
-
-It never touches the network and it never writes to `preferences.json` — "Not
-now" and "Stop checking" work, in memory, for as long as the window is open.
-Like the Docker fake, it logs a loud warning: a fabricated update that somebody
-believes is real sends them looking for a download that does not exist.
-
-Without it, `bun run dev` reports `development build` in the footer and makes no
-request at all, because `app.isPackaged` is false and `app.getVersion()` is the
-`0.0.0` placeholder — there is nothing to compare and nothing to advise.
-
 The main process logs a loud warning when this is on. A fake container list the
 user believes is real is the worst possible failure for this app. The fake's
 socket paths say `(fake)` out loud for the same reason — that string reaches
@@ -236,6 +212,34 @@ resolution, quoting, and the startup-command round trip. Because the fixtures
 round-robin across the three fake engines, one in three of them produces a
 `wsl.exe -d dev --exec` command line, which is the arm of `containerExecArgv` least
 likely to be looked at otherwise.
+
+## Working on the update banner
+
+```bash
+BOXWARDEN_FAKE_UPDATE=1 bun run dev
+```
+
+Same bargain as the fake Docker backend, and needed for a subtler reason now that
+releases exist: the banner only appears on a machine running an **older**
+boxwarden than the newest published one, so anyone working on the current version
+cannot see it — and `bun run dev` never asks GitHub at all, because
+`app.isPackaged` is false.
+
+`src/main/update/fake.ts` announces a release one minor version above this build,
+carrying **every** artefact `.github/workflows/release.yml` attaches — both dmgs,
+both AppImages, both debs and the NSIS installer — and folds it through the real
+`foldUpdateStatus`. So the version comparison, the per-platform asset match and
+the install instructions on screen are the production ones; only the release is
+invented.
+
+It never touches the network and it never writes to `preferences.json` — "Not
+now" and "Stop checking" work, in memory, for as long as the window is open.
+Like the Docker fake, it logs a loud warning: a fabricated update that somebody
+believes is real sends them looking for a download that does not exist.
+
+Without it, `bun run dev` reports `development build` in the footer and makes no
+request — there is nothing to compare a development build against, and nothing to
+advise.
 
 ## Why there is no in-app download
 
