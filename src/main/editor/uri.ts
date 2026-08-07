@@ -27,16 +27,72 @@ import type { ContainerPath, DevContainerAuthority, HostPath } from '../../model
  * nothing here depends on it.
  */
 export function authorityFor(localFolderRaw: string): DevContainerAuthority {
-  const hex = Array.from(new TextEncoder().encode(localFolderRaw))
+  return `dev-container+${toHex(localFolderRaw)}` as DevContainerAuthority;
+}
+
+function toHex(text: string): string {
+  return Array.from(new TextEncoder().encode(text))
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
-  return `dev-container+${hex}` as DevContainerAuthority;
+}
+
+/**
+ * What Cursor needs to identify a dev container.
+ *
+ * Two paths rather than one, and that is the whole difference from VS Code:
+ * Cursor resolves the container from its CONFIG, so it has to be told where the
+ * `devcontainer.json` is as well as where the workspace is. boxwarden already
+ * has both — `devcontainer.local_folder` and `devcontainer.config_file` are
+ * written side by side by the same extension.
+ */
+export interface CursorDevContainerSpec {
+  readonly workspacePath: string;
+  readonly devcontainerPath: string;
+  /**
+   * The WSL distro the workspace lives in, when it lives in one.
+   *
+   * Cursor spells a container inside a distro with a NESTED authority —
+   * `dev-container+<hex>@wsl+<distro>` — because the paths in the spec are
+   * Linux paths that only mean something on the other side of that boundary.
+   * Without it Cursor resolves `/home/you/repo` against Windows and finds
+   * nothing.
+   */
+  readonly distro?: string;
+}
+
+/**
+ * Cursor's `dev-container` authority: the hex of a JSON blob.
+ *
+ * Per Cursor's "Opening Remote Containers via the CLI" documentation. The keys
+ * are emitted in the order that documentation lists them and the JSON is
+ * compact, because this string is also the identity Cursor matches a window
+ * against — two spellings of the same container would open two windows on it,
+ * which is exactly the failure `authorityFor`'s raw-label rule exists to avoid
+ * for VS Code.
+ *
+ * `settingType: 'config'` is the literal Cursor requires. The other two arms it
+ * documents are `container` (attach to a running container by id) and `pod`;
+ * neither is what boxwarden is doing, which is reattaching to the dev container
+ * a config describes.
+ */
+export function cursorAuthorityFor(spec: CursorDevContainerSpec): DevContainerAuthority {
+  const blob = JSON.stringify({
+    settingType: 'config',
+    workspacePath: spec.workspacePath,
+    devcontainerPath: spec.devcontainerPath,
+  });
+
+  const nested = spec.distro === undefined ? '' : `@wsl+${encodeURIComponent(spec.distro)}`;
+  return `dev-container+${toHex(blob)}${nested}` as DevContainerAuthority;
 }
 
 /** Inverse of the hex step, for tests and for explaining a URI in diagnostics. */
 export function decodeAuthority(authority: DevContainerAuthority): string | undefined {
-  const hex = authority.startsWith('dev-container+')
-    ? authority.slice('dev-container+'.length)
+  // A nested authority carries `@wsl+<distro>` after the hex; the decodable
+  // part is what precedes it.
+  const withoutNesting = authority.split('@')[0] ?? authority;
+  const hex = withoutNesting.startsWith('dev-container+')
+    ? withoutNesting.slice('dev-container+'.length)
     : undefined;
   if (hex === undefined || hex.length % 2 !== 0 || !/^[0-9a-f]*$/i.test(hex)) return undefined;
 
@@ -72,8 +128,26 @@ export function devContainerUri(
   workspaceFolder: ContainerPath,
 ): string | undefined {
   if (localFolderRaw.trim() === '') return undefined;
+  return uriFor(authorityFor(localFolderRaw), workspaceFolder);
+}
 
-  const authority = authorityFor(localFolderRaw);
+/**
+ * The same URI for an editor that spells the spec as JSON — Cursor.
+ *
+ * Separate from `devContainerUri` rather than a flag on it, because the inputs
+ * genuinely differ: that one needs a label byte for byte, this one needs two
+ * paths and possibly a distro. A single function taking the union of both would
+ * be a function whose arguments contradict each other on every call.
+ */
+export function cursorDevContainerUri(
+  spec: CursorDevContainerSpec,
+  workspaceFolder: ContainerPath,
+): string | undefined {
+  if (spec.workspacePath.trim() === '' || spec.devcontainerPath.trim() === '') return undefined;
+  return uriFor(cursorAuthorityFor(spec), workspaceFolder);
+}
+
+function uriFor(authority: DevContainerAuthority, workspaceFolder: ContainerPath): string {
   const path = encodeContainerPath(workspaceFolder);
   const absolute = path.startsWith('/') ? path : `/${path}`;
   return `vscode-remote://${authority}${absolute}`;

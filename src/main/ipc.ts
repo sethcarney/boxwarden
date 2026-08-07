@@ -43,7 +43,7 @@ import type { DockerBackend } from './docker/backend.js';
 import { EDITOR_TARGETS, editorTarget } from './editor/targets.js';
 import { resolveEditor } from './editor/resolve.js';
 import { launchEditor } from './editor/launch.js';
-import { devContainerUri, folderUri } from './editor/uri.js';
+import { cursorDevContainerUri, devContainerUri, folderUri } from './editor/uri.js';
 import { scanForProjects } from './projects/scan.js';
 import { probeSshAgent } from './ssh-agent.js';
 import {
@@ -376,24 +376,58 @@ export function registerIpcHandlers(context: IpcContext): void {
         };
       }
 
-      // The RAW label, not the parsed path — see src/main/editor/uri.ts.
-      const uri = devContainerUri(container.labels.localFolderRaw, container.workspaceFolder);
-      if (uri === undefined) {
-        return {
-          ok: false,
-          code: 'unresolved-host-path',
-          message:
-            'The devcontainer.local_folder label is empty, so there is no folder to reattach to.',
-        };
-      }
-
+      // The EDITOR is resolved before the URI, and that ordering is the fix for
+      // a real bug: the two VS Code-family forks do not agree on how the
+      // `dev-container` authority is spelled, so a URI built before the target
+      // was known was VS Code's spelling handed to everyone. See
+      // `EditorTarget.devContainerSpec`.
       const target = editorTarget(String(rawEditorId));
       if (target === undefined) {
         return {
           ok: false,
           code: 'editor-not-found',
           message: `Unknown editor: ${String(rawEditorId)}`,
-          uri,
+        };
+      }
+
+      let uri: string | undefined;
+      if (target.devContainerSpec === 'config-json') {
+        // Cursor resolves the container from its CONFIG, so it needs the
+        // devcontainer.json path as well as the workspace. Both labels are
+        // written side by side by the same extension, but a container built
+        // some other way may carry only the first.
+        const devcontainerPath = container.labels.configFileRaw;
+        if (devcontainerPath === undefined || devcontainerPath.trim() === '') {
+          return {
+            ok: false,
+            code: 'unresolved-host-path',
+            message: `${target.displayName} needs the path of this container's devcontainer.json, and it carries no devcontainer.config_file label. VS Code does not need it, so opening in VS Code still works.`,
+          };
+        }
+
+        uri = cursorDevContainerUri(
+          {
+            workspacePath: container.labels.localFolderRaw,
+            devcontainerPath,
+            // A workspace inside a distro needs the nested `@wsl+<distro>`
+            // authority — the paths in the spec are Linux paths.
+            ...(container.localFolder.kind === 'wsl'
+              ? { distro: container.localFolder.distro }
+              : {}),
+          },
+          container.workspaceFolder,
+        );
+      } else {
+        // The RAW label, not the parsed path — see src/main/editor/uri.ts.
+        uri = devContainerUri(container.labels.localFolderRaw, container.workspaceFolder);
+      }
+
+      if (uri === undefined) {
+        return {
+          ok: false,
+          code: 'unresolved-host-path',
+          message:
+            'The devcontainer.local_folder label is empty, so there is no folder to reattach to.',
         };
       }
 

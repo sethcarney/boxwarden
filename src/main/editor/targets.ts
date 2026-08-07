@@ -53,6 +53,7 @@ const TARGETS: Record<KnownEditorId, EditorTarget> = {
     ],
     remoteScheme: 'vscode-remote',
     folderUriFlag: '--folder-uri',
+    devContainerSpec: 'local-folder',
     newWindowFlag: '--new-window',
   },
 
@@ -75,6 +76,7 @@ const TARGETS: Record<KnownEditorId, EditorTarget> = {
     ],
     remoteScheme: 'vscode-remote',
     folderUriFlag: '--folder-uri',
+    devContainerSpec: 'local-folder',
     newWindowFlag: '--new-window',
   },
 
@@ -94,11 +96,13 @@ const TARGETS: Record<KnownEditorId, EditorTarget> = {
         ],
       },
     ],
-    // Unverified — Cursor is a VS Code fork and is expected to share the
-    // scheme, but nobody has confirmed it against a real install. See
-    // docs/roadmap.md, "Verify the forks".
     remoteScheme: 'vscode-remote',
     folderUriFlag: '--folder-uri',
+    // The one confirmed fork divergence, and it is not the scheme or the flag —
+    // both of those match. Cursor's `dev-container` spec is a hex-encoded JSON
+    // blob, not a hex-encoded folder path. From Cursor's own docs, "Opening
+    // Remote Containers via the CLI".
+    devContainerSpec: 'config-json',
     newWindowFlag: '--new-window',
   },
 
@@ -118,9 +122,12 @@ const TARGETS: Record<KnownEditorId, EditorTarget> = {
         ],
       },
     ],
-    // Unverified, same caveat as Cursor.
     remoteScheme: 'vscode-remote',
     folderUriFlag: '--folder-uri',
+    // Left on VS Code's spelling because there is no evidence Windsurf
+    // diverges — unlike Cursor, whose docs say plainly that it does. Still
+    // unverified against a real install; see docs/roadmap.md.
+    devContainerSpec: 'local-folder',
     newWindowFlag: '--new-window',
   },
 };

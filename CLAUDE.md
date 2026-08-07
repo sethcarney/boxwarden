@@ -226,6 +226,40 @@ exist, so VS Code offers to build a new one instead of reattaching. The
 `does not normalise the host path` test in `uri.test.ts` pins this — don't
 "fix" `authorityFor` to normalize.
 
+### The forks do not agree on the authority
+
+`vscode-remote://dev-container+<spec>/<container path>` is the shape, and
+**`<spec>` is not the same thing in every editor**. This is the divergence
+`remoteScheme` and `folderUriFlag` were added as insurance against, and it
+turned out to be neither of them — both of those match everywhere.
+
+| Editor            | `devContainerSpec` | `<spec>` is the hex of                                         |
+| ----------------- | ------------------ | -------------------------------------------------------------- |
+| VS Code, Insiders | `local-folder`     | the `devcontainer.local_folder` label, byte for byte           |
+| Cursor            | `config-json`      | `{settingType,workspacePath,devcontainerPath}` as compact JSON |
+| Windsurf          | `local-folder`     | assumed, unverified — no evidence it diverges                  |
+
+Three things follow:
+
+- **The editor is resolved BEFORE the URI is built** (`openInEditor` in
+  `ipc.ts`). It used to be the other way round, which meant every fork got VS
+  Code's spelling. The failure is silent and looks like the editor ignoring the
+  flag: an authority it cannot resolve just opens a default window.
+- **Cursor needs `devcontainer.config_file` as well as
+  `devcontainer.local_folder`.** Both are written side by side by the extension,
+  but a container built another way may carry only the first — so the Open
+  button refuses with a reason that says VS Code will still work.
+- **A workspace inside WSL needs a NESTED authority** —
+  `dev-container+<hex>@wsl+<distro>` — because the paths inside Cursor's JSON
+  are Linux paths. VS Code needs no equivalent, because its spec is the label
+  and the extension already wrote whatever it wrote.
+
+The raw-label rule still governs the `local-folder` arm and is unchanged. The
+`config-json` arm has its own version of it: the JSON is compact and its keys
+are emitted in the order Cursor documents, because the authority is also the
+identity a window is matched against — two spellings of one container would
+open two windows on it.
+
 ### Discovery
 
 1. Build ordered candidate sockets (`endpoint.ts`): `DOCKER_HOST` first, then
