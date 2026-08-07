@@ -22,24 +22,33 @@
  * inline rgba(255,255,255,…): a white glaze is invisible on a white surface,
  * and those were exactly the rules that broke first when light arrived.
  */
+/*
+ * The palette is hue-disciplined: every neutral sits on one cool slate axis,
+ * and the ACCENT is a harbour cyan rather than the stock UI blue. That is a
+ * deliberate identity choice for this app, not a whim — the semantic colours
+ * (running green, transitional amber, danger red) and the editor brand blues
+ * all need to stay legible AS THEMSELVES, and cyan is the one hue region that
+ * collides with none of them. Blue reads as "another VS Code"; cyan reads as
+ * a signal lamp on the dock, which is what this app is.
+ */
 :root,
 :root[data-theme='dark'] {
-  --bg: #16181d;
-  --surface: #1e2128;
-  --surface-raised: #262a33;
-  --border: #333845;
-  --text: #e6e8ec;
-  --text-dim: #9aa1ad;
-  --accent: #5b9dff;
-  --on-accent: #0d1117;
-  --ok: #45c07a;
-  --stopped: #6d7480;
+  --bg: #14161b;
+  --surface: #1b1e25;
+  --surface-raised: #252a34;
+  --border: #2f3541;
+  --text: #e7e9ee;
+  --text-dim: #98a1b0;
+  --accent: #45c4d1;
+  --on-accent: #0b1014;
+  --ok: #4bc987;
+  --stopped: #6b7382;
   --transitional: #e0a44a;
   --danger: #ef6b6b;
   --danger-text: #ffd0d0;
   --code-bg: rgba(255, 255, 255, 0.06);
   --group-bg: rgba(255, 255, 255, 0.02);
-  --hairline: rgba(255, 255, 255, 0.04);
+  --hairline: rgba(255, 255, 255, 0.05);
   --hover: rgba(255, 255, 255, 0.04);
   /* Deliberately not --ok. The status dot already means "this container is
      up"; this means "something is working in there", and two identical greens
@@ -55,22 +64,27 @@
      the badge's own per-theme text colour instead. */
   --editor-vscode: #3c99d4;
   --editor-insiders: #3fae5a;
+  /* Cards float very slightly; the popover-weight shadow is reserved for
+     hover. Both are near-invisible on the light theme by design — paper
+     needs less depth than night does. */
+  --shadow-rest: 0 1px 2px rgba(0, 0, 0, 0.25);
+  --shadow-hover: 0 2px 10px rgba(0, 0, 0, 0.35);
   color-scheme: dark;
 }
 
 :root[data-theme='light'] {
-  --bg: #f2f4f7;
+  --bg: #eef0f3;
   --surface: #ffffff;
-  --surface-raised: #eceef3;
-  --border: #d3d8e0;
-  --text: #1b1f27;
-  --text-dim: #5c6472;
-  --accent: #1f6feb;
+  --surface-raised: #e7eaef;
+  --border: #d0d5dd;
+  --text: #1a1f27;
+  --text-dim: #59626f;
+  --accent: #0c7d8a;
   --on-accent: #ffffff;
-  --ok: #147c3c;
+  --ok: #158445;
   --stopped: #8b929e;
-  --transitional: #9a6208;
-  --danger: #c62f2f;
+  --transitional: #96610a;
+  --danger: #c22f2f;
   --danger-text: #8c1d1d;
   --code-bg: rgba(15, 23, 42, 0.06);
   --group-bg: rgba(15, 23, 42, 0.02);
@@ -84,7 +98,33 @@
      than a smudge. */
   --editor-vscode: #1f74b0;
   --editor-insiders: #1d7f3c;
+  --shadow-rest: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --shadow-hover: 0 2px 8px rgba(15, 23, 42, 0.1);
   color-scheme: light;
+}
+
+/*
+ * TYPE
+ *
+ * Two voices, on purpose. Prose — advisory bodies, panel ledes, notes — stays
+ * in the system sans. Everything STRUCTURAL speaks monospace: the wordmark,
+ * badges, chips, labels, paths, counts, the status readouts. Mono is this
+ * subject's native register (the terminal is where every one of these
+ * containers was born), and using it for identity is what an app like this has
+ * instead of a display face — a webfont would be 100 kB to say the same thing
+ * less honestly.
+ */
+:root {
+  --font-ui: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
+  /* The label voice: small mono caps with air between the letters. One
+     definition, referenced everywhere a label or eyebrow is set, so the app
+     has one voice rather than five sizes of shouting. */
+  --label-size: 10px;
+  --label-tracking: 0.07em;
+  --radius: 8px;
+  --radius-s: 5px;
+  --ease: 140ms ease;
 }
 
 * {
@@ -101,21 +141,73 @@ body,
 body {
   background: var(--bg);
   color: var(--text);
-  font:
-    13px/1.5 ui-sans-serif,
-    system-ui,
-    -apple-system,
-    'Segoe UI',
-    sans-serif;
+  font: 13px/1.5 var(--font-ui);
   -webkit-font-smoothing: antialiased;
 }
 
 code {
-  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 0.92em;
   background: var(--code-bg);
   padding: 0.1em 0.35em;
   border-radius: 3px;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+/*
+ * Focus is drawn, everywhere, in the accent. This app is exactly the kind of
+ * window that gets driven from the keyboard while a terminal has the mouse,
+ * and `outline: none` with nothing in its place — which is what the old
+ * startup-command rule did — is how a Tab press becomes a guessing game.
+ * `:focus-visible` and not `:focus`, so a click does not leave a ring behind.
+ */
+:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 75%, transparent);
+  outline-offset: 1px;
+}
+
+/*
+ * The scroller wears the theme. The default scrollbar is the one piece of
+ * chrome Electron would otherwise draw in someone else's palette.
+ */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-dim) 28%, transparent);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text-dim) 45%, transparent);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/*
+ * Motion is an acknowledgement, not a show: hovers and focus ease over 140ms,
+ * the running dot breathes, and nothing else moves. The media query switches
+ * all of it off wholesale — an app whose job is to sit in the corner of the
+ * eye must not be the thing that keeps catching it.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
 }
 
 /*
@@ -147,21 +239,50 @@ code {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 10px 14px;
   /* Wraps rather than crushing the engine picker into the title: at 400px the
      chip and the picker take the second line and everything stays legible. */
   flex-wrap: wrap;
-  padding: 12px var(--gutter);
+  padding: 10px var(--gutter);
   border-bottom: 1px solid var(--border);
   background: var(--surface);
   flex: 0 0 auto;
 }
 
+/* The wordmark speaks the app's structural voice — mono, lowercase, tight. */
 .app-head h1 {
+  display: flex;
+  align-items: center;
+  gap: 9px;
   margin: 0;
-  font-size: 15px;
+  font-family: var(--font-mono);
+  font-size: 14px;
   font-weight: 600;
   letter-spacing: 0.01em;
+}
+
+/*
+ * The mark: a stack of boxes, drawn in CSS rather than shipped as an asset.
+ *
+ * The element is the top-right box — the accent one, the box under watch — and
+ * the three box-shadows lay the quiet ones around it. Offsets are the box size
+ * plus a 2px seam, so the stack reads as four crates and not a checkerboard.
+ * It inherits nothing from the h1 but its baseline; the colours are the same
+ * two the whole app is built from.
+ */
+.app-head h1::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  flex: 0 0 auto;
+  background: var(--accent);
+  box-shadow:
+    -7px 0 0 var(--text-dim),
+    -7px 7px 0 var(--text-dim),
+    0 7px 0 var(--text-dim);
+  /* The stack is 12px tall but the element is its top-right corner; nudge it
+     so the whole mark centres on the text line. */
+  margin: -7px 2px 0 7px;
 }
 
 /* Between the title and the engine controls: it changes which SCREEN this is,
@@ -181,21 +302,29 @@ code {
   margin-left: auto;
 }
 
+/*
+ * The engine chip is a readout, so it speaks mono. Square-cornered rather
+ * than a pill: every identifying mark in this app — chips, tags, badges — is
+ * a small rounded RECTANGLE, the shape of a label on a crate. Pills are kept
+ * for exactly one thing, the count bubble on the Setup tab.
+ */
 .chip {
+  font-family: var(--font-mono);
   font-size: 11px;
-  padding: 3px 9px;
-  border-radius: 999px;
+  padding: 3px 8px;
+  border-radius: var(--radius-s);
   border: 1px solid var(--border);
   color: var(--text-dim);
+  white-space: nowrap;
 }
 
 .chip-ok {
-  border-color: rgba(69, 192, 122, 0.4);
+  border-color: color-mix(in srgb, var(--ok) 40%, transparent);
   color: var(--ok);
 }
 
 .chip-fail {
-  border-color: rgba(239, 107, 107, 0.4);
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
   color: var(--danger);
 }
 
@@ -209,10 +338,15 @@ button {
   border-radius: 6px;
   padding: 5px 12px;
   cursor: pointer;
+  transition:
+    border-color var(--ease),
+    background-color var(--ease),
+    color var(--ease);
 }
 
 button:hover:not(:disabled) {
-  border-color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface-raised));
 }
 
 button:disabled {
@@ -227,12 +361,23 @@ button.primary {
   font-weight: 600;
 }
 
+button.primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 88%, var(--text));
+  border-color: color-mix(in srgb, var(--accent) 88%, var(--text));
+}
+
 button.link {
   background: none;
   border: none;
   color: var(--accent);
   padding: 0;
   text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+button.link:hover:not(:disabled) {
+  background: none;
+  color: color-mix(in srgb, var(--accent) 80%, var(--text));
 }
 
 /* ---------- notices ---------- */
@@ -312,21 +457,66 @@ button.link {
 }
 
 .card {
+  position: relative;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--surface);
+  box-shadow: var(--shadow-rest);
   padding: 12px 14px;
   /* Column so that in grid layout the actions can be pushed to the bottom and
      the buttons of neighbouring cards line up despite unequal metadata. */
   display: flex;
   flex-direction: column;
   min-width: 0;
+  transition:
+    border-color var(--ease),
+    box-shadow var(--ease);
+}
+
+.card:hover {
+  border-color: color-mix(in srgb, var(--text-dim) 38%, var(--border));
+  box-shadow: var(--shadow-hover);
+}
+
+/*
+ * THE STATE RAIL — the one place this design spends its boldness.
+ *
+ * A short tick of colour down the card's left edge, keyed off the status dot
+ * with `:has()` so the markup stays exactly what it was. It speaks the same
+ * language the advisories already do — the left edge classifies the card —
+ * and it is what lets a wall of cards be read from across the room: green
+ * rails are up, grey rails are not, an amber rail is on its way somewhere.
+ * Inset from the corners so it reads as a tab on the card, not a border.
+ */
+.card::before {
+  content: '';
+  position: absolute;
+  left: -1px;
+  top: 10px;
+  bottom: 10px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: transparent;
+  transition: background-color var(--ease);
+}
+
+.card:has(> .card-head .dot-running)::before {
+  background: var(--ok);
+}
+
+.card:has(> .card-head .dot-transitional)::before {
+  background: var(--transitional);
+}
+
+.card:has(> .card-head .dot-stopped)::before {
+  background: color-mix(in srgb, var(--stopped) 55%, transparent);
 }
 
 /* An unparseable host path still renders — dimmed, never hidden. */
 .card-degraded {
   opacity: 0.72;
   border-style: dashed;
+  box-shadow: none;
 }
 
 .card-head {
@@ -340,27 +530,23 @@ button.link {
   display: flex;
   align-items: center;
   gap: 8px;
-  /* Grows into the space the right-hand badges do not use, so the branch chip
-     beside the name is bounded by the WINDOW rather than by a number in this
-     file. `min-width: 0` is what lets the two children below ellipsise at all —
-     a flex item's floor is its content width until you say otherwise. */
+  /* Grows into the space the status readout does not use. `min-width: 0` is
+     what lets the name ellipsise at all — a flex item's floor is its content
+     width until you say otherwise. */
   flex: 1 1 auto;
   min-width: 0;
 }
 
+/* The container's name is an identifier, so it reads in the identifier voice —
+   the same mono as the folder under it, one step up in weight and size. */
 .card-title h2 {
   margin: 0;
-  font-size: 14px;
+  font-family: var(--font-mono);
+  font-size: 13px;
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  /* Shrinks half as readily as the branch chip beside it: the name is what
-     identifies the card, so the chip gives up room first. No floor here, and
-     that is deliberate — two floors that cannot both be honoured is how the
-     row ends up CLIPPED rather than ellipsised, which looks like a bug where
-     an ellipsis looks like a choice. The chip's own floor is the one that
-     binds, and once it is reached the remainder falls here. */
   flex: 0 1 auto;
   min-width: 0;
 }
@@ -372,10 +558,30 @@ button.link {
   flex: 0 0 auto;
 }
 
+/* "Up 9 hours" is a reading off an instrument; set it like one. */
 .card-status {
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
   color: var(--text-dim);
   white-space: nowrap;
+}
+
+/*
+ * The chip row: branch, SSH agent, editor attachment, Claude presence.
+ *
+ * These used to crowd the title line, where four of them could shove the
+ * container's NAME — the one thing that identifies the card — into an
+ * ellipsis, and at some widths clean off the card. A row of their own under
+ * the name costs one line of height and buys back the identifier; it only
+ * renders when there is at least one chip to put in it.
+ */
+.card-chips {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 7px;
+  min-width: 0;
 }
 
 /*
@@ -393,16 +599,10 @@ button.link {
 /*
  * Bounded by the room on the line, not by a fixed width.
  *
- * This used to carry `max-width: 22ch`, which truncated `feat/some-long-thing`
- * on a window with several inches to spare — the one situation where an
- * ellipsis is pure loss. A branch name is a thing people compare at a glance,
- * so cutting it short while space goes unused is the worst of both.
- *
- * `flex-shrink: 4` is the priority when the line genuinely does run out: the
- * chip gives up room several times faster than the container name beside it,
- * because the name is what identifies the card. It stops at the floor below,
- * after which the remainder falls on the name. Both ellipsise, and both keep
- * the full text in `title`.
+ * The chip lives in the chip row now, where it no longer competes with the
+ * container's name — but the row still wraps and the chip can still be the
+ * widest thing on it, so the same discipline applies: shrink to a floor,
+ * ellipsise past it, keep the whole name in `title`.
  */
 .branch-chip {
   flex: 0 4 auto;
@@ -415,11 +615,12 @@ button.link {
   align-items: baseline;
   gap: 4px;
   font-size: 10px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   color: var(--text-dim);
   border: 1px solid var(--border);
-  border-radius: 3px;
-  padding: 1px 5px;
+  border-radius: var(--radius-s);
+  background: var(--code-bg);
+  padding: 2px 6px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -454,13 +655,15 @@ button.link {
 
 /* ---------- Claude Code presence ---------- */
 
+/* Badges share the chip row's voice: small mono labels on crate-tag corners. */
 .badge {
+  font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.02em;
   white-space: nowrap;
   padding: 2px 7px;
-  border-radius: 999px;
+  border-radius: var(--radius-s);
   border: 1px solid var(--border);
   color: var(--text-dim);
   cursor: default;
@@ -552,16 +755,17 @@ button.warn {
 
 button.warn:hover:not(:disabled) {
   border-color: var(--transitional);
-  background: var(--claude-bg);
+  background: color-mix(in srgb, var(--transitional) 12%, transparent);
 }
 
 .tag {
-  font-size: 10px;
+  font-family: var(--font-mono);
+  font-size: var(--label-size);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: var(--label-tracking);
   color: var(--text-dim);
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: var(--radius-s);
   padding: 1px 5px;
 }
 
@@ -575,11 +779,12 @@ button.warn:hover:not(:disabled) {
  */
 .agent-badge {
   flex: 0 0 auto;
+  font-family: var(--font-mono);
   font-size: 10px;
   color: var(--text-dim);
   border: 1px solid var(--border);
-  border-radius: 3px;
-  padding: 1px 5px;
+  border-radius: var(--radius-s);
+  padding: 2px 6px;
   white-space: nowrap;
   cursor: help;
 }
@@ -597,9 +802,25 @@ button.warn:hover:not(:disabled) {
   flex: 0 0 auto;
 }
 
+/*
+ * The running dot breathes — a four-second swell of its halo, the pace of a
+ * harbour light rather than a notification. It is the only ambient motion in
+ * the app, it means "alive", and the reduced-motion block above stills it.
+ */
 .dot-running {
   background: var(--ok);
-  box-shadow: 0 0 0 3px rgba(69, 192, 122, 0.15);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 16%, transparent);
+  animation: dot-breathe 4s ease-in-out infinite;
+}
+
+@keyframes dot-breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 16%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--ok) 26%, transparent);
+  }
 }
 
 .dot-stopped {
@@ -614,14 +835,21 @@ button.warn:hover:not(:disabled) {
 
 .card-meta {
   display: grid;
-  grid-template-columns: 62px minmax(0, 1fr);
-  gap: 2px 10px;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 3px 10px;
   margin: 10px 0 0;
   font-size: 12px;
 }
 
+/* The label voice: the same small mono caps as every eyebrow in the app. */
 .card-meta dt {
-  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: var(--label-size);
+  text-transform: uppercase;
+  letter-spacing: var(--label-tracking);
+  color: color-mix(in srgb, var(--text-dim) 80%, transparent);
+  /* Sits on the same baseline as the mono value beside it. */
+  line-height: 17px;
 }
 
 .card-meta dd {
@@ -630,7 +858,7 @@ button.warn:hover:not(:disabled) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 11.5px;
 }
 
@@ -653,7 +881,8 @@ button.warn:hover:not(:disabled) {
 
 .port {
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-s);
+  background: var(--code-bg);
   padding: 0 6px;
   color: var(--text-dim);
 }
@@ -685,7 +914,10 @@ button.warn:hover:not(:disabled) {
   border-color: var(--border);
 }
 
-.startup-command:focus {
+/* The border is the focus treatment here — the field is inside the card's
+   metadata grid, where the global ring would overlap the label column. */
+.startup-command:focus,
+.startup-command:focus-visible {
   outline: none;
   border-color: var(--accent);
   background: var(--bg);
@@ -750,10 +982,19 @@ button.warn:hover:not(:disabled) {
  */
 .list[data-layout='rows'] .card {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  /* Name and folder stack in the first column; the chip row keeps its own
+     column so four badges cannot shove the name into an ellipsis; the actions
+     hold the right edge. */
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 0 12px;
   padding: 6px 10px;
+}
+
+/* The rail hugs closer in a 30px row — a 10px inset would leave a speck. */
+.list[data-layout='rows'] .card::before {
+  top: 6px;
+  bottom: 6px;
 }
 
 .list[data-layout='rows'] .card-head {
@@ -761,8 +1002,15 @@ button.warn:hover:not(:disabled) {
   gap: 8px;
 }
 
+.list[data-layout='rows'] .card-chips {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  margin: 0;
+  flex-wrap: nowrap;
+}
+
 .list[data-layout='rows'] .card-title h2 {
-  font-size: 13px;
+  font-size: 12.5px;
 }
 
 /* One line per container, so the badge is a count in a circle. The label it
@@ -794,7 +1042,7 @@ button.warn:hover:not(:disabled) {
 }
 
 .list[data-layout='rows'] .card-actions {
-  grid-column: 2;
+  grid-column: 3;
   grid-row: 1 / span 2;
   flex-wrap: nowrap;
   margin: 0;
@@ -818,12 +1066,12 @@ button.warn:hover:not(:disabled) {
   margin: 14px var(--gutter);
   padding: 16px var(--gutter);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--surface);
 }
 
 .panel-error {
-  border-color: rgba(239, 107, 107, 0.4);
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
 }
 
 .panel h2 {
@@ -886,6 +1134,8 @@ summary {
   margin: 40px;
   text-align: center;
   color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 12px;
 }
 
 /* ---------- footer ---------- */
@@ -902,6 +1152,12 @@ summary {
   color: var(--text-dim);
   font-size: 11px;
   flex: 0 0 auto;
+}
+
+/* The count and the scan age are readouts; they speak the readout voice. */
+.app-foot > span {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
 }
 
 .foot-right {
@@ -940,6 +1196,7 @@ summary {
   border: 1px solid var(--border);
   border-radius: 6px;
   overflow: hidden;
+  background: var(--code-bg);
 }
 
 .segment {
@@ -948,7 +1205,7 @@ summary {
   background: transparent;
   color: var(--text-dim);
   font-size: 11px;
-  padding: 3px 9px;
+  padding: 3px 10px;
 }
 
 .segment + .segment {
@@ -960,11 +1217,22 @@ summary {
   color: var(--text);
 }
 
+/*
+ * The current value is a tinted pane, not a filled one. A solid accent block
+ * made the nav and the layout picker the two loudest things on screen — and
+ * they are the two controls whose answer never changes what is IN the list.
+ * The accent stays for actions; a selection just needs to be unmistakable.
+ */
 .segment-on,
 .segment-on:hover:not(:disabled) {
-  background: var(--accent);
-  color: var(--on-accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: color-mix(in srgb, var(--accent) 82%, var(--text));
   font-weight: 600;
+}
+
+/* The ring would be clipped by the frame's `overflow: hidden`; draw it inside. */
+.segment:focus-visible {
+  outline-offset: -2px;
 }
 
 .theme-picker {
@@ -983,8 +1251,13 @@ select {
   color: var(--text);
   background: var(--surface-raised);
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: var(--radius-s);
   padding: 3px 6px;
+  transition: border-color var(--ease);
+}
+
+select:hover {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
 }
 
 /* ---------- compose groups ---------- */
@@ -996,7 +1269,7 @@ select {
  */
 .group {
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--group-bg);
   /* A compose project keeps its frame around ALL of its services, so it spans
      the full row instead of being dealt into the columns like a single card —
@@ -1011,8 +1284,12 @@ select {
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 8px 12px;
-  padding: 9px 12px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--border);
+  /* A shade of its own, so the manifest line reads as the crate's stencilled
+     header rather than as the first row of its contents. */
+  background: var(--code-bg);
+  border-radius: var(--radius) var(--radius) 0 0;
 }
 
 .group-title {
@@ -1022,9 +1299,11 @@ select {
   min-width: 0;
 }
 
+/* A compose project's name is an identifier like a container's — same voice. */
 .group-title h2 {
   margin: 0;
-  font-size: 13px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
@@ -1032,7 +1311,8 @@ select {
 }
 
 .group-count {
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
   color: var(--text-dim);
   white-space: nowrap;
 }
@@ -1113,7 +1393,7 @@ select {
 .advice {
   border: 1px solid var(--border);
   border-left-width: 3px;
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--surface);
   padding: 12px 14px;
 }
@@ -1148,13 +1428,14 @@ select {
 
 .advice-badge {
   flex: 0 0 auto;
+  font-family: var(--font-mono);
   font-size: 9px;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: var(--label-tracking);
   text-transform: uppercase;
   color: var(--text-dim);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   padding: 2px 5px;
 }
 
@@ -1315,10 +1596,11 @@ select {
   margin-left: 6px;
   padding: 0 5px;
   border-radius: 999px;
+  font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 700;
   background: var(--stopped);
-  color: var(--on-accent);
+  color: var(--surface);
 }
 
 .nav-count-error {
@@ -1331,11 +1613,6 @@ select {
 
 .nav-count-info {
   background: var(--accent);
-}
-
-.segment-on .nav-count {
-  background: var(--on-accent);
-  color: var(--accent);
 }
 
 /* ---------------------------------------------------------------- *
@@ -1356,8 +1633,10 @@ select {
   margin: 12px var(--gutter) 0;
   border: 1px solid var(--border);
   border-left: 3px solid var(--accent);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+  border-radius: var(--radius);
+  /* A whisper of the accent, not a wash. This banner is good news that can sit
+     above the list for a week; at 7% it was the loudest surface in the app. */
+  background: color-mix(in srgb, var(--accent) 3%, var(--surface));
   padding: 12px 14px;
 }
 
@@ -1377,13 +1656,14 @@ select {
 
 .update-badge {
   flex: 0 0 auto;
+  font-family: var(--font-mono);
   font-size: 9px;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: var(--label-tracking);
   text-transform: uppercase;
   color: var(--accent);
   border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   padding: 2px 5px;
 }
 
@@ -1532,9 +1812,12 @@ button.foot-update:hover:not(:disabled) {
   min-width: 0;
 }
 
+/* A project's name is an identifier-in-waiting — the same voice as the
+   container names it will become. */
 .project-title h3 {
   margin: 0;
-  font-size: 13px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
@@ -1568,9 +1851,10 @@ button.foot-update:hover:not(:disabled) {
 }
 
 .scan-roots-label {
+  font-family: var(--font-mono);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  font-size: 10.5px;
+  letter-spacing: var(--label-tracking);
+  font-size: var(--label-size);
 }
 
 .scan-roots ul {
@@ -1635,16 +1919,11 @@ button.foot-update:hover:not(:disabled) {
   }
 
   .card-meta {
-    /* The 62px label column is most of a narrow window's usable width; labels
-       go above their values instead. */
+    /* The label column is most of a narrow window's usable width; labels go
+       above their values instead. They are already in the label voice, so
+       nothing else changes. */
     grid-template-columns: minmax(0, 1fr);
     gap: 0;
-  }
-
-  .card-meta dt {
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
   }
 
   .card-meta dt + dd {
@@ -1674,10 +1953,17 @@ button.foot-update:hover:not(:disabled) {
     justify-content: space-between;
   }
 
-  /* Rows layout gives up its side-by-side actions here — one line is no
-     longer enough for a name, a path AND three buttons. */
+  /* Rows layout gives up its side-by-side columns here — one line is no
+     longer enough for a name, a path, the chips AND three buttons. */
   .list[data-layout='rows'] .card {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .list[data-layout='rows'] .card-chips {
+    grid-column: 1;
+    grid-row: auto;
+    flex-wrap: wrap;
+    margin-top: 4px;
   }
 
   .list[data-layout='rows'] .card-actions {

@@ -119,16 +119,37 @@ export function ContainerCard({
   const warning = stopWarning([claude], [editor]);
   const actions = editorActions(editor, editorName, blocked, dense);
 
+  const hasChips =
+    branch !== undefined || agent !== undefined || attached !== undefined || badge !== undefined;
+
   return (
     <article className={`card${unresolved ? ' card-degraded' : ''}`}>
       <header className="card-head">
         <div className="card-title">
           <StatusDot runtime={container.runtime} />
-          <h2>{cardTitle(container)}</h2>
-          {/* Beside the name rather than in the meta list below it: the branch
-              is the second thing a person needs to identify a checkout, and the
-              meta list is the part the rows layout hides. Long branch names are
-              ellipsised by the stylesheet and kept whole in `title`. */}
+          {/* The stylesheet ellipsises long names; the full one stays reachable
+              here, the same contract as every other truncated value on the card. */}
+          <h2 title={cardTitle(container)}>{cardTitle(container)}</h2>
+        </div>
+        <div className="card-head-right">
+          <span className="card-status">{statusLabel(container.runtime, now)}</span>
+        </div>
+      </header>
+
+      {/*
+       * The chip row: branch, SSH agent, editor attachment, Claude presence.
+       *
+       * A line of their own, under the name rather than beside it. On the
+       * title line, four of them could shove the container's NAME — the one
+       * thing that identifies the card — into an ellipsis, and at some widths
+       * clean off the card. In the rows layout the stylesheet lifts this row
+       * back onto the line, in its own grid column, where it cannot do that.
+       */}
+      {hasChips && (
+        <div className="card-chips">
+          {/* The branch is the second thing a person needs to identify a
+              checkout. Long names are ellipsised by the stylesheet and kept
+              whole in `title`. */}
           {branch !== undefined && (
             <span
               className={`branch-chip branch-chip-${branch.tone}`}
@@ -154,8 +175,6 @@ export function ContainerCard({
               {dense ? agent.short : agent.text}
             </span>
           )}
-        </div>
-        <div className="card-head-right">
           {/* Shortened under `dense` to a bare count, with the full text kept
               in `title` — the same contract as the image row and the primary
               button. The session count, pids and uptimes are all in there. */}
@@ -200,9 +219,8 @@ export function ContainerCard({
               {dense ? badge.denseLabel : badge.label}
             </span>
           )}
-          <span className="card-status">{statusLabel(container.runtime, now)}</span>
         </div>
-      </header>
+      )}
 
       <dl className="card-meta">
         <dt className="meta-folder">Folder</dt>
