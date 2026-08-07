@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { BrowserWindow, app, dialog, session, shell, type WebContents } from 'electron';
@@ -222,7 +223,35 @@ function applyNavigationHardening(contents: WebContents): void {
   });
 }
 
+/**
+ * The window's own icon — Linux only, and only in a packaged build.
+ *
+ * macOS and Windows read the icon out of the bundle and the .exe, so Electron
+ * needs no help there. X11 and Wayland have no such thing: a window advertises
+ * its icon either by setting `_NET_WM_ICON` itself, or by carrying a WM_CLASS
+ * the desktop can match against an installed .desktop entry. Electron only sets
+ * `_NET_WM_ICON` when it is handed an `icon`, so without this the second route
+ * is the only one — and it is the route that does not exist for an AppImage run
+ * straight out of the downloads folder, which installs no .desktop file at all.
+ *
+ * 256px rather than the 1024px source: `_NET_WM_ICON` is uncompressed ARGB sent
+ * over the wire, so the large one would spend 4MB of X11 traffic on an image
+ * every consumer immediately scales down to fit a panel.
+ *
+ * The existence check covers `bun run start`, where `process.resourcesPath`
+ * points into node_modules/electron and the extra resource was never staged.
+ * Electron's default icon there is honest; a path to nothing is not.
+ */
+function linuxWindowIcon(): string | undefined {
+  if (process.platform !== 'linux' || IS_DEV) {
+    return undefined;
+  }
+  const icon = join(process.resourcesPath, 'icon.png');
+  return existsSync(icon) ? icon : undefined;
+}
+
 function createWindow(): BrowserWindow {
+  const icon = linuxWindowIcon();
   const window = new BrowserWindow({
     width: 1_040,
     height: 720,
@@ -231,6 +260,9 @@ function createWindow(): BrowserWindow {
     show: false,
     backgroundColor: '#16181d',
     title: 'boxwarden',
+    // exactOptionalPropertyTypes: an absent icon must be an absent key, not an
+    // `undefined` one — Electron checks `'icon' in options`, not its value.
+    ...(icon === undefined ? {} : { icon }),
     webPreferences: {
       preload: join(__dirname, '../preload/index.cjs'),
       // Item 4. Restricts the renderer (and the preload) to a process that

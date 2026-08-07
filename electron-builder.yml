@@ -26,8 +26,10 @@ directories:
   # framework got installed rather than a program.
   buildResources: resources
 
-# One 1024px PNG for all three platforms; electron-builder derives the .icns
-# and .ico from it at build time.
+# One 1024px PNG for mac and Windows; electron-builder derives the .icns and
+# the .ico from it at build time, and both formats carry every size inside the
+# one file. Linux has no such container and overrides this with a directory —
+# see `linux.icon` below for why a single PNG is not enough there.
 icon: resources/icon.png
 
 # Include-style rather than the exclusion list electron-vite's template ships
@@ -38,6 +40,20 @@ icon: resources/icon.png
 files:
   - out/**
   - package.json
+
+# One PNG beside the app, for `linuxWindowIcon()` in src/main/index.ts to hand
+# to BrowserWindow — see the comment there for why Linux needs a window icon at
+# all when the other two platforms do not. It lands at
+# `process.resourcesPath/icon.png` on every platform; only Linux reads it.
+#
+# An extra resource and NOT an entry in `files`, because `files` is packed into
+# the asar: Electron's asar shim covers Node's fs, but the window icon is loaded
+# by native code that goes straight to the real filesystem and would find
+# nothing at a path inside the archive. Staging it beside the archive is the
+# supported way round that, and leaves `asar: true` below untouched.
+extraResources:
+  - from: resources/icons/256x256.png
+    to: icon.png
 
 # Default, stated because it is load-bearing: main/index.ts resolves the
 # preload with `join(__dirname, '../preload/index.cjs')`, and Electron reads
@@ -116,6 +132,29 @@ nsis:
 
 linux:
   category: Development
+  # A DIRECTORY of sizes, not the 1024px `icon:` above — the one setting that
+  # decides whether the launcher shows this app's icon or a generic placeholder.
+  #
+  # Linux installs icons as loose PNGs under
+  # /usr/share/icons/hicolor/<W>x<H>/apps/<executableName>.png, and the desktop
+  # entry refers to them by NAME (`Icon=boxwarden`) rather than by path. The
+  # lookup is the freedesktop icon theme spec: a search of the size
+  # subdirectories that hicolor's own index.theme declares. That list stops at
+  # 512x512 — 1024x1024 is not in it.
+  #
+  # electron-builder passes a single PNG through unresized, so `icon:` alone
+  # produced exactly one file, in hicolor/1024x1024/, in a directory no theme
+  # engine reads. Nothing failed: the deb built, installed, and put the icon on
+  # disk where GTK would never look for it, and Cinnamon fell back to the
+  # generic gear. mac and Windows were unaffected because .icns and .ico hold
+  # every size in one file.
+  #
+  # So the sizes are generated ahead of time and committed
+  # (`bun run icons:generate`), and `bun run check:icons` fails the build if any
+  # declared size goes missing or a file stops matching its own name. Keep every
+  # size within hicolor's list; adding a 1024x1024.png here would recreate the
+  # bug with extra steps.
+  icon: resources/icons
   # Without this the window's WM_CLASS does not match the installed .desktop
   # entry, so GNOME and KDE show a running boxwarden as an unnamed generic
   # window instead of linking it to its launcher icon.
