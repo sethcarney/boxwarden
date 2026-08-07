@@ -263,3 +263,28 @@ export function hostPathLabel(path: MaybeHostPath): string {
       return path.raw;
   }
 }
+
+/**
+ * How a binary was found, in words.
+ *
+ * The strategy matters to a person diagnosing a launch, which is why it is
+ * shown at all: "on PATH" and "in a well-known directory" resolve to different
+ * programs on Windows, where an editor's `.cmd` shim sits on PATH and its GUI
+ * `.exe` sits in the install directory. Knowing which one answered is the
+ * difference between "boxwarden picked the wrong binary" and "the editor does
+ * not understand this URI".
+ */
+export function discoveryStrategyLabel(via: string): string {
+  switch (via) {
+    case 'path-lookup':
+      return 'on PATH';
+    case 'macos-bundle':
+      return 'in its macOS app bundle';
+    case 'well-known-dir':
+      return 'in a well-known install location';
+    case 'explicit-path':
+      return 'from an explicit path';
+    default:
+      return via;
+  }
+}

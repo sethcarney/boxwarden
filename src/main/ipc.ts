@@ -324,6 +324,10 @@ export function registerIpcHandlers(context: IpcContext): void {
         id: entry.target.id,
         displayName: entry.target.displayName,
         available: entry.ok,
+        // The resolver already knows both of these and used to drop them on the
+        // floor here. Carrying them is what lets the setup page say WHICH
+        // `cursor` it found — see the note on EditorOption.
+        ...(entry.ok ? { binaryPath: entry.binaryPath, via: entry.via } : {}),
       }));
     },
     () => [],

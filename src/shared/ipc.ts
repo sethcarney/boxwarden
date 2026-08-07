@@ -137,6 +137,21 @@ export interface EditorOption {
   readonly id: EditorId;
   readonly displayName: string;
   readonly available: boolean;
+  /**
+   * WHICH binary was found, and by which strategy. Absent when nothing was.
+   *
+   * Diagnostics, not decoration, and the reason it exists is a real bug report:
+   * "Open in Cursor" launched something that opened an empty window, and there
+   * was no way from inside the app to find out whether boxwarden had resolved
+   * the editor's CLI or its GUI executable — which are different programs with
+   * different argument handling on Windows. `EndpointAttempts` answers exactly
+   * this shape of question for sockets; this is the same answer for editors.
+   *
+   * Safe to send: it is a path this process chose from its own target table,
+   * not one the renderer can influence, and it is shown rather than used.
+   */
+  readonly binaryPath?: string;
+  readonly via?: string;
 }
 
 /**

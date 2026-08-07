@@ -1,10 +1,14 @@
 import type { DockerEnvironment } from '../../models/index.js';
+import type { EditorOption } from '../../shared/ipc.js';
 import { Advisories } from '../components/Advisories.js';
+import { EditorInventory } from '../components/EditorInventory.js';
 import { EndpointAttempts } from '../components/EndpointAttempts.js';
 import type { AdvisoriesViewModel } from '../viewmodels/useAdvisories.js';
 
 interface Props {
   readonly advisories: AdvisoriesViewModel;
+  /** Every editor boxwarden probed, with the binary it resolved to. */
+  readonly editors: readonly EditorOption[];
   /** Undefined until the first scan lands; the diagnostics say so rather than showing an empty list. */
   readonly environment: DockerEnvironment | undefined;
   /** "scanned 2 minutes ago", already formatted by the ViewModel. */
@@ -29,7 +33,7 @@ interface Props {
  * provoke: boxwarden found one of my two engines — which one did it miss, and
  * what did that socket say?
  */
-export function SetupView({ advisories, environment, scannedLabel }: Props) {
+export function SetupView({ advisories, editors, environment, scannedLabel }: Props) {
   return (
     <div className="setup">
       <section className="panel" aria-label="Setup advice">
@@ -66,6 +70,17 @@ export function SetupView({ advisories, environment, scannedLabel }: Props) {
           />
         </section>
       )}
+
+      <section className="panel" aria-label="Editors found">
+        <h2>Which editor boxwarden would launch</h2>
+        <p className="lede">
+          The exact binary each editor resolved to, and how it was found. An editor ships a
+          command-line launcher beside its application executable and the two do not always accept
+          the same arguments, so when “Open in …” produces a window with no folder in it, this is
+          the first thing to check.
+        </p>
+        <EditorInventory editors={editors} />
+      </section>
 
       <section className="panel" aria-label="Container engine diagnostics">
         <h2>How boxwarden looked for a container engine</h2>
