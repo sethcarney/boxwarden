@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-boxwarden is an Electron desktop app (early MVP) that lists dev containers on
+boxwarden is an Electron desktop app (working, pre-1.0) that lists dev containers on
 the local machine — filtered to those carrying the `devcontainer.local_folder`
 label — and reattaches an editor (VS Code, Insiders, Cursor, Windsurf) to
 them. It also groups Docker Compose projects, starts/stops containers
@@ -1132,10 +1132,16 @@ that are not in any file. Four rules that touch code review:
 - `docs/supply-chain.md` — Scorecard, signed releases, and the GitHub settings that bind them
 - `docs/running.md` — the three ways to run the app, troubleshooting table
 - `docs/releasing.md` — cutting a version: the tag, the workflow, the draft
-- `docs/roadmap.md` — what's unverified (no real Docker daemon or editor has touched this yet) and what's next
+- `docs/roadmap.md` — what's still open, and what's next
 
-The README's status line matters: discovery/start-stop/open-in-editor are
-unit-tested and UI-verified against fixtures, but **not yet verified against a
-real Docker daemon or a real editor install**. The update check is in the same
-position for a different reason — there are no releases yet, so nothing has
-ever come back from `/releases/latest`.
+The README's status line matters, and it has changed: every feature has now been
+exercised on real machines — macOS, Linux and Windows, against real container
+engines, real editor installs, real terminal emulators, and a real release coming
+back from `/releases/latest`. **Do not reintroduce the "unverified against a real
+daemon" framing** that the docs carried through the whole MVP; the current ledger
+is `docs/roadmap.md#what-has-been-verified`.
+
+Three things are still genuinely unproven, and they are the ones to keep saying
+out loud: the macOS/Windows builds are **not code-signed or notarised**, **arm64
+has never been launched** on any platform, and the **ASAR integrity fuse is off**.
+That trio is why the app is still `0.x` — see `docs/releasing.md`.

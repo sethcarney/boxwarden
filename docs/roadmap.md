@@ -1,6 +1,6 @@
 # Roadmap
 
-What the MVP does, what it does not, and what to build next. Ordered by what
+What the app does, what it does not, and what to build next. Ordered by what
 unblocks the most.
 
 ## What works today
@@ -25,6 +25,18 @@ unblocks the most.
 - A diagnostics screen naming every socket that was tried and why each failed.
 - **Flags Claude Code sessions running inside a container**, so Stop and "Stop
   all" are not blind to an agent mid-task.
+- **Says which editor is already attached**, from the same process-table read, in
+  that editor's own mark — and turns Open into **Focus** plus a quieter **New
+  window** while a window is up.
+- **Connects to every engine that answers** and merges their lists, with a
+  header picker once two are reachable and the choice persisted; plus a setup
+  screen carrying every advisory and every socket tried.
+- **Reports SSH agent forwarding** per container, including the case a user
+  cannot diagnose alone: the variable is set and the socket is not mounted.
+- **Checks GitHub once a day for a newer release** and names the exact artefact
+  for the platform and install kind it is running as, with the steps to install
+  it. Dismissable per version, and switchable off entirely.
+- Three layouts and three themes, persisted.
 - **Shows the branch each workspace folder is on**, read from `.git/HEAD` on the
   host — worktrees included — so several containers over one repository are
   told apart at a glance.
@@ -41,97 +53,102 @@ unblocks the most.
   Scan roots are configurable through the OS folder picker and persisted.
 - Polls every 5s; actions re-read from Docker rather than patching optimistically.
 
-## Verified and unverified
+## What has been verified
 
-Verified here: build, ESLint + Prettier, typecheck across both TS projects,
-390 unit and component tests, and a headless launch under `xvfb` against
-`BOXWARDEN_FAKE_DOCKER=1` — 7 cards in 1 compose group, group actions correct
-for the members' states, WSL path resolved from mounts, ports and footer right.
-That launch has since been repeated against a **packaged** Linux build, which
-exercises the parts development mode does not: the asar archive, the sandboxed
-preload loaded from inside it, and production CSP.
+**On every push**, by `bun run check` and `bun run build`: typecheck across both
+TS projects, ESLint, Prettier, **843 unit and component tests** across 52 files,
+the devcontainer mount assertions and the Linux icon set. Separately, a headless
+launch under `xvfb` against `BOXWARDEN_FAKE_DOCKER=1`, repeated against a
+**packaged** build — which exercises what development mode does not: the asar
+archive, the sandboxed preload loaded from inside it, and production CSP.
 
-The terminal path was driven through the same harness with `xterm` installed:
-the emulator was found and offered, the Terminal button was live only for the
-running fixtures, a startup command written through the bridge landed in
-`preferences.json` under the compose-aware key, and `openTerminal` spawned
-xterm and returned the exec line — which round-tripped through a real `sh -c`
-as eight intact argv elements. What that cannot prove is the far end.
+**By hand, on real machines — macOS, Linux and Windows**, against real container
+engines, real editor installs and real terminal emulators. That covers the
+things this document spent its first several revisions listing as unproven:
 
-**Not verified**, because the environment this was built in has no Docker
-socket and no editor installed:
+- Discovery against a real daemon: the label filter, the state mapping, start
+  and stop.
+- That the `vscode-remote://` URI **reattaches** rather than offering to build a
+  new container — the risk called out in `uri.ts`, that VS Code might normalise
+  the path before hex-encoding it and so disagree with the raw label. It does
+  not, on any of the three, the Windows drive-letter case included — so
+  `authorityFor` stays as it is, and the test in `uri.test.ts` that pins it now
+  records observed behaviour rather than an assumption.
+- Editor binary resolution, and the Cursor and Windsurf forks against real
+  installs.
+- `docker exec` landing an interactive shell in the container, as the container's
+  `remoteUser` and in its workspace folder, with the startup command running
+  first — in real emulators on all three platforms, `wt.exe` and the AppleScript
+  pair included.
+- Claude Code presence and attached-editor detection against real process
+  tables, in both engines' column layouts.
+- The branch chips against real checkouts, worktrees included.
+- The daily update check: a packaged build reaching `/releases/latest` through
+  `net.fetch`, comparing versions, and naming the right artefact for the platform
+  and install kind it is running as. Which also confirmed the other half of that
+  bet — that the filenames in `releasing.md` are exactly what electron-builder
+  emits.
 
-- Discovery against a real daemon.
-- That the `vscode-remote://` URI actually reattaches VS Code.
-- Editor binary resolution on any OS.
-- That `docker exec` actually lands a shell in a container. There was no daemon
-  behind the exec above.
-- **The Windows emulators specifically.** `wt.exe new-tab`'s option parsing and
-  its `\;` escape, and the `conhost.exe <command>` fallback, are both written
-  from documentation rather than from a machine. They are the least trustworthy
-  rows in `terminal/targets.ts`.
-- The AppleScript for Terminal.app and iTerm2 — in particular that iTerm2 3.x
-  really does want `create window with default profile command` and not
-  `do script`.
-- Claude Code detection against a real container. The parser is tested against
-  fixture `top` responses in both engines' column layouts, but no daemon has
-  returned a real one and no real `claude` process has been matched.
-- **Branch switching against a real repository.** The parsers are tested
-  against fixture `for-each-ref` and `status --porcelain` output and the
-  refusals are tested against the real `canSwitchTo`, but no `git` process has
-  ever been spawned by this code: `src/main/git/branches.ts` has no test of its
-  own for the same reason `docker/client.ts` does not. Three things only a real
-  run can settle — that `%(worktreepath)` is available on the git the user has
-  (it needs 2.23), that `wsl.exe -d <distro> --exec git` resolves git inside the
-  distro, and that a checkout under an attached VS Code window behaves the way
-  it does from a terminal.
+**What this branch adds is newer than that pass** and has not been through it:
 
-  The **first** thing a real run did settle is already folded in. Windows git
-  against a `\\wsl.localhost\…` workspace refuses it as dubiously owned,
-  because the files belong to the Linux user rather than to the Windows
-  account. `gitInvocation` now routes a WSL workspace through the distro's own
-  git instead, and `parseDubiousOwnership` gives the refusal a copyable fix
-  wherever it still fires. See CLAUDE.md.
+- **Branch switching against a real repository.** The parsers are tested against
+  fixture `for-each-ref` and `status --porcelain` output and the refusals against
+  the real `canSwitchTo`, but `src/main/git/branches.ts` spawns `git` and has no
+  test of its own, for the same reason `docker/client.ts` does not. Two things
+  only a real run can settle: that `%(worktreepath)` is available on the git the
+  user has (it needs 2.23), and that `wsl.exe -d <distro> --exec git` resolves
+  git inside the distro.
 
-- **The update check against a real release.** There are none yet, so nothing
-  has ever come back from `/releases/latest` — the parser, the version
-  comparison and the per-platform asset match are tested against fixture
-  payloads built from the artefact names in `releasing.md`. Two things can only
-  be confirmed by publishing: that those names are exactly what electron-builder
-  emits, and that `net.fetch` reaches api.github.com from a packaged app.
-  `BOXWARDEN_FAKE_UPDATE=1` shows the banner without a release, which proves
-  the UI and nothing about GitHub.
+  One thing a real run already settled, and it is folded in: Windows git against
+  a `\\wsl.localhost\…` workspace refuses it as dubiously owned, because the
+  files belong to the Linux user rather than to the Windows account.
+  `gitInvocation` routes a WSL workspace through the distro's own git instead.
 
-Those are the first thing to do on a real machine, and until they pass the app
-should be considered unproven rather than working.
+- **Cursor's `dev-container` authority end to end.** Cursor resolves it — a real
+  install gets past the URI and into container setup, which is what proves the
+  spec is right. What has not been seen through is a completed attach; the run
+  that got that far stopped on the machine's own `spawn podman ENOENT`, which is
+  Cursor's container CLI configuration and not this app's.
+
+**Three further things remain unverified**, and all three are about trusting a
+build somebody else made rather than about the app working:
+
+- **arm64 on any platform.** Every release packages both architectures; only the
+  x64 builds have ever been launched.
+- **Code signing and notarisation.** Not configured, so every platform
+  interposes on first launch — item 5 below.
+- **ASAR integrity.** `asar: true` is on; the fuse that would detect a tampered
+  archive is not.
 
 ---
 
-## 1. Prove the real paths (highest priority)
+## 1. Delete the fork insurance, or keep it on purpose
 
-- Run against a real daemon on macOS, Linux, and Windows. Confirm the label
-  filter, the state mapping, and start/stop.
-- Confirm the URI reattaches rather than offering to build a new container.
-  The risk called out in `uri.ts` — that VS Code normalises the path before
-  hex-encoding it, especially the Windows drive-letter case — is real and
-  untested. If it does normalise, `authorityFor` needs to match that
-  normalisation exactly, and the test in `uri.test.ts` inverts.
-- Confirm `code` resolution via each strategy, especially the macOS
-  `mdfind` path. The same resolver now finds terminal emulators, so a fix there
-  is a fix for both.
-- Open a terminal on each OS and confirm the shell lands in the container, the
-  startup command runs before it, and interrupting a long-running startup
-  command leaves an interactive shell rather than closing the window.
+`EditorTarget.remoteScheme` and `folderUriFlag` exist purely as insurance:
+every VS Code fork is _expected_ to use `vscode-remote` and `--folder-uri`, and
+Cursor and Windsurf now demonstrably do. So the fields are two levels of
+indirection carrying one value each.
 
-## 2. Verify the forks
+The instruction this section used to give itself was **delete both if neither
+diverges**, and that condition is now met. It is still listed rather than done
+because deleting them is a small, deliberate change to a launch path that is
+currently working on three platforms, and it wants its own commit rather than a
+drive-by.
 
-`EditorTarget.remoteScheme` and `folderUriFlag` are configurable purely as
-insurance: every VS Code fork is _expected_ to use `vscode-remote` and
-`--folder-uri`, but Cursor and Windsurf have not been checked against a real
-install. Confirm empirically. **If neither diverges, delete both fields** —
-they are speculative generality until proven otherwise.
+**But do not read that as "the forks agree".** They do not, and the divergence
+was simply somewhere neither field was looking: the `dev-container` authority's
+SPEC. VS Code hex-encodes the `devcontainer.local_folder` label; Cursor
+hex-encodes a JSON blob naming the workspace and its `devcontainer.json`. That
+is what `EditorTarget.devContainerSpec` now carries, and it is a field added
+because a fork demonstrably diverges rather than in case one might — which is
+the opposite of the two above and the reason it should outlive them.
 
-## 3. WSL host paths — strategies 2 and 3
+The lesson worth keeping when these two are deleted: the insurance was bought
+against the wrong risk. A fork changing the scheme or the flag would have
+failed loudly; changing the spec fails SILENTLY, because an authority the
+editor cannot resolve just opens a default window.
+
+## 2. WSL host paths — strategies 2 and 3
 
 Strategy 1 (bind-mount sources) is **done**: Docker Desktop's WSL2 backend
 rewrites mount sources through
@@ -150,38 +167,38 @@ When every strategy fails the path stays `posix`, never a guess. Note the blast
 radius is display only — the editor URI is built from the raw label, so a wrong
 guess is visible but harmless.
 
-## 4. Replace polling with an event stream
+## 3. Replace polling with an event stream
 
 The 5s poll is fine for a handful of containers and wasteful for a daemon with
 hundreds. Docker's `/events` endpoint (`docker.getEvents()`) gives
 start/stop/die/destroy pushes. Keep a slow poll as a reconciliation backstop —
 event streams drop.
 
-Deliberately not attempted yet: it cannot be verified without a real daemon,
-and unverifiable complexity in the discovery path is the last thing this needs.
+The reason this was deferred — that it could not be verified without a real
+daemon — no longer holds, so what is left is the work itself. The hazard to
+respect is that an event stream is a second source of truth in the discovery
+path: reconnection, missed events while the machine was asleep, and an engine
+that goes away mid-stream all have to end up in the same place the poll would
+have put them.
 
-## 5. Rebuild and create
+## 4. Rebuild and create
 
 Needs `@devcontainers/cli`, which shells out to the `docker` binary. This is
 exactly why `DockerEnvironment` probes the API and the CLI **separately** —
 `api.ok` gates today's features, `cli.ok` gates these. The diagnostics panel
 already reports CLI absence.
 
-## 6. Packaging — signing, notarisation, updates
+## 5. Packaging — signing, notarisation, updates
 
-`electron-builder` is wired up (`electron-builder.yml`, `bun run dist`) and the
-packaged Linux build has been verified to run: 7 fixture cards rendered out of
-an asar with the sandboxed preload and IPC intact. dmg, AppImage, deb and NSIS
-targets are configured, and the app has an icon.
-
-Since then the **release process** is wired up too:
+The distribution half of this item is **closed**. `electron-builder.yml`
+configures dmg, AppImage, deb and NSIS with a real icon set;
 `.github/workflows/release.yml` turns a `v*` tag into all three platforms'
 installers attached to a draft GitHub release, each built on the OS it targets
-— see [releasing.md](./releasing.md). That closes the distribution half of
-this item, and the "one Linux machine on one day" caveat below with it. What it
-does not close is anything about _trusting_ the result.
+(see [releasing.md](./releasing.md)); releases have been cut from it; and the
+installers it produces have been installed and run on macOS, Windows and Linux.
 
-What is still missing is everything about _trusting_ the result:
+What it does not close is anything about _trusting_ the result — which is the
+whole of what is left here, and the reason the app is still `0.x`:
 
 - **macOS signing and notarisation.** Locally, signing is left to
   electron-builder's keychain discovery, so a machine with a Developer ID
@@ -221,21 +238,28 @@ What is still missing is everything about _trusting_ the result:
   swaps, at which point `latest*.yml` — already attached to every release — is
   what `electron-updater` would read.
 
-- **arm64 anything.** Every target builds both architectures and only the x64
-  Linux build has ever been launched.
+- **arm64 anything.** Every target builds both architectures, and only the x64
+  builds have ever been launched — on all three platforms now, which is what
+  makes this the narrow remaining gap rather than the wide one it was. The
+  Apple Silicon dmg is the one that matters most, since it is the default
+  download for most current Macs.
 
 None of it is blocking for a tool you build yourself, and all of it is blocking
 for one you hand to somebody else.
 
-## 7. Claude Code presence — the follow-ups
+## 6. Claude Code presence — the follow-ups
 
 Presence detection ships annotating the Stop button. Two things were
 deliberately left out of v1, in this order:
 
-- **Confirm before stopping a container with a live session.** The annotation
-  is the honest v1 because this app has no modal today, and adding the first one
-  should not ride along with a detection nobody has watched against a real
-  daemon yet. Once it has been, the confirm is the point of the feature.
+- **Confirm before stopping a container with a live session.** The annotation was
+  the honest v1 because this app has no modal today, and adding the first one
+  should not have ridden along with a detection nobody had watched against a real
+  daemon. It has been watched against one now, on all three platforms, so this is
+  the next thing to build here rather than a thing waiting on evidence. The
+  detection is a superset of "a session is doing work" — it also fires on an
+  idle one — so the confirm has to be dismissable without being annoying, which
+  is the actual design question.
 - **Activity, not just presence.** Working vs. idle vs. waiting on a permission
   prompt would mean parsing session transcripts under
   `~/.claude/projects/**/*.jsonl` or the IDE lock files under `~/.claude/ide/`,
@@ -244,7 +268,7 @@ deliberately left out of v1, in this order:
   activity is neither, and coupling them would put the stable half at the mercy
   of the other.
 
-## 8. The workspace branch — what it does not do
+## 7. The workspace branch — what it does not do
 
 The chip reads `.git/HEAD` on the host, and its menu lists the local branches
 and checks one out. Three things the READING deliberately does not answer, in
@@ -282,7 +306,7 @@ lack of time:
 - **Switch a branch for an unbuilt project.** Same join problem as reading one:
   the scan is on demand and this hangs off a container card.
 
-## 9. Port forwarding, and why the terminal cannot provide it
+## 8. Port forwarding, and why the terminal cannot provide it
 
 A dev server started from boxwarden's terminal is not reachable on
 `localhost:3000` the way one started from a VS Code terminal is. This comes up
@@ -345,7 +369,7 @@ the resolved result must then NOT cross IPC into the renderer's snapshot. That
 means a main-process-only map keyed by container id, which is a small piece of
 plumbing the backend does not have yet.
 
-## 10. Smaller things
+## 9. Smaller things
 
 - **Attached containers.** Containers attached to rather than created by the
   extension use a different authority (`attached-container+<hex of JSON>`).
@@ -392,17 +416,28 @@ plumbing the backend does not have yet.
   pushes to `main`, and `release.yml` builds all three platforms on a tag — but
   the gate itself only ever runs on Linux. The Windows-specific code
   (`docker/wsl.ts`, the `wt.exe` and `conhost.exe` rows in
-  `terminal/targets.ts`) is untested anywhere, and a Windows runner in
-  `check.yml` would at least prove it compiles and runs there. That is not the
-  same as proving the probes are right, which needs a real machine.
+  `terminal/targets.ts`) now works on a real Windows machine, which is exactly
+  why a Windows runner is worth adding: what is unguarded is not whether it
+  works but whether it keeps working, and a regression there is currently
+  invisible until somebody launches the app on Windows by hand.
 
 ## Done
 
 Items completed since the first MVP pass, kept for the record:
 
-- ~~Packaging~~ — electron-builder, four targets, an icon, and a verified
-  packaged build. What remains of that item is signing, notarisation and
-  updates, which is why it still has a section above.
+- ~~Prove the real paths~~ — the item that sat at the top of this list as the
+  highest priority for the whole MVP: run it against real daemons, confirm the
+  URI reattaches, confirm binary resolution, confirm a terminal lands a shell.
+  Done on macOS, Linux and Windows; the findings are in
+  [What has been verified](#what-has-been-verified). The load-bearing result is
+  the negative one — VS Code does **not** normalise the host path before
+  hex-encoding it, so the raw label rule holds and `authorityFor` stays as it is.
+- ~~Verify the forks~~ — Cursor and Windsurf both reattach through
+  `vscode-remote` and `--folder-uri`, so neither diverges. What is left is the
+  cleanup that follows, which is item 1 above.
+- ~~Packaging~~ — electron-builder, four targets, an icon, and installers
+  installed and run on all three platforms. What remains of that item is
+  signing, notarisation and arm64, which is why it still has a section above.
 - ~~A release process~~ — a `v*` tag builds macOS, Linux and Windows on their
   own runners and collects the installers into one draft release
   (`.github/workflows/release.yml`, `docs/releasing.md`). The version check
@@ -420,6 +455,14 @@ Items completed since the first MVP pass, kept for the record:
 - ~~Compose grouping~~.
 - ~~Copy the URI as a fallback~~ — now a labelled pair, so a failed terminal
   offers **Copy command** through the same slot.
-- ~~Open a terminal in a container~~, with a per-container startup command.
-  What remains of that item is confirming it against real daemons and real
-  emulators, which is why it appears above under "Not verified".
+- ~~Open a terminal in a container~~, with a per-container startup command —
+  confirmed against real daemons and real emulators on all three platforms,
+  including the two that have no CLI and are driven by AppleScript.
+- ~~Claude Code presence~~ and ~~attached-editor detection~~, from one
+  `top` per container. What remains is the confirm dialog, which is item 6.
+- ~~The workspace branch~~ — read from `.git/HEAD` on the host, worktrees
+  followed. Item 7 is what it deliberately does not answer.
+- ~~The release check~~ — a packaged build asks GitHub daily and names the
+  artefact for the machine it is on. The in-app download that briefly
+  accompanied it was removed on purpose; see
+  [development.md](./development.md#why-there-is-no-in-app-download).

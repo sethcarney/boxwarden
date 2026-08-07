@@ -19,7 +19,7 @@ pure types both sides share.
 │  src/renderer/viewmodels/   state, commands, derivations   │
 │  src/renderer/presenters.ts pure string/flag derivations   │
 │  src/renderer/grouping.ts   pure compose folding           │
-│  reaches exactly eighteen functions on window.boxwarden    │
+│  reaches exactly nineteen functions on window.boxwarden    │
 └───────────────────────┬────────────────────────────────────┘
                         │ contextBridge, structured clone
 ┌───────────────────────┴────────────────────────────────────┐
@@ -32,7 +32,7 @@ pure types both sides share.
 │    docker/    endpoint discovery, dockerode, inspect→model │
 │    editor/    binary resolution, URI building, spawn       │
 │    projects/  the filesystem walk for unbuilt projects     │
-│    ipc.ts     the eighteen handlers, sender-validated      │
+│    ipc.ts     the nineteen handlers, sender-validated      │
 └────────────────────────────────────────────────────────────┘
 
   src/models/   pure types, no I/O — shared by all three
@@ -47,17 +47,20 @@ pure types both sides share.
 that touches the outside world lives in `src/main/` and is written as a thin
 shell around a pure function:
 
-| Impure edge                      | Pure core it wraps                         |
-| -------------------------------- | ------------------------------------------ |
-| `docker/client.ts` (dockerode)   | `docker/mapping.ts`, `docker/host-path.ts` |
-| `docker/client.ts` (probing)     | `docker/endpoint.ts`                       |
-| `editor/launch.ts` (spawn)       | `editor/uri.ts`                            |
-| `editor/resolve.ts` (fs, exec)   | `editor/targets.ts` (data)                 |
-| `projects/scan.ts` (fs walk)     | `models/project.ts`                        |
-| `git/status.ts` (fs reads)       | `models/git.ts`                            |
-| `ssh-agent.ts` (env, fs, exec)   | `models/advice.ts`, `models/ssh-agent.ts`  |
-| `update/github.ts` (net)         | `models/update.ts`                         |
-| `update/check.ts` (clock, cache) | `models/update.ts`                         |
+| Impure edge                       | Pure core it wraps                             |
+| --------------------------------- | ---------------------------------------------- |
+| `docker/client.ts` (dockerode)    | `docker/mapping.ts`, `docker/host-path.ts`     |
+| `docker/client.ts` (probing)      | `docker/endpoint.ts`                           |
+| `docker/client.ts` (`top`)        | `models/claude.ts`, `models/editor-session.ts` |
+| `editor/launch.ts` (spawn)        | `editor/uri.ts`                                |
+| `terminal/launch.ts` (spawn)      | `terminal/command.ts`                          |
+| `discovery/resolve.ts` (fs, exec) | `editor/targets.ts`, `terminal/targets.ts`     |
+| `projects/scan.ts` (fs walk)      | `models/project.ts`                            |
+| `git/status.ts` (fs reads)        | `models/git.ts`                                |
+| `preferences.ts` (fs)             | `models/{engine,project,terminal}.ts`          |
+| `ssh-agent.ts` (env, fs, exec)    | `models/advice.ts`, `models/ssh-agent.ts`      |
+| `update/github.ts` (net)          | `models/update.ts`                             |
+| `update/check.ts` (clock, cache)  | `models/update.ts`                             |
 
 That split is why the test suite needs no Docker daemon and no display: the
 cores are covered by unit tests, and the shells are small enough to read.
@@ -285,7 +288,7 @@ engines; which one did it miss?"
 
 Hiding lives in `localStorage` and not `preferences.json`, for the same reason
 the layout does: the main process makes no decision from it, so putting it in
-the preferences file would buy a sixteenth IPC verb nothing.
+the preferences file would buy a twentieth IPC verb nothing.
 
 ## SSH agent forwarding
 
@@ -594,14 +597,17 @@ that evaporates on rebuild is worse than none. Compose members append their
 container name, since every service in a project shares one folder label. The
 map lives in `preferences.json` beside the engine selection and the scan roots.
 
-## Claude Code presence
+## What is running inside: Claude Code, and attached editors
 
 A card says what the container _is_. It also says, when it can, what is
-happening inside it — specifically whether a Claude Code session is running,
-how many, and how long each has been up. Stopping a container out from under a
-running agent is the failure this prevents, and "Stop all" on a compose group
-is where it matters most, because that button reaches services whose own card
-nobody looked at.
+happening inside it — whether a Claude Code session is running, how many, and
+how long each has been up, and whether an editor is attached. Stopping a
+container out from under a running agent or an open window is the failure this
+prevents, and "Stop all" on a compose group is where it matters most, because
+that button reaches services whose own card nobody looked at.
+
+Both answers come from **one** `top` per container. Claude Code presence is
+below; attached editors are [the section after it](#attached-editors-from-the-same-reading).
 
 The detection is one read-only Docker call, `GET /containers/{id}/top`, and the
 pure `parseClaudeProcesses` in `src/models/claude.ts` does everything else.
@@ -637,9 +643,45 @@ prompt would mean parsing session transcripts or the IDE lock files under the
 container's `~/.claude`, neither of which is a versioned interface, and both of
 which would need the container's home directory located first.
 
+### Attached editors, from the same reading
+
+The same `top` response answers a second question: whether an editor is attached.
+`parseAttachedEditors` in `src/models/editor-session.ts` folds it beside
+`parseClaudeProcesses` into one `ContainerActivity` per container — which is why
+the verb is `containerActivity` and not two verbs. It is one reading of one
+process table, and asking twice would double the poll's Docker traffic to learn
+nothing extra.
+
+- **It detects the SERVER, not the window.** VS Code, Cursor and Windsurf each
+  run one under `~/.<flavour>-server/bin/<commit>/`. The server outlives the
+  window it served by a few minutes, so the signal is a superset of "a window is
+  open" — the right way round, because warning about a window that just closed
+  costs a moment's thought and failing to warn about an open one costs the work
+  in it. The badge says "attached", never "open".
+- **Matched as a path SEGMENT** (`/.vscode-server/`), never as a bare word — the
+  lesson `looksLikeClaudeCode` learned. Insiders is checked before stable,
+  because `.vscode-server-insiders` has `.vscode-server` as a prefix.
+- **Each flavour draws its own mark** (`EditorGlyph.tsx`), from `react-icons`,
+  on a list whose entire job is telling containers apart. A single generic
+  two-window glyph was the first version and told you nothing.
+- **It decides how many buttons the card has.** With a window attached the
+  primary action becomes **Focus** and a quieter **New window** appears beside
+  it (`editorActions` in `presenters.ts`). That split exists only then: with
+  nothing attached the two would do the same thing under different names, since
+  the CLI opens a new window either way. `reuse` passes no flag at all, because
+  the CLI's own default resolves the folder URI against the open windows and
+  raises the match — `--reuse-window` would take over whichever window was last
+  active, which is a different and worse thing.
+- **boxwarden cannot close the window, and does not try.** The `code` CLI can
+  open windows and install extensions; it cannot enumerate or close them, and
+  killing the host process would take unsaved buffers with it. So Stop is
+  annotated rather than gated, exactly as it is for a Claude session —
+  `stopWarning` folds both and words them differently on purpose: an agent is
+  **ended** by stopping a container, a window is **stranded** by it.
+
 ### Why it is its own verb, on its own clock
 
-`claudeStatus(ids)` is batched and separate from `discover()` for the same
+`containerActivity(ids)` is batched and separate from `discover()` for the same
 reason `scanProjects` is: cadence. Discovery polls every 5s; a `top` per live
 container folded into it would multiply that poll's Docker traffic by the length
 of the list, to re-derive an answer that changes when a person starts an agent.
@@ -716,7 +758,7 @@ the application in place. `electron-updater` does exactly that and verifies a
 CODE signature to decide it is safe; these builds have none, so Squirrel.Mac
 would refuse the swap and everywhere else it would overwrite a binary the OS
 never checked. See
-[roadmap](./roadmap.md#6-packaging--signing-notarisation-updates).
+[roadmap](./roadmap.md#5-packaging--signing-notarisation-updates).
 
 Given that, an in-app download ends where a browser download ends — at an
 installer the user runs and clicks through a Gatekeeper or SmartScreen warning.

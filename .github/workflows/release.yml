@@ -38,7 +38,7 @@ name: release
 # The two kinds of signing answer different questions and neither substitutes
 # for the other — docs/supply-chain.md#what-signing-does-and-does-not-buy is the
 # long version, docs/releasing.md says what it means for whoever downloads
-# them, and docs/roadmap.md#6-packaging--signing-notarisation-updates tracks
+# them, and docs/roadmap.md#5-packaging--signing-notarisation-updates tracks
 # closing it.
 
 on:

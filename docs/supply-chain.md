@@ -236,7 +236,7 @@ different questions and neither substitutes
 for the other. `CSC_IDENTITY_AUTO_DISCOVERY: false` in `release.yml` is set
 precisely so that the unsigned state is stated rather than buried in a green
 log; closing it needs a certificate, and
-[docs/roadmap.md](roadmap.md#6-packaging--signing-notarisation-updates) tracks
+[docs/roadmap.md](roadmap.md#5-packaging--signing-notarisation-updates) tracks
 that.
 
 ## Third-party assets that ship in the app

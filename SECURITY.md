@@ -15,8 +15,9 @@ release cut as soon as it is ready.
 
 ## Supported Versions
 
-boxwarden is an early MVP. Only the latest release receives fixes; there are no
-maintenance branches.
+boxwarden is pre-1.0. Only the latest release receives fixes; there are no
+maintenance branches, and a fix ships as the next `0.x` rather than as a patch to
+an older one.
 
 ## What this app can do, and what that means
 
