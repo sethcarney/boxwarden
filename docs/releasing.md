@@ -25,9 +25,11 @@ Semver, and the tag is the version with a `v` in front of it — `0.1.0` →
 so it does not become the "latest release" a download link resolves to. Use one
 for anything you want people to try without treating it as the recommendation.
 
-While the app is
-[unproven against a real daemon](./roadmap.md#verified-and-unverified), stay in
-`0.x`.
+Stay in `0.x` while the builds are unsigned and arm64 has never been launched —
+those are the
+[two things still open](./roadmap.md#what-has-been-verified), and a `1.0` that
+warns on first launch on two of three platforms is claiming something it has not
+earned.
 
 ### 2. Bump `package.json`
 
@@ -162,9 +164,11 @@ the other architecture's Electron distribution and packages it, which is the
 one cross-build in this matrix that is genuinely reliable. Linux and Windows
 build both arches on their own x64 runner the same way.
 
-Only the x64 Linux build has ever been launched (headlessly, against
-fixtures). **arm64 on any platform is untested** — see
-[roadmap.md](./roadmap.md#verified-and-unverified).
+The x64 builds have been installed and run on all three platforms.
+**arm64 on any platform has never been launched** — see
+[roadmap.md](./roadmap.md#what-has-been-verified). It is packaged and attached to
+every release regardless, which means the Apple Silicon dmg is the default
+download for most current Macs and the one nobody has opened.
 
 ---
 
@@ -205,7 +209,7 @@ move.
 ## What this process does not do
 
 All three are tracked in
-[roadmap.md](./roadmap.md#6-packaging--signing-notarisation-updates).
+[roadmap.md](./roadmap.md#5-packaging--signing-notarisation-updates).
 
 - **Signing and notarisation.** `CSC_IDENTITY_AUTO_DISCOVERY: false` is set on
   the macOS build deliberately: with it unset, electron-builder searches the

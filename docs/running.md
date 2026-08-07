@@ -162,8 +162,9 @@ Take the one for your machine and skip to [Install it](#install-it) — the
 caveats there apply exactly the same, because these are the same artefacts
 `bun run dist` produces locally.
 
-There are no releases yet; v1 is the first. [releasing.md](./releasing.md) is
-how one gets cut.
+[The latest release](https://github.com/sethcarney/boxwarden/releases/latest) is
+the one the in-app update check resolves to.
+[releasing.md](./releasing.md) is how one gets cut.
 
 ### Build the installers
 
@@ -205,7 +206,7 @@ should be suspicious of when a stranger tells you to run it.
 **Linux — prefer the `.deb`** on Debian and Ubuntu:
 
 ```bash
-sudo apt install ./release/boxwarden_0.0.0_amd64.deb
+sudo apt install ./release/boxwarden_0.3.0_amd64.deb
 ```
 
 The deb's post-install script does two things the AppImage cannot: it sets up
@@ -217,8 +218,8 @@ start with a message about the SUID sandbox helper. The AppImage is there for
 distributions where nothing installs anything:
 
 ```bash
-chmod +x release/boxwarden-0.0.0.AppImage
-./release/boxwarden-0.0.0.AppImage
+chmod +x release/boxwarden-0.3.0.AppImage
+./release/boxwarden-0.3.0.AppImage
 ```
 
 **Windows.** Run `boxwarden-setup-<version>-<arch>.exe`. It is a per-user install, so
@@ -300,7 +301,7 @@ everything back.
 | Open works, but VS Code offers to build a **new** container  | The URI's host path does not match the label byte for byte. `bun run devcontainer:open -- --print` shows you what it should be.                                                                                                                                                      |
 | A greyed, dashed row                                         | That container's label could not be parsed. The row shows the raw label and the reason; it is kept rather than dropped on purpose.                                                                                                                                                   |
 | Podman, and nothing appears                                  | [development.md](./development.md#podman-and-rootless-docker-hosts).                                                                                                                                                                                                                 |
-| A dev server started from the terminal is not on `localhost` | Port forwarding is the VS Code server's doing, not the shell's — see [roadmap.md](./roadmap.md#9-port-forwarding-and-why-the-terminal-cannot-provide-it). With a window attached it should forward anyway; if it does not, check `remote.autoForwardPortsSource` is still `process`. |
+| A dev server started from the terminal is not on `localhost` | Port forwarding is the VS Code server's doing, not the shell's — see [roadmap.md](./roadmap.md#8-port-forwarding-and-why-the-terminal-cannot-provide-it). With a window attached it should forward anyway; if it does not, check `remote.autoForwardPortsSource` is still `process`. |
 
 ### Choosing an engine
 
@@ -316,21 +317,26 @@ between runs.
 
 ## What has actually been verified
 
-The packaged Linux build has been run headlessly against fixtures and renders
-the full list correctly — asar, sandboxed preload, IPC and all. The build,
-the installers and the deb's control scripts have been inspected.
+Installed builds have been run on **macOS, Windows and Linux**, against real
+container engines, real editor installs and real terminal emulators. Discovery,
+start/stop, the `vscode-remote://` URI reattaching rather than offering to build
+a new container, editor binary resolution including the forks, a terminal
+landing a shell as the right user in the right folder, the badges, the branch
+chips and the daily update check all behave as documented above.
+[roadmap.md](./roadmap.md#what-has-been-verified) itemises it.
 
-Not verified, because the machine this was built on has no Docker socket and no
-editor installed: discovery against a real daemon, whether the
-`vscode-remote://` URI reattaches rather than offering to build, and editor
-binary resolution on any OS. Signing and notarisation are not configured at
-all, and the update check has never seen a real release — there are none yet.
-[roadmap.md](./roadmap.md) is the honest list.
+Three things are still open, and none of them is about whether the app works:
 
-The engine picker and the setup advice are unit-tested and exercised against
-the fixtures, which is a real bar — the advice engine is pure, so every branch
-of it is covered — but the Windows-specific probes underneath them are not.
-`wsl --status` as the "is WSL installed" signal, and the exact behaviour of
-`wsl --list --quiet` on a machine with no distribution, have been reasoned
-about and not observed. Both are in `src/main/docker/wsl.ts` and both need a
-real Windows machine to confirm.
+- **The macOS and Windows builds are not code-signed or notarised**, so each
+  platform interposes on first launch — the steps above are how you get past it.
+- **Only the x64 builds have been launched.** arm64 is packaged on every release
+  and has never been run, the Apple Silicon dmg included.
+- **The ASAR integrity fuse is off**, so a tampered archive would not be
+  detected by the app itself.
+
+One narrower gap worth naming, because it is the one most likely to bite a
+Windows user in a setup nobody has reproduced: `wsl --status` as the "is WSL
+installed" signal, and the exact behaviour of `wsl --list --quiet` on a machine
+with **no** distribution installed at all, are still reasoned about rather than
+observed. The WSL paths have been exercised on a machine that has distros; the
+empty-machine branches in `src/main/docker/wsl.ts` have not.
