@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { DevContainerProject, ProjectScan } from '../../models/index.js';
@@ -170,5 +170,61 @@ describe('UnbuiltProjects', () => {
     expect(screen.getAllByRole('heading', { level: 3 })).toHaveLength(6);
     await userEvent.click(screen.getByRole('button', { name: 'Show 3 more' }));
     expect(screen.getAllByRole('heading', { level: 3 })).toHaveLength(9);
+  });
+});
+
+describe('collapsing the panel', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it('starts open, so nothing that used to be visible has quietly gone away', () => {
+    renderPanel();
+    expect(
+      screen.getByRole('button', { name: /Not built yet/ }).getAttribute('aria-expanded'),
+    ).toBe('true');
+  });
+
+  it('folds the body away when the heading is clicked', async () => {
+    renderPanel();
+    await userEvent.click(screen.getByRole('button', { name: /Not built yet/ }));
+
+    expect(
+      screen.getByRole('button', { name: /Not built yet/ }).getAttribute('aria-expanded'),
+    ).toBe('false');
+    // Unmounted, not hidden: a folded panel must not leave a dozen Open buttons
+    // in the tab order.
+    expect(screen.queryByRole('button', { name: /Open in/ })).toBeNull();
+  });
+
+  /** Rescan stays reachable — it is what refills a panel you folded away. */
+  it('keeps the Rescan button while collapsed', async () => {
+    renderPanel();
+    await userEvent.click(screen.getByRole('button', { name: /Not built yet/ }));
+    expect(screen.getByRole('button', { name: 'Rescan' })).toBeDefined();
+  });
+
+  /**
+   * The count follows the title into the collapsed state: folding the panel
+   * must not also hide the one number that says whether it is worth opening.
+   */
+  it('shows the count once collapsed', async () => {
+    renderPanel({
+      unbuilt: [project(), project({ id: asProjectId('other'), name: 'Reporting' })],
+    });
+    await userEvent.click(screen.getByRole('button', { name: /Not built yet/ }));
+    expect(screen.getByRole('button', { name: /Not built yet/ }).textContent).toContain('2');
+  });
+
+  /** A panel that reopened on every launch is one whose collapse button stops being used. */
+  it('remembers being collapsed across a remount', async () => {
+    const first = renderPanel();
+    await userEvent.click(screen.getByRole('button', { name: /Not built yet/ }));
+    first.unmount();
+
+    renderPanel();
+    expect(
+      screen.getByRole('button', { name: /Not built yet/ }).getAttribute('aria-expanded'),
+    ).toBe('false');
   });
 });

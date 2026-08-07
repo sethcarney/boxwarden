@@ -40,6 +40,13 @@ unblocks the most.
 - **Shows the branch each workspace folder is on**, read from `.git/HEAD` on the
   host — worktrees included — so several containers over one repository are
   told apart at a glance.
+- **Switches that branch from the chip**, listing the repository's local
+  branches and running `git checkout` on the host. Refuses — with the reason on
+  screen — on a dirty tree, on a branch another worktree holds, and on the one
+  already checked out. It never stashes, forces or discards.
+- **Colours the card by state**, so a grid says what is running without being
+  read: a status-keyed accent down the card's edge and a tinted status line,
+  both from the same three-way `displayStatus` the dot uses.
 - **Finds dev container projects that have never been built** by walking the
   filesystem for `devcontainer.json`, listing the ones no container claims, and
   offering to open the folder so the editor can prompt "Reopen in Container".
@@ -82,8 +89,29 @@ things this document spent its first several revisions listing as unproven:
   bet — that the filenames in `releasing.md` are exactly what electron-builder
   emits.
 
-**Three things remain unverified**, and all three are about trusting a build
-somebody else made rather than about the app working:
+**What this branch adds is newer than that pass** and has not been through it:
+
+- **Branch switching against a real repository.** The parsers are tested against
+  fixture `for-each-ref` and `status --porcelain` output and the refusals against
+  the real `canSwitchTo`, but `src/main/git/branches.ts` spawns `git` and has no
+  test of its own, for the same reason `docker/client.ts` does not. Two things
+  only a real run can settle: that `%(worktreepath)` is available on the git the
+  user has (it needs 2.23), and that `wsl.exe -d <distro> --exec git` resolves
+  git inside the distro.
+
+  One thing a real run already settled, and it is folded in: Windows git against
+  a `\\wsl.localhost\…` workspace refuses it as dubiously owned, because the
+  files belong to the Linux user rather than to the Windows account.
+  `gitInvocation` routes a WSL workspace through the distro's own git instead.
+
+- **Cursor's `dev-container` authority end to end.** Cursor resolves it — a real
+  install gets past the URI and into container setup, which is what proves the
+  spec is right. What has not been seen through is a completed attach; the run
+  that got that far stopped on the machine's own `spawn podman ENOENT`, which is
+  Cursor's container CLI configuration and not this app's.
+
+**Three further things remain unverified**, and all three are about trusting a
+build somebody else made rather than about the app working:
 
 - **arm64 on any platform.** Every release packages both architectures; only the
   x64 builds have ever been launched.
@@ -106,6 +134,19 @@ diverges**, and that condition is now met. It is still listed rather than done
 because deleting them is a small, deliberate change to a launch path that is
 currently working on three platforms, and it wants its own commit rather than a
 drive-by.
+
+**But do not read that as "the forks agree".** They do not, and the divergence
+was simply somewhere neither field was looking: the `dev-container` authority's
+SPEC. VS Code hex-encodes the `devcontainer.local_folder` label; Cursor
+hex-encodes a JSON blob naming the workspace and its `devcontainer.json`. That
+is what `EditorTarget.devContainerSpec` now carries, and it is a field added
+because a fork demonstrably diverges rather than in case one might — which is
+the opposite of the two above and the reason it should outlive them.
+
+The lesson worth keeping when these two are deleted: the insurance was bought
+against the wrong risk. A fork changing the scheme or the flag would have
+failed loudly; changing the spec fails SILENTLY, because an authority the
+editor cannot resolve just opens a default window.
 
 ## 2. WSL host paths — strategies 2 and 3
 
@@ -229,8 +270,9 @@ deliberately left out of v1, in this order:
 
 ## 7. The workspace branch — what it does not do
 
-The branch chip reads `.git/HEAD` on the host and stops there. Three things it
-deliberately does not answer, in rough order of how often they will be missed:
+The chip reads `.git/HEAD` on the host, and its menu lists the local branches
+and checks one out. Three things the READING deliberately does not answer, in
+rough order of how often they will be missed:
 
 - **Whether the tree is dirty, or ahead of its remote.** Both mean walking the
   index and the refs — orders of magnitude more work than reading one file, on
@@ -245,6 +287,24 @@ deliberately does not answer, in rough order of how often they will be missed:
   has a checkout this cannot see, and will report the host folder's branch — or
   `none` — for it. That is the trade that buys the whole feature its cost of two
   file reads; the alternative is an `exec` per container.
+
+And four the SWITCHING does not do, each left out on purpose rather than for
+lack of time:
+
+- **Create a branch, or check out a remote one.** The menu offers `refs/heads`
+  and nothing else. `git switch -c` and tracking a `refs/remotes` ref are both
+  one command away in a terminal, and both would put boxwarden in the business
+  of naming refs — which is exactly what makes the current design safe, since
+  the renderer can only ever pick from a list git printed.
+- **Stash, or carry changes across.** Refusing on a dirty tree is the whole
+  posture (see CLAUDE.md), and reversing it is a product decision, not a patch.
+  If it ever lands it wants an explicit "Stash and switch" that also offers to
+  pop — a half-done stash is worse than a refusal.
+- **Fetch or pull.** Nothing here touches the network, which is why there is no
+  credential path to think about. `GIT_TERMINAL_PROMPT=0` is set anyway, because
+  an LFS smudge filter can turn a local checkout into a download.
+- **Switch a branch for an unbuilt project.** Same join problem as reading one:
+  the scan is on demand and this hangs off a container card.
 
 ## 8. Port forwarding, and why the terminal cannot provide it
 

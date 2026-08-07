@@ -20,12 +20,16 @@ export {
   parseAttachedEditors,
 } from './editor-session.js';
 
-export type { ClaudeSession, ClaudeStatus } from './claude.js';
+export type { ClaudeCpuSample, ClaudeSession, ClaudeStatus, SessionActivity } from './claude.js';
 export {
   classifyTopFailure,
+  cpuSamplesOf,
+  foldSessionActivity,
+  isWorking,
   looksLikeClaudeCode,
   hasNoProcessTable,
   parseClaudeProcesses,
+  parseCpuTime,
   readCommandLines,
   sessionCount,
 } from './claude.js';
@@ -42,8 +46,29 @@ export type {
   EndpointProbe,
 } from './docker-endpoint.js';
 
-export type { GitStatus } from './git.js';
-export { parseGitDirPointer, parseGitHead, readableHostFolder, shortCommit } from './git.js';
+export type {
+  BranchListing,
+  BranchTracking,
+  GitBranch,
+  GitInvocation,
+  GitStatus,
+  WorkingTree,
+} from './git.js';
+export {
+  BRANCH_REF_FORMAT,
+  branchSwitchBlockedReason,
+  canSwitchTo,
+  gitInvocation,
+  parseBranchRefs,
+  parseDubiousOwnership,
+  parseTracking,
+  parseGitDirPointer,
+  parseGitHead,
+  parseWorkingTree,
+  readableHostFolder,
+  shortCommit,
+  treeBlockedReason,
+} from './git.js';
 
 export type { SshAgentState } from './ssh-agent.js';
 export { SSH_AUTH_SOCK, containersMissingAgentSocket, sshAgentState } from './ssh-agent.js';

@@ -89,6 +89,7 @@ export function AppView({ vm }: Props) {
         {advisories.page === 'setup' ? (
           <SetupView
             advisories={advisories}
+            editors={editors.editors}
             environment={discovery.snapshot?.environment}
             scannedLabel={scannedLabel}
           />

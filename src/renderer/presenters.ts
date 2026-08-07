@@ -15,6 +15,7 @@
  */
 
 import type {
+  BranchListing,
   ClaudeSession,
   ClaudeStatus,
   DevContainer,
@@ -23,12 +24,21 @@ import type {
   EndpointProbe,
   EngineSelection,
   GitStatus,
+  SessionActivity,
   PortBinding,
   SshAgentState,
   UpdateInstructions,
   UpdateStatus,
 } from '../models/index.js';
-import { attachedEditorsIn, editorDisplayName, projectName, shortCommit } from '../models/index.js';
+import {
+  attachedEditorsIn,
+  branchSwitchBlockedReason,
+  editorDisplayName,
+  isWorking,
+  projectName,
+  shortCommit,
+  treeBlockedReason,
+} from '../models/index.js';
 import type { DiscoverySnapshot } from '../shared/ipc.js';
 import { canExec, describeTarget, relativeTime, runtimeLabel } from './format.js';
 
@@ -362,6 +372,56 @@ export interface BranchChip {
   /** For the accessible name, since "4f2c1ab" alone does not say what it is. */
   readonly label: string;
   readonly tone: 'branch' | 'detached';
+  /**
+   * How many uncommitted changes, when the count has been read. Absent is not
+   * zero: it means git was never asked, which is the ordinary state on a
+   * machine that has none installed.
+   */
+  readonly dirty?: number;
+  /** Commits ahead of the upstream, when there is one and it is not zero. */
+  readonly ahead?: number;
+  /** Commits behind it. Kept apart from `ahead` — the two mean opposite things. */
+  readonly behind?: number;
+}
+
+/**
+ * The counts, as the sentences that go in the chip's tooltip.
+ *
+ * Words rather than the glyphs the chip shows, because `↑2` is a shape you
+ * learn and this is the place that teaches it. Zeroes are dropped rather than
+ * printed: "0 behind" is noise on the ninety per cent of chips that are in
+ * sync, and an absent upstream must not be reported as agreement.
+ */
+function describeCounts(status: GitStatus): readonly string[] {
+  if (status.kind !== 'branch' && status.kind !== 'detached') return [];
+
+  const lines: string[] = [];
+  if (status.tree?.kind === 'dirty') {
+    const { changed } = status.tree;
+    lines.push(`${String(changed)} uncommitted change${changed === 1 ? '' : 's'}.`);
+  }
+
+  if (status.kind === 'branch' && status.tracking !== undefined) {
+    const { ahead, behind } = status.tracking;
+    if (ahead > 0) lines.push(`${String(ahead)} commit${ahead === 1 ? '' : 's'} not pushed yet.`);
+    if (behind > 0) {
+      lines.push(`${String(behind)} commit${behind === 1 ? '' : 's'} on the upstream not pulled.`);
+    }
+  }
+
+  return lines;
+}
+
+/** The count fields, spread onto a chip. Absent keys, never zeroes — see `BranchChip`. */
+function countFields(status: GitStatus): Partial<BranchChip> {
+  if (status.kind !== 'branch' && status.kind !== 'detached') return {};
+  const tracking = status.kind === 'branch' ? status.tracking : undefined;
+
+  return {
+    ...(status.tree?.kind === 'dirty' ? { dirty: status.tree.changed } : {}),
+    ...(tracking !== undefined && tracking.ahead > 0 ? { ahead: tracking.ahead } : {}),
+    ...(tracking !== undefined && tracking.behind > 0 ? { behind: tracking.behind } : {}),
+  };
 }
 
 export function branchChip(status: GitStatus | undefined): BranchChip | undefined {
@@ -375,9 +435,15 @@ export function branchChip(status: GitStatus | undefined): BranchChip | undefine
     case 'branch':
       return {
         text: status.branch,
-        title: `The workspace folder is on branch ${status.branch}.`,
-        label: `Branch ${status.branch}`,
+        title: [`The workspace folder is on branch ${status.branch}.`, ...describeCounts(status)]
+          .join('\n')
+          .trim(),
+        // The counts join the accessible name, not just the tooltip: the
+        // glyphs that carry them on screen are `aria-hidden`, so this is the
+        // only place a screen reader meets them.
+        label: [`Branch ${status.branch}`, ...describeCounts(status)].join(' '),
         tone: 'branch',
+        ...countFields(status),
       };
 
     case 'detached': {
@@ -386,12 +452,129 @@ export function branchChip(status: GitStatus | undefined): BranchChip | undefine
         text: short,
         // The full id, because seven characters is a thing to search for and
         // forty is the thing to paste.
-        title: `The workspace folder has a detached HEAD at ${status.commit} — no branch is checked out.`,
-        label: `Detached HEAD at ${short}`,
+        title: [
+          `The workspace folder has a detached HEAD at ${status.commit} — no branch is checked out.`,
+          ...describeCounts(status),
+        ].join('\n'),
+        label: [`Detached HEAD at ${short}`, ...describeCounts(status)].join(' '),
         tone: 'detached',
+        ...countFields(status),
       };
     }
   }
+}
+
+/** One row of the branch menu. */
+export interface BranchMenuItem {
+  readonly name: string;
+  /** Marked rather than hidden — a menu that omitted it would look incomplete. */
+  readonly current: boolean;
+  readonly disabled: boolean;
+  /**
+   * Why it is disabled, for the row's `title`. Always present when `disabled`
+   * is true: a control that is off for no stated reason is the thing this
+   * whole feature was chosen to avoid.
+   */
+  readonly reason?: string;
+}
+
+/**
+ * What the branch menu renders.
+ *
+ * `unavailable` and an empty `ready` are folded into one arm on purpose. From
+ * the user's side "git is not installed", "that folder is not a repository"
+ * and "this repository has no branches yet" are the same shape of answer —
+ * there is nothing to pick, and here is why — and giving them separate arms
+ * would buy three code paths that render one box.
+ */
+export type BranchMenuView =
+  | { readonly kind: 'loading' }
+  | {
+      readonly kind: 'unavailable';
+      readonly reason: string;
+      /**
+       * A command that would fix it, shown with a Copy button and never run —
+       * the same bargain `advice.ts` makes, for a sharper reason: the one
+       * failure that currently sets this is git's `safe.directory` check, and
+       * an app that silently disabled a repository-trust check on a click is an
+       * app nobody should hand a Docker socket.
+       */
+      readonly command?: string;
+    }
+  | {
+      readonly kind: 'ready';
+      /**
+       * The one refusal that applies to every row, said ONCE above the list
+       * rather than repeated into eight identical tooltips.
+       */
+      readonly warning?: string;
+      readonly items: readonly BranchMenuItem[];
+    };
+
+/**
+ * Fold a listing into the menu.
+ *
+ * `undefined` is "the click landed and the answer has not come back", which is
+ * a real state here in a way it is not for the chip: listing branches spawns a
+ * `git` process, so unlike everything else on a card there is a visible wait.
+ *
+ * The disabled reasons come from `branchSwitchBlockedReason` in the models —
+ * the SAME function the main process applies before it spawns a checkout. That
+ * is what makes the greyed-out row and the refusal agree; two copies of this
+ * rule would be free to disagree, and the one the user would meet is the one
+ * that is not on screen.
+ */
+export function branchMenu(listing: BranchListing | undefined): BranchMenuView {
+  if (listing === undefined) return { kind: 'loading' };
+  if (listing.kind === 'unavailable') {
+    return {
+      kind: 'unavailable',
+      reason: listing.reason,
+      ...(listing.command === undefined ? {} : { command: listing.command }),
+    };
+  }
+
+  if (listing.branches.length === 0) {
+    return {
+      kind: 'unavailable',
+      reason: 'This repository has no local branches yet.',
+    };
+  }
+
+  const warning = treeBlockedReason(listing.tree);
+
+  return {
+    kind: 'ready',
+    ...(warning === undefined ? {} : { warning }),
+    items: listing.branches.map((branch) => {
+      const reason = branchSwitchBlockedReason(branch, listing.tree);
+      return {
+        name: branch.name,
+        current: branch.current,
+        disabled: reason !== undefined,
+        ...(reason === undefined ? {} : { reason }),
+      };
+    }),
+  };
+}
+
+/**
+ * Everything the card needs to render an interactive chip, in one prop.
+ *
+ * Grouped rather than spread across five, because they are one thing: without
+ * any of them the menu cannot work, and a card that received three of the five
+ * would render a button that does nothing. The absence of the whole object is
+ * then the honest way to say "this chip does not open" — which is what a test
+ * that only cares about the branch TEXT wants to say.
+ */
+export interface BranchMenuBinding {
+  readonly open: boolean;
+  /** Undefined until the first listing comes back — rendered as `loading`. */
+  readonly listing: BranchListing | undefined;
+  /** A checkout is in flight. Every row is inert while it is. */
+  readonly busy: boolean;
+  readonly onToggle: () => void;
+  readonly onSwitch: (branch: string) => void;
 }
 
 /**
@@ -425,7 +608,14 @@ export interface ClaudeBadge {
    */
   readonly denseLabel: string;
   readonly title: string;
-  readonly tone: 'running' | 'unknown';
+  /**
+   * `working` is a third tone rather than a flag, so the stylesheet decides how
+   * loud it is in one place. It is deliberately NOT a new arm of
+   * `ClaudeStatus`: a session that is working is still a session that is
+   * present, and splitting the status would make every existing check about
+   * presence ask two questions instead of one.
+   */
+  readonly tone: 'running' | 'working' | 'unknown';
 }
 
 export function claudeBadge(status: ClaudeStatus | undefined): ClaudeBadge | undefined {
@@ -446,8 +636,20 @@ export function claudeBadge(status: ClaudeStatus | undefined): ClaudeBadge | und
 
     case 'running': {
       const count = status.sessions.length;
+      const working = isWorking(status);
       return {
-        label: count === 1 ? 'Claude' : `Claude ×${String(count)}`,
+        // The word only appears when it is TRUE. An idle session reads exactly
+        // as it did before this signal existed, so "working" stays a thing the
+        // eye catches rather than a label every card carries.
+        label: working
+          ? count === 1
+            ? 'Claude · working'
+            : `Claude ×${String(count)} · working`
+          : count === 1
+            ? 'Claude'
+            : `Claude ×${String(count)}`,
+        // Rows layout has room for a mark and a count and nothing else, so the
+        // state rides the TONE there instead of the text.
         denseLabel: count === 1 ? '' : `×${String(count)}`,
         title: [
           count === 1
@@ -456,7 +658,7 @@ export function claudeBadge(status: ClaudeStatus | undefined): ClaudeBadge | und
           ...status.sessions.map(describeSession),
           count === 1 ? 'Stopping the container ends it.' : 'Stopping the container ends them.',
         ].join('\n'),
-        tone: 'running',
+        tone: working ? 'working' : 'running',
       };
     }
   }
@@ -477,7 +679,35 @@ function describeSession(session: ClaudeSession): string {
       : session.startTime !== undefined
         ? `since ${session.startTime}`
         : 'uptime not reported';
-  return `  pid ${String(session.pid)} · ${age}`;
+  return `  pid ${String(session.pid)} · ${age} · ${describeActivity(session.activity)}`;
+}
+
+/**
+ * One session's activity, in the tooltip.
+ *
+ * `unknown` says what it means — "not measured yet" — rather than staying
+ * silent, because on the first poll after launch EVERY session reads that way
+ * and a blank there looks like a bug rather than like a baseline being taken.
+ */
+function describeActivity(activity: SessionActivity): string {
+  switch (activity.kind) {
+    case 'idle':
+      return 'idle';
+    case 'unknown':
+      return 'activity not measured yet';
+    case 'working':
+      // Naming the signal is what makes a wrong badge diagnosable: "running a
+      // command" and "using CPU" fail for different reasons and are fixed in
+      // different places.
+      switch (activity.signal) {
+        case 'subprocess':
+          return 'working — running a command';
+        case 'cpu':
+          return 'working — using CPU';
+        case 'both':
+          return 'working — running a command, using CPU';
+      }
+  }
 }
 
 /**
@@ -511,9 +741,25 @@ export function stopWarning(
     (total, status) => total + (status?.kind === 'running' ? status.sessions.length : 0),
     0,
   );
-  if (sessions === 1) lines.push('A Claude Code session is running in here. Stopping ends it.');
+  // Whether any of them is DOING something right now. It sharpens the sentence
+  // rather than adding one: "is running" and "is working right now" are the
+  // same warning at two volumes, and stacking both would push the editor
+  // warning below the fold of a tooltip.
+  const working = claude.some(isWorking);
+
+  if (sessions === 1) {
+    lines.push(
+      working
+        ? 'A Claude Code session is working in here right now. Stopping ends it mid-task.'
+        : 'A Claude Code session is running in here. Stopping ends it.',
+    );
+  }
   if (sessions > 1) {
-    lines.push(`${String(sessions)} Claude Code sessions are running in here. Stopping ends them.`);
+    lines.push(
+      working
+        ? `${String(sessions)} Claude Code sessions are running in here and at least one is working right now. Stopping ends them mid-task.`
+        : `${String(sessions)} Claude Code sessions are running in here. Stopping ends them.`,
+    );
   }
 
   // Second, and separately worded: an agent is ENDED by stopping, whereas an

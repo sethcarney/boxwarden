@@ -6,9 +6,18 @@ import type {
   GitStatus,
   OpenInEditorMode,
 } from '../../models/index.js';
-import { canStart, canStop, hostPathLabel, statusLabel } from '../format.js';
+import {
+  canStart,
+  canStop,
+  cardClass,
+  hostPathLabel,
+  statusLabel,
+  statusTextClass,
+} from '../format.js';
+import type { BranchChip, BranchMenuBinding } from '../presenters.js';
 import {
   branchChip,
+  branchMenu as branchMenuView,
   cardTitle,
   claudeBadge,
   editorActions,
@@ -20,6 +29,7 @@ import {
   terminalBlockedReason,
   visiblePorts,
 } from '../presenters.js';
+import { BranchMenu } from './BranchMenu.js';
 import { ClaudeGlyph } from './ClaudeGlyph.js';
 import { EditorGlyph } from './EditorGlyph.js';
 import { StartupCommandField } from './StartupCommandField.js';
@@ -73,6 +83,17 @@ interface Props {
    * there is no meaning attached to the chip being missing.
    */
   readonly git?: GitStatus | undefined;
+  /**
+   * What makes the chip a control rather than a label.
+   *
+   * Absent means the chip does not open — which is the honest state for a card
+   * rendered without the wiring, and the default a test gets when it only cares
+   * what branch is printed. Present means the whole mechanism is there: the
+   * open flag, the listing, the busy flag and both callbacks. There is no
+   * halfway, because a chip with a toggle and no listing is a button that opens
+   * an empty box.
+   */
+  readonly branchMenu?: BranchMenuBinding | undefined;
   readonly onStart: (container: DevContainer) => void;
   readonly onStop: (container: DevContainer) => void;
   /** `mode` is omitted for the ordinary open; the card only passes it for "New window". */
@@ -102,6 +123,7 @@ export function ContainerCard({
   claude,
   editor,
   git,
+  branchMenu,
   onStart,
   onStop,
   onOpen,
@@ -120,7 +142,7 @@ export function ContainerCard({
   const actions = editorActions(editor, editorName, blocked, dense);
 
   return (
-    <article className={`card${unresolved ? ' card-degraded' : ''}`}>
+    <article className={cardClass(container.runtime, unresolved)}>
       <header className="card-head">
         <div className="card-title">
           <StatusDot runtime={container.runtime} />
@@ -130,19 +152,61 @@ export function ContainerCard({
               meta list is the part the rows layout hides. Long branch names are
               ellipsised by the stylesheet and kept whole in `title`. */}
           {branch !== undefined && (
-            <span
-              className={`branch-chip branch-chip-${branch.tone}`}
-              title={branch.title}
-              aria-label={branch.label}
-            >
-              <span className="branch-chip-icon" aria-hidden="true">
-                ⎇
-              </span>
-              {/* Wrapped rather than left as a bare text node: `text-overflow`
-                  has nothing to act on inside a flex container, so an
-                  unwrapped name is CLIPPED to nothing on a narrow window
-                  instead of ellipsised to `clau…`. */}
-              <span className="branch-chip-name">{branch.text}</span>
+            <span className="branch-chip-slot">
+              {/*
+                A button when the card was given a menu to open, and a plain
+                span otherwise. The two are not interchangeable and the split is
+                not laziness: a button that opens nothing is a control that lies
+                about being one, and `branchMenu` is absent exactly where there
+                is nothing to open — a card rendered without the binding.
+              */}
+              {branchMenu === undefined ? (
+                <span
+                  className={`branch-chip branch-chip-${branch.tone}`}
+                  title={branch.title}
+                  aria-label={branch.label}
+                >
+                  <span className="branch-chip-icon" aria-hidden="true">
+                    ⎇
+                  </span>
+                  {/* Wrapped rather than left as a bare text node:
+                      `text-overflow` has nothing to act on inside a flex
+                      container, so an unwrapped name is CLIPPED to nothing on a
+                      narrow window instead of ellipsised to `clau…`. */}
+                  <span className="branch-chip-name">{branch.text}</span>
+                  <BranchCounts chip={branch} />
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  className={`branch-chip branch-chip-${branch.tone} branch-chip-button`}
+                  title={`${branch.title}\nClick to switch.`}
+                  aria-label={`${branch.label}. Switch branch.`}
+                  aria-haspopup="menu"
+                  aria-expanded={branchMenu.open}
+                  // Not disabled while `busy`: the button is how the menu
+                  // CLOSES, and a checkout that takes a moment would otherwise
+                  // trap the user in a popover they cannot dismiss by the route
+                  // they opened it. The rows inside are the things that go
+                  // inert.
+                  onClick={branchMenu.onToggle}
+                >
+                  <span className="branch-chip-icon" aria-hidden="true">
+                    ⎇
+                  </span>
+                  <span className="branch-chip-name">{branch.text}</span>
+                  <BranchCounts chip={branch} />
+                </button>
+              )}
+
+              {branchMenu?.open === true && (
+                <BranchMenu
+                  view={branchMenuView(branchMenu.listing)}
+                  busy={branchMenu.busy}
+                  onSwitch={branchMenu.onSwitch}
+                  onClose={branchMenu.onToggle}
+                />
+              )}
             </span>
           )}
           {/* Nothing at all for `absent` — see the note on sshAgentBadge. */}
@@ -200,7 +264,9 @@ export function ContainerCard({
               {dense ? badge.denseLabel : badge.label}
             </span>
           )}
-          <span className="card-status">{statusLabel(container.runtime, now)}</span>
+          <span className={statusTextClass(container.runtime)}>
+            {statusLabel(container.runtime, now)}
+          </span>
         </div>
       </header>
 
@@ -326,5 +392,34 @@ export function ContainerCard({
         )}
       </footer>
     </article>
+  );
+}
+
+/**
+ * The counts that ride on the branch chip: uncommitted changes, and how far
+ * this branch has drifted from its upstream.
+ *
+ * Glyphs rather than words because the chip is 10px and already holds a branch
+ * name it is allowed to ellipsise — every character here competes with that.
+ * The words are in the chip's `title`, which is where `describeCounts` puts
+ * them, so nothing is only ever a symbol.
+ *
+ * Each one is absent rather than zero when it does not apply. That is the whole
+ * discipline of this feature: a chip with no `●` says the tree is clean, a chip
+ * with no `↑` says nothing is unpushed, and a chip on a machine with no git
+ * says neither — which is why absence had to mean "not asked" everywhere up the
+ * chain rather than "none".
+ */
+function BranchCounts({ chip }: { readonly chip: BranchChip }) {
+  if (chip.dirty === undefined && chip.ahead === undefined && chip.behind === undefined) {
+    return null;
+  }
+
+  return (
+    <span className="branch-counts" aria-hidden="true">
+      {chip.dirty !== undefined && <span className="branch-count dirty">●{chip.dirty}</span>}
+      {chip.ahead !== undefined && <span className="branch-count ahead">↑{chip.ahead}</span>}
+      {chip.behind !== undefined && <span className="branch-count behind">↓{chip.behind}</span>}
+    </span>
   );
 }

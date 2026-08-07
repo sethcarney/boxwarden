@@ -110,7 +110,7 @@ describe('ComposeGroup', () => {
   describe('when Claude Code is running somewhere in the group', () => {
     const session: ClaudeStatus = {
       kind: 'running',
-      sessions: [{ pid: 412, command: 'claude' }],
+      sessions: [{ pid: 412, command: 'claude', activity: { kind: 'idle' } }],
     };
 
     it('warns on "Stop all", counting sessions across every member', () => {

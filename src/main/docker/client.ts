@@ -4,6 +4,8 @@ import { homedir, platform } from 'node:os';
 import { promisify } from 'node:util';
 import Docker from 'dockerode';
 import type {
+  ClaudeCpuSample,
+  ClaudeStatus,
   ContainerId,
   ContainerRuntimeKind,
   DevContainer,
@@ -17,6 +19,7 @@ import {
   ALL_ENGINES,
   classifyEditorTopFailure,
   classifyTopFailure,
+  cpuSamplesOf,
   parseAttachedEditors,
   parseClaudeProcesses,
   selectionIncludes,
@@ -483,6 +486,32 @@ export class DockerodeBackend implements DockerBackend {
    * fails as a matter of course; throwing away every engine handle over it
    * would make a background poll re-probe all the sockets on a schedule.
    */
+  /**
+   * The previous poll's CPU counters, per container.
+   *
+   * The one piece of state this backend keeps that is not a connection. It has
+   * to live somewhere across calls — a cumulative counter says nothing on its
+   * own — and here is the narrowest place: the same object that made the `top`
+   * call, keyed by the same id, cleared by the same lifecycle.
+   *
+   * A container that stops and starts keeps its entry, and that is harmless:
+   * pids are matched individually, so a new session simply finds no baseline
+   * and reports `unknown` for one poll, which is what it should do anyway.
+   */
+  readonly #cpuSamples = new Map<ContainerId, readonly ClaudeCpuSample[]>();
+
+  /** Store this poll's counters, or drop the entry when there is nothing to remember. */
+  #rememberCpu(id: ContainerId, status: ClaudeStatus): void {
+    const samples = cpuSamplesOf(status);
+    if (samples.length === 0) {
+      // Deleted rather than left stale: a session that has gone must not leave
+      // a counter behind for a future pid to be compared against.
+      this.#cpuSamples.delete(id);
+      return;
+    }
+    this.#cpuSamples.set(id, samples);
+  }
+
   async containerActivity(
     ids: readonly ContainerId[],
   ): Promise<ReadonlyMap<ContainerId, ContainerActivity>> {
@@ -503,12 +532,20 @@ export class DockerodeBackend implements DockerBackend {
           // ONE response, two questions. Both parsers are pure and neither
           // knows about the other; what they share is the reading, which is
           // the expensive part.
+          //
+          // The Claude side takes a third input: the previous poll's CPU
+          // counters. That is what turns a cumulative number into "did it do
+          // anything in the last fifteen seconds" — see foldSessionActivity.
+          const claude = parseClaudeProcesses(
+            response?.Titles,
+            response?.Processes,
+            this.#cpuSamples.get(id) ?? [],
+          );
+          this.#rememberCpu(id, claude);
+
           return [
             id,
-            {
-              claude: parseClaudeProcesses(response?.Titles, response?.Processes),
-              editor: parseAttachedEditors(response?.Titles, response?.Processes),
-            },
+            { claude, editor: parseAttachedEditors(response?.Titles, response?.Processes) },
           ];
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);

@@ -1,5 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { parseGitDirPointer, parseGitHead, readableHostFolder, shortCommit } from './git.js';
+import type { BranchListing, GitBranch } from './git.js';
+import {
+  branchSwitchBlockedReason,
+  canSwitchTo,
+  gitInvocation,
+  parseBranchRefs,
+  parseDubiousOwnership,
+  parseTracking,
+  parseGitDirPointer,
+  parseGitHead,
+  parseWorkingTree,
+  readableHostFolder,
+  shortCommit,
+  treeBlockedReason,
+} from './git.js';
 
 describe('parseGitHead', () => {
   it('reads the branch out of a symbolic HEAD', () => {
@@ -132,5 +146,301 @@ describe('readableHostFolder', () => {
         'linux',
       ),
     ).toBeUndefined();
+  });
+});
+
+describe('parseBranchRefs', () => {
+  it('reads name, current marker and worktree out of the three columns', () => {
+    expect(
+      parseBranchRefs(['main\t*\t/home/dev/app', 'feature/rate-limiting\t \t'].join('\n')),
+    ).toEqual([
+      { name: 'main', current: true },
+      { name: 'feature/rate-limiting', current: false },
+    ]);
+  });
+
+  /**
+   * The subtlety the format has: `%(worktreepath)` is set for the current
+   * branch too, naming the worktree that was asked. Carrying it would disable
+   * the branch the user is on with a sentence pointing at their own folder.
+   */
+  it('does not report the current branch as checked out elsewhere', () => {
+    const [branch] = parseBranchRefs('main\t*\t/home/dev/app\n');
+    expect(branch).toEqual({ name: 'main', current: true });
+    expect(branch).not.toHaveProperty('checkedOutAt');
+  });
+
+  /**
+   * The case the field exists for: one worktree per agent, which is the setup
+   * that made the branch chip worth building in the first place.
+   */
+  it('reports a branch another worktree holds', () => {
+    expect(parseBranchRefs('agent-3\t \t/home/dev/app-worktrees/agent-3\n')).toEqual([
+      { name: 'agent-3', current: false, checkedOutAt: '/home/dev/app-worktrees/agent-3' },
+    ]);
+  });
+
+  /** A worktree path can contain spaces; a branch name cannot contain a tab. */
+  it('keeps a worktree path with spaces in it whole', () => {
+    expect(parseBranchRefs('wip\t \t/Users/dev/My Projects/app\n')[0]?.checkedOutAt).toBe(
+      '/Users/dev/My Projects/app',
+    );
+  });
+
+  it('ignores blank lines and an empty listing', () => {
+    expect(parseBranchRefs('')).toEqual([]);
+    expect(parseBranchRefs('\n\n')).toEqual([]);
+  });
+});
+
+describe('parseWorkingTree', () => {
+  it('reads an empty porcelain status as clean', () => {
+    expect(parseWorkingTree('')).toEqual({ kind: 'clean' });
+    expect(parseWorkingTree('\n')).toEqual({ kind: 'clean' });
+  });
+
+  it('counts the changed files', () => {
+    expect(parseWorkingTree(' M src/a.ts\nM  src/b.ts\nD  src/c.ts\n')).toEqual({
+      kind: 'dirty',
+      changed: 3,
+    });
+  });
+});
+
+describe('branchSwitchBlockedReason', () => {
+  const clean = { kind: 'clean' } as const;
+  const dirty = { kind: 'dirty', changed: 2 } as const;
+  const other: GitBranch = { name: 'other', current: false };
+
+  it('allows an ordinary branch on a clean tree', () => {
+    expect(branchSwitchBlockedReason(other, clean)).toBeUndefined();
+  });
+
+  it('blocks the branch already checked out here', () => {
+    expect(branchSwitchBlockedReason({ name: 'main', current: true }, clean)).toContain('already');
+  });
+
+  it('blocks a branch another worktree holds, and names that worktree', () => {
+    const reason = branchSwitchBlockedReason(
+      { name: 'agent-3', current: false, checkedOutAt: '/home/dev/wt/agent-3' },
+      clean,
+    );
+    expect(reason).toContain('/home/dev/wt/agent-3');
+  });
+
+  /**
+   * The ordering that matters: a dirty tree blocks every row and is said once
+   * above the list, so a row with a reason of its own must keep it rather than
+   * repeating the shared one.
+   */
+  it('prefers the row-specific reason over the dirty tree', () => {
+    expect(
+      branchSwitchBlockedReason(
+        { name: 'agent-3', current: false, checkedOutAt: '/home/dev/wt/agent-3' },
+        dirty,
+      ),
+    ).toContain('worktree');
+  });
+
+  it('falls back to the dirty tree for a row with nothing else wrong', () => {
+    expect(branchSwitchBlockedReason(other, dirty)).toContain('uncommitted');
+  });
+});
+
+describe('treeBlockedReason', () => {
+  it('says nothing about a clean tree', () => {
+    expect(treeBlockedReason({ kind: 'clean' })).toBeUndefined();
+  });
+
+  it('agrees in number with one change', () => {
+    expect(treeBlockedReason({ kind: 'dirty', changed: 1 })).toContain('1 uncommitted change.');
+  });
+
+  it('agrees in number with several', () => {
+    expect(treeBlockedReason({ kind: 'dirty', changed: 4 })).toContain('4 uncommitted changes');
+  });
+
+  /**
+   * The posture, pinned: neither offer is made, because a stash boxwarden
+   * created is one the user has to remember to pop and a discarded change is
+   * one nobody can get back.
+   */
+  it('offers neither to stash nor to discard', () => {
+    const reason = treeBlockedReason({ kind: 'dirty', changed: 2 }) ?? '';
+    expect(reason).toContain('will not discard or stash');
+  });
+});
+
+describe('canSwitchTo', () => {
+  const listing: BranchListing = {
+    kind: 'ready',
+    tree: { kind: 'clean' },
+    branches: [
+      { name: 'main', current: true },
+      { name: 'feature/x', current: false },
+      { name: 'agent-3', current: false, checkedOutAt: '/home/dev/wt/agent-3' },
+    ],
+  };
+
+  it('allows a branch git itself listed', () => {
+    expect(canSwitchTo('feature/x', listing)).toBe(true);
+  });
+
+  /**
+   * The security answer as well as the UI one. `switchBranch` runs this against
+   * a listing the MAIN process read, so the only strings that ever reach
+   * `git checkout` are ones git itself printed under refs/heads — a renderer
+   * cannot name an option, a path, or a branch of some other repository.
+   */
+  it('refuses a name that is not in the listing', () => {
+    expect(canSwitchTo('--force', listing)).toContain('not a local branch');
+    expect(canSwitchTo('../../etc/passwd', listing)).toContain('not a local branch');
+  });
+
+  it('refuses everything when the listing could not be read', () => {
+    expect(canSwitchTo('main', { kind: 'unavailable', reason: 'git was not found.' })).toBe(
+      'git was not found.',
+    );
+  });
+
+  it('refuses a branch held by another worktree', () => {
+    expect(canSwitchTo('agent-3', listing)).toContain('worktree');
+  });
+
+  it('refuses every branch on a dirty tree', () => {
+    expect(canSwitchTo('feature/x', { ...listing, tree: { kind: 'dirty', changed: 1 } })).toContain(
+      'uncommitted',
+    );
+  });
+});
+
+describe('gitInvocation', () => {
+  it('runs the host git against a posix path', () => {
+    expect(gitInvocation({ kind: 'posix', path: '/home/dev/app' })).toEqual({
+      file: 'git',
+      leading: ['--no-optional-locks', '-C', '/home/dev/app'],
+    });
+  });
+
+  it('runs the host git against a windows path', () => {
+    expect(gitInvocation({ kind: 'windows', path: 'C:\\Users\\dev\\app' })).toEqual({
+      file: 'git',
+      leading: ['--no-optional-locks', '-C', 'C:\\Users\\dev\\app'],
+    });
+  });
+
+  /**
+   * The bug this function exists for. Windows git against
+   * `\\wsl.localhost\<distro>\…` sees files owned by the Linux user and refuses
+   * on `safe.directory`, so the distro's own git runs instead — same files,
+   * matching owner, and no 9P round trip per ref.
+   */
+  it('reaches into the distro for a WSL workspace, over the LINUX path', () => {
+    expect(gitInvocation({ kind: 'wsl', distro: 'dev', path: '/home/seth/project' })).toEqual({
+      file: 'wsl.exe',
+      leading: ['-d', 'dev', '--exec', 'git', '--no-optional-locks', '-C', '/home/seth/project'],
+    });
+  });
+
+  /** `--exec` and not `--`: without it wsl.exe hands the line to a shell first. */
+  it('always passes --exec, and never the UNC spelling', () => {
+    const { leading } = gitInvocation({ kind: 'wsl', distro: 'dev', path: '/home/seth/p' });
+    expect(leading).toContain('--exec');
+    expect(leading).not.toContain('--');
+    expect(leading.some((arg) => arg.includes('wsl.localhost'))).toBe(false);
+  });
+});
+
+describe('parseDubiousOwnership', () => {
+  /** Exactly what git prints, down to the leading tab on the command line. */
+  const REFUSAL = [
+    "fatal: detected dubious ownership in repository at '//wsl.localhost/dev/home/seth/app'",
+    'To add an exception for this directory, call:',
+    '',
+    "\tgit config --global --add safe.directory '%(prefix)///wsl.localhost/dev/home/seth/app'",
+    '',
+  ].join('\n');
+
+  /**
+   * Taken from git's output rather than built from the folder. git's spelling
+   * of a UNC path in this config is `%(prefix)///…`, which exists because `//`
+   * is meaningful to the config parser — reconstructing it means reimplementing
+   * that rule, copying it means reimplementing none of it.
+   */
+  it('lifts git’s own suggested command out, %(prefix) and all', () => {
+    expect(parseDubiousOwnership(REFUSAL)).toBe(
+      "git config --global --add safe.directory '%(prefix)///wsl.localhost/dev/home/seth/app'",
+    );
+  });
+
+  it('says nothing about an unrelated failure', () => {
+    expect(parseDubiousOwnership('fatal: not a git repository')).toBeUndefined();
+    expect(parseDubiousOwnership('')).toBeUndefined();
+  });
+
+  /**
+   * A refusal whose suggestion git did not print — an older version, or a
+   * locale that reworded it. The caller then falls back to showing git's raw
+   * words, which is worse than a copy button and better than a blank box.
+   */
+  it('says nothing when the refusal carries no command to copy', () => {
+    expect(
+      parseDubiousOwnership("fatal: detected dubious ownership in repository at '/x'"),
+    ).toBeUndefined();
+  });
+});
+
+describe('parseTracking', () => {
+  it('reads ahead and behind out of the --branch header', () => {
+    expect(parseTracking('## main...origin/main [ahead 2, behind 1]\n M src/a.ts\n')).toEqual({
+      ahead: 2,
+      behind: 1,
+    });
+  });
+
+  it('reads a header with only one of the two', () => {
+    expect(parseTracking('## main...origin/main [ahead 3]\n')).toEqual({ ahead: 3, behind: 0 });
+    expect(parseTracking('## main...origin/main [behind 4]\n')).toEqual({ ahead: 0, behind: 4 });
+  });
+
+  it('reads a branch that agrees with its upstream as zero on both', () => {
+    expect(parseTracking('## main...origin/main\n')).toEqual({ ahead: 0, behind: 0 });
+  });
+
+  /**
+   * The distinction the `undefined` arm exists for: "in sync with origin" and
+   * "has no origin" are different things to tell someone, and only one of them
+   * means the work is safe somewhere else.
+   */
+  it('answers nothing for a branch with no upstream', () => {
+    expect(parseTracking('## local-only\n')).toBeUndefined();
+    expect(parseTracking('## HEAD (no branch)\n')).toBeUndefined();
+    expect(parseTracking(' M src/a.ts\n')).toBeUndefined();
+    expect(parseTracking('')).toBeUndefined();
+  });
+
+  /** A branch name may legally contain a bracket; the divergence note is last. */
+  it('reads the trailing bracket, not one inside a branch name', () => {
+    expect(parseTracking('## feat[x]...origin/feat[x] [ahead 1]\n')).toEqual({
+      ahead: 1,
+      behind: 0,
+    });
+  });
+});
+
+describe('parseWorkingTree with the --branch header', () => {
+  /**
+   * The header is not a changed file. Counting it would report every clean
+   * checkout in the app as having exactly one uncommitted change.
+   */
+  it('does not count the header as a change', () => {
+    expect(parseWorkingTree('## main...origin/main [ahead 1]\n')).toEqual({ kind: 'clean' });
+  });
+
+  it('counts only the file lines beneath it', () => {
+    expect(parseWorkingTree('## main...origin/main\n M src/a.ts\nM  src/b.ts\n')).toEqual({
+      kind: 'dirty',
+      changed: 2,
+    });
   });
 });

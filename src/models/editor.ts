@@ -32,6 +32,24 @@ export interface EditorTarget {
   /** Almost certainly '--folder-uri'. Same caveat as `remoteScheme`. */
   readonly folderUriFlag: string;
   /**
+   * How this editor spells the `dev-container` authority's SPEC — the part
+   * after the `+`.
+   *
+   * This is the fork divergence `remoteScheme` and `folderUriFlag` were added
+   * as insurance against, and it turned out to be neither of them:
+   *
+   *   - `local-folder` — VS Code. The hex of the `devcontainer.local_folder`
+   *     label, byte for byte. See `authorityFor`.
+   *   - `config-json` — Cursor. The hex of a JSON blob naming the workspace and
+   *     its devcontainer.json (`{settingType,workspacePath,devcontainerPath}`),
+   *     per Cursor's own "Opening Remote Containers via the CLI" docs.
+   *
+   * The two are not interchangeable and the failure is silent: Cursor given VS
+   * Code's spelling cannot resolve the authority and falls back to opening its
+   * default window, which looks exactly like the editor ignoring the flag.
+   */
+  readonly devContainerSpec: 'local-folder' | 'config-json';
+  /**
    * The flag that forces a SECOND window on a folder that already has one.
    *
    * Without it, `code --folder-uri X` finds the window already showing X and

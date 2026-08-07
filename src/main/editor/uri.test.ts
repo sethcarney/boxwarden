@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { asContainerPath } from '../../models/index.js';
-import { authorityFor, decodeAuthority, devContainerUri, folderUri } from './uri.js';
+import {
+  authorityFor,
+  cursorAuthorityFor,
+  cursorDevContainerUri,
+  decodeAuthority,
+  devContainerUri,
+  folderUri,
+} from './uri.js';
 
 describe('authorityFor', () => {
   it('hex-encodes the host path exactly as VS Code does', () => {
@@ -112,5 +119,84 @@ describe('decodeAuthority', () => {
     expect(decodeAuthority('nonsense' as never)).toBeUndefined();
     expect(decodeAuthority('dev-container+xyz' as never)).toBeUndefined();
     expect(decodeAuthority('dev-container+abc' as never)).toBeUndefined();
+  });
+});
+
+describe('cursorAuthorityFor', () => {
+  const SPEC = {
+    workspacePath: '/home/user/repo',
+    devcontainerPath: '/home/user/repo/.devcontainer/devcontainer.json',
+  };
+
+  /**
+   * The example from Cursor's own "Opening Remote Containers via the CLI"
+   * documentation, hex-encoded here the same way their shell snippet does it.
+   * If this ever disagrees with their docs, their docs win.
+   */
+  it('hex-encodes the documented JSON blob', () => {
+    const authority = cursorAuthorityFor(SPEC);
+    expect(decodeAuthority(authority)).toBe(
+      '{"settingType":"config","workspacePath":"/home/user/repo","devcontainerPath":"/home/user/repo/.devcontainer/devcontainer.json"}',
+    );
+  });
+
+  /**
+   * The authority is also the identity Cursor matches a window against, so two
+   * spellings of one container would open two windows on it — the same failure
+   * the raw-label rule prevents for VS Code.
+   */
+  it('is stable: the same spec always produces the same authority', () => {
+    expect(cursorAuthorityFor(SPEC)).toBe(cursorAuthorityFor({ ...SPEC }));
+  });
+
+  it('keeps the keys in the order Cursor documents', () => {
+    const decoded = decodeAuthority(cursorAuthorityFor(SPEC)) ?? '';
+    expect(decoded.indexOf('settingType')).toBeLessThan(decoded.indexOf('workspacePath'));
+    expect(decoded.indexOf('workspacePath')).toBeLessThan(decoded.indexOf('devcontainerPath'));
+  });
+
+  /**
+   * A workspace inside a distro needs the nested authority: the paths in the
+   * spec are Linux paths, and without `@wsl+` Cursor resolves them against
+   * Windows and finds nothing.
+   */
+  it('nests a WSL distro after the hex', () => {
+    const authority = cursorAuthorityFor({ ...SPEC, distro: 'Ubuntu-24.04' });
+    expect(authority.endsWith('@wsl+Ubuntu-24.04')).toBe(true);
+    // The decodable part is unchanged by the nesting.
+    expect(decodeAuthority(authority)).toContain('"settingType":"config"');
+  });
+});
+
+describe('cursorDevContainerUri', () => {
+  const SPEC = {
+    workspacePath: '/home/user/repo',
+    devcontainerPath: '/home/user/repo/.devcontainer/devcontainer.json',
+  };
+
+  it('builds the whole URI, container path included', () => {
+    const uri = cursorDevContainerUri(SPEC, asContainerPath('/workspaces/repo'));
+    expect(uri?.startsWith('vscode-remote://dev-container+')).toBe(true);
+    expect(uri?.endsWith('/workspaces/repo')).toBe(true);
+  });
+
+  /**
+   * The divergence that made this function necessary: Cursor's spelling is not
+   * VS Code's, and handing it VS Code's produces an authority it cannot resolve
+   * — which looks exactly like the editor ignoring the flag.
+   */
+  it('does not agree with the VS Code authority for the same container', () => {
+    const cursor = cursorDevContainerUri(SPEC, asContainerPath('/workspaces/repo'));
+    const vscode = devContainerUri('/home/user/repo', asContainerPath('/workspaces/repo'));
+    expect(cursor).not.toBe(vscode);
+  });
+
+  it('refuses when either path is missing, rather than encoding an empty one', () => {
+    expect(
+      cursorDevContainerUri({ ...SPEC, devcontainerPath: '' }, asContainerPath('/w')),
+    ).toBeUndefined();
+    expect(
+      cursorDevContainerUri({ ...SPEC, workspacePath: '  ' }, asContainerPath('/w')),
+    ).toBeUndefined();
   });
 });

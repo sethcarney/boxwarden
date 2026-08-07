@@ -1,4 +1,5 @@
 import type {
+  ClaudeCpuSample,
   ContainerId,
   DevContainer,
   DockerEndpoint,
@@ -8,6 +9,7 @@ import type {
 } from '../../models/index.js';
 import {
   ALL_ENGINES,
+  cpuSamplesOf,
   engineIdFor,
   parseAttachedEditors,
   parseClaudeProcesses,
@@ -325,6 +327,10 @@ const FAKE_PROCESS_TABLES: Readonly<Record<string, { Titles: string[]; Processes
         'node /home/node/.claude/local/node_modules/@anthropic-ai/claude-code/cli.js --continue',
       ],
       ['node', '907', '1', '0.020', '4m8.0s', 'pts/1', '00:00:01', '/usr/local/bin/claude'],
+      // A tool call running under session 221 — PPID names it. This is the
+      // SUBPROCESS arm of the activity signal, and it is the one arm that
+      // cannot be produced by advancing a counter, so it lives in the fixture.
+      ['node', '944', '221', '0.900', '0m2.0s', '?', '00:00:00', 'bash -lc bun run test'],
     ],
   },
 
@@ -352,9 +358,67 @@ const FAKE_QUIET_TABLE = {
   Processes: [['postgres', '1', '0', '0', '09:02', '?', '00:00:01', 'postgres']],
 };
 
+/**
+ * The session whose CPU counter climbs, and by how much per poll.
+ *
+ * The activity signal is a DELTA, so a fixture table that never changes reports
+ * `unknown` forever and the feature is invisible in `dev:fake` — which is the
+ * one place it can be looked at without a daemon. Advancing exactly one
+ * session's counter is what puts `working` on one card and leaves `idle` on the
+ * others, so both arms are on screen at once and the difference is visible
+ * rather than described.
+ */
+const FAKE_BUSY_CONTAINER =
+  'a1b2c3d4e5f60000000000000000000000000000000000000000000000000001' as const;
+const FAKE_BUSY_PID = '412';
+const FAKE_CPU_STEP_SECONDS = 3;
+
+/** `HH:MM:SS`, which is the shape both engines print in the TIME column. */
+function formatCpuTime(seconds: number): string {
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${pad(Math.floor(seconds / 3_600))}:${pad(Math.floor((seconds % 3_600) / 60))}:${pad(seconds % 60)}`;
+}
+
+/**
+ * The table for one container, with the busy session's CPU counter wound
+ * forward by however many polls have happened.
+ *
+ * Rewritten rather than mutated: `FAKE_PROCESS_TABLES` is a module constant and
+ * a fixture that edited itself in place would drift further from the real
+ * response on every poll, which is the opposite of what a fixture is for.
+ */
+function tableAtPoll(
+  id: string,
+  poll: number,
+): { readonly Titles: string[]; readonly Processes: string[][] } {
+  const table = FAKE_PROCESS_TABLES[id] ?? FAKE_QUIET_TABLE;
+  if (id !== FAKE_BUSY_CONTAINER) return table;
+
+  const time = table.Titles.indexOf('TIME');
+  const pid = table.Titles.indexOf('PID');
+  if (time === -1 || pid === -1) return table;
+
+  return {
+    Titles: table.Titles,
+    Processes: table.Processes.map((row) =>
+      row[pid] === FAKE_BUSY_PID
+        ? row.map((cell, index) =>
+            index === time ? formatCpuTime(4 + poll * FAKE_CPU_STEP_SECONDS) : cell,
+          )
+        : row,
+    ),
+  };
+}
+
 export class FakeDockerBackend implements DockerBackend {
   #containers: InspectResponse[];
   #selection: EngineSelection = ALL_ENGINES;
+
+  /** How many activity polls have happened, so the busy session's CPU can climb. */
+  #poll = 0;
+
+  /** The same per-container CPU memory the real backend keeps, for the same reason. */
+  readonly #cpuSamples = new Map<ContainerId, readonly ClaudeCpuSample[]>();
 
   constructor(now: number = Date.now()) {
     this.#containers = fixtures(now);
@@ -474,14 +538,23 @@ export class FakeDockerBackend implements DockerBackend {
       }
 
       // Both parsers over one fixture table, exactly as the real backend runs
-      // them over one `top` response.
-      const table = FAKE_PROCESS_TABLES[id] ?? FAKE_QUIET_TABLE;
+      // them over one `top` response — including the CPU baseline, so the
+      // activity arms fold here through the same code that ships.
+      const table = tableAtPoll(id, this.#poll);
+      const claude = parseClaudeProcesses(
+        table.Titles,
+        table.Processes,
+        this.#cpuSamples.get(id) ?? [],
+      );
+      this.#cpuSamples.set(id, cpuSamplesOf(claude));
+
       statuses.set(id, {
-        claude: parseClaudeProcesses(table.Titles, table.Processes),
+        claude,
         editor: parseAttachedEditors(table.Titles, table.Processes),
       });
     }
 
+    this.#poll += 1;
     return Promise.resolve(statuses);
   }
 

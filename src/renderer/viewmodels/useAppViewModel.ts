@@ -3,6 +3,8 @@ import type { Advice } from '../../models/index.js';
 import { getApi } from '../api.js';
 import type { AdvisoriesViewModel } from './useAdvisories.js';
 import { useAdvisories } from './useAdvisories.js';
+import type { BranchesViewModel } from './useBranches.js';
+import { useBranches } from './useBranches.js';
 import type { ActivityViewModel } from './useContainerActivity.js';
 import { useContainerActivity } from './useContainerActivity.js';
 import { useClock } from './useClock.js';
@@ -44,6 +46,8 @@ export interface AppViewModel {
   readonly activity: ActivityViewModel;
   /** Which branch each container's workspace folder is on. */
   readonly git: GitViewModel;
+  /** The open branch menu, and switching. Separate from `git` because that one is a poll. */
+  readonly branches: BranchesViewModel;
   /** The setup advice, what the user has hidden of it, and which screen is showing. */
   readonly advisories: AdvisoriesViewModel;
   readonly update: UpdateViewModel;
@@ -53,7 +57,7 @@ export interface AppViewModel {
  * The root ViewModel: every piece of state the app renders, and every action it
  * can take, with no JSX anywhere beneath it.
  *
- * Composition rather than one large hook, because the ten below have genuinely
+ * Composition rather than one large hook, because the eleven below have genuinely
  * different lifetimes — Docker is polled every five seconds, Claude Code
  * presence every fifteen, the workspace branches every thirty, GitHub is asked
  * about a new release once a day, the filesystem is scanned on demand, the
@@ -79,6 +83,11 @@ export function useAppViewModel(): AppViewModel {
   const projects = useProjects(api, notices, editors.editorId, discovery.containers);
   const activity = useContainerActivity(api, notices, discovery.containers);
   const git = useGitStatus(api, notices, discovery.containers);
+  // After the poll it refreshes. `git.refresh` is stable, so passing it here
+  // does not restart anything — and it is the whole join between the two: a
+  // switch that landed re-reads the chip immediately rather than leaving it
+  // wrong for up to thirty seconds.
+  const branches = useBranches(api, notices, git.refresh);
   // After discovery, which is where the advice comes from. `EMPTY_ADVICE` and
   // not a literal `[]`: the partition memoises on the array's identity, and a
   // fresh empty array every render would recompute it on every poll.
@@ -98,6 +107,7 @@ export function useAppViewModel(): AppViewModel {
     projects,
     activity,
     git,
+    branches,
     advisories,
     update,
   };

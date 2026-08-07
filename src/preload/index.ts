@@ -21,14 +21,17 @@ import type { BoxwardenApi } from '../shared/ipc.js';
  *     Anything else arrives as undefined on the far side.
  *
  * The methods are deliberately narrow — no generic "invoke any channel" escape
- * hatch. A renderer bug can misuse only these nineteen verbs, and every one
+ * hatch. A renderer bug can misuse only these twenty-one verbs, and every one
  * that acts on a container or a project takes an ID: the main process resolves
  * that to its own copy rather than acting on data the renderer supplied.
  *
  * Note what `addProjectRoot` does NOT take: a path, and what `dismissUpdate`
  * does not take: a version. The renderer can ask for the folder picker to be
  * shown and cannot say which folder the answer is; it can say the user
- * dismissed an update and cannot say which one.
+ * dismissed an update and cannot say which one. `switchBranch` is the one verb
+ * carrying a free-form string, and it is guarded by the same principle turned
+ * around: the string is not trusted, it is MATCHED — against a list the main
+ * process produced itself, moments earlier.
  *
  */
 const api: BoxwardenApi = {
@@ -57,6 +60,13 @@ const api: BoxwardenApi = {
   // last scan produced; a folder sent from here would be the renderer choosing
   // which of the user's directories this process opens.
   gitStatus: (ids) => ipcRenderer.invoke(IPC.gitStatus, [...ids]),
+  listBranches: (id) => ipcRenderer.invoke(IPC.listBranches, id),
+  // The one free-form string in this file, and the only one that reaches a
+  // spawned process. It is not escaped here and must not be: the main process
+  // re-lists the repository's branches and refuses anything that is not in its
+  // own answer, so a name invented on this side matches nothing. Sanitising it
+  // here would be a check the far side would then be tempted to trust.
+  switchBranch: (id, branch) => ipcRenderer.invoke(IPC.switchBranch, id, branch),
   updateStatus: (force) => ipcRenderer.invoke(IPC.updateStatus, force),
   // No version argument — the main process dismisses whatever it last offered.
   dismissUpdate: () => ipcRenderer.invoke(IPC.dismissUpdate),

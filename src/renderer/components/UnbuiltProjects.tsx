@@ -35,19 +35,51 @@ interface Props {
   readonly now: number;
 }
 
+/** Where the panel's own open/closed state is remembered. */
+const PANEL_STORAGE_KEY = 'boxwarden.projects.expanded';
+
 export function UnbuiltProjects({ projects, editorName, editorAvailable, now }: Props) {
-  const disclosure = useDisclosure();
+  // TWO disclosures, and they are not the same kind of thing. `list` truncates
+  // a long listing and is per-run — "show 12 more" is about one scan. `panel`
+  // folds the whole section away and is a standing preference, so it persists;
+  // a panel that reopened on every launch is one whose collapse button stops
+  // being used.
+  const list = useDisclosure();
+  const panel = useDisclosure(true, PANEL_STORAGE_KEY);
 
   // Nothing has been scanned yet and nothing is in flight: stay out of the way
   // rather than rendering an empty frame that explains nothing.
   if (projects.idle) return null;
 
-  const { visible, hidden } = disclosure.reveal(projects.unbuilt, COLLAPSED_LIMIT);
+  const { visible, hidden } = list.reveal(projects.unbuilt, COLLAPSED_LIMIT);
 
   return (
     <section className="panel projects" aria-label="Dev container projects not built yet">
       <header className="projects-head">
-        <h2>Not built yet</h2>
+        {/*
+          The heading IS the control, rather than a separate chevron beside it:
+          the whole bar is the target, which is what makes this usable without
+          aiming. `aria-expanded` and the `#projects-body` reference are what
+          make it a disclosure to a screen reader rather than a mystery button.
+        */}
+        <button
+          type="button"
+          className="disclosure-heading"
+          aria-expanded={panel.expanded}
+          aria-controls="projects-body"
+          onClick={panel.toggle}
+        >
+          <span className="disclosure-caret" aria-hidden="true">
+            {panel.expanded ? '▾' : '▸'}
+          </span>
+          <h2>Not built yet</h2>
+          {/* The count follows the title into the collapsed state, so folding
+              the panel away does not also hide the one number that says
+              whether it is worth opening. */}
+          {!panel.expanded && projects.unbuilt.length > 0 && (
+            <span className="tag">{projects.unbuilt.length}</span>
+          )}
+        </button>
         <button
           type="button"
           className="link"
@@ -58,42 +90,51 @@ export function UnbuiltProjects({ projects, editorName, editorAvailable, now }: 
         </button>
       </header>
 
-      <p className="lede">{projects.summary}</p>
+      {/*
+        Unmounted rather than hidden with CSS, the same call `Advisories` makes:
+        a folded panel holding a dozen Open buttons and a Copy button would
+        otherwise leave every one of them in the tab order.
+      */}
+      {!panel.expanded ? null : (
+        <div id="projects-body">
+          <p className="lede">{projects.summary}</p>
 
-      {projects.truncated && (
-        <p className="note">
-          The scan stopped early, so this list may be short. Narrow it by adding the folder your
-          projects are actually in — a specific root is scanned far faster than a whole home
-          directory.
-        </p>
+          {projects.truncated && (
+            <p className="note">
+              The scan stopped early, so this list may be short. Narrow it by adding the folder your
+              projects are actually in — a specific root is scanned far faster than a whole home
+              directory.
+            </p>
+          )}
+
+          {visible.length > 0 && (
+            <ul className="project-list">
+              {visible.map((project) => (
+                <ProjectRow
+                  key={project.id}
+                  project={project}
+                  editorName={editorName}
+                  editorAvailable={editorAvailable}
+                  onOpen={projects.openProject}
+                />
+              ))}
+            </ul>
+          )}
+
+          {hidden > 0 && (
+            <button type="button" className="link" onClick={list.expand}>
+              Show {hidden} more
+            </button>
+          )}
+
+          <ScanRoots
+            scan={projects.scan}
+            now={now}
+            onAddRoot={projects.addRoot}
+            onRemoveRoot={projects.removeRoot}
+          />
+        </div>
       )}
-
-      {visible.length > 0 && (
-        <ul className="project-list">
-          {visible.map((project) => (
-            <ProjectRow
-              key={project.id}
-              project={project}
-              editorName={editorName}
-              editorAvailable={editorAvailable}
-              onOpen={projects.openProject}
-            />
-          ))}
-        </ul>
-      )}
-
-      {hidden > 0 && (
-        <button type="button" className="link" onClick={disclosure.expand}>
-          Show {hidden} more
-        </button>
-      )}
-
-      <ScanRoots
-        scan={projects.scan}
-        now={now}
-        onAddRoot={projects.addRoot}
-        onRemoveRoot={projects.removeRoot}
-      />
     </section>
   );
 }

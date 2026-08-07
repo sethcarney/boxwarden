@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import type { ClaudeStatus, EngineId } from '../models/index.js';
+import type { BranchListing, ClaudeStatus, EngineId } from '../models/index.js';
 import { devContainer } from './test-fixtures.js';
 import {
   branchChip,
+  branchMenu,
   claudeBadge,
   editorActions,
   editorBadge,
@@ -278,7 +279,9 @@ describe('claudeBadge', () => {
   it('names one session without a count, and says what stopping costs', () => {
     const badge = claudeBadge({
       kind: 'running',
-      sessions: [{ pid: 412, command: 'claude', elapsed: '1h12m33.0s' }],
+      sessions: [
+        { pid: 412, command: 'claude', activity: { kind: 'idle' }, elapsed: '1h12m33.0s' },
+      ],
     });
     expect(badge?.label).toBe('Claude');
     expect(badge?.tone).toBe('running');
@@ -290,8 +293,8 @@ describe('claudeBadge', () => {
     const badge = claudeBadge({
       kind: 'running',
       sessions: [
-        { pid: 412, command: 'claude', elapsed: '1h12m33.0s' },
-        { pid: 907, command: 'claude', elapsed: '4m8.0s' },
+        { pid: 412, command: 'claude', activity: { kind: 'idle' }, elapsed: '1h12m33.0s' },
+        { pid: 907, command: 'claude', activity: { kind: 'idle' }, elapsed: '4m8.0s' },
       ],
     });
     expect(badge?.label).toBe('Claude ×2');
@@ -310,19 +313,24 @@ describe('claudeBadge', () => {
    */
   it('says "up" for an elapsed duration and "since" for a start time', () => {
     expect(
-      claudeBadge({ kind: 'running', sessions: [{ pid: 1, command: 'claude', elapsed: '4m8.0s' }] })
-        ?.title,
+      claudeBadge({
+        kind: 'running',
+        sessions: [{ pid: 1, command: 'claude', activity: { kind: 'idle' }, elapsed: '4m8.0s' }],
+      })?.title,
     ).toContain('up 4m8.0s');
 
     expect(
       claudeBadge({
         kind: 'running',
-        sessions: [{ pid: 1, command: 'claude', startTime: '10:31' }],
+        sessions: [{ pid: 1, command: 'claude', activity: { kind: 'idle' }, startTime: '10:31' }],
       })?.title,
     ).toContain('since 10:31');
 
     expect(
-      claudeBadge({ kind: 'running', sessions: [{ pid: 1, command: 'claude' }] })?.title,
+      claudeBadge({
+        kind: 'running',
+        sessions: [{ pid: 1, command: 'claude', activity: { kind: 'idle' } }],
+      })?.title,
     ).toContain('uptime not reported');
   });
 
@@ -357,18 +365,18 @@ describe('stopWarning', () => {
   /** The compose case: "Stop all" reaches services whose cards nobody read. */
   it('aggregates across a group and pluralises', () => {
     const one: readonly (ClaudeStatus | undefined)[] = [
-      { kind: 'running', sessions: [{ pid: 1, command: 'claude' }] },
+      { kind: 'running', sessions: [{ pid: 1, command: 'claude', activity: { kind: 'idle' } }] },
       { kind: 'none' },
     ];
     expect(stopWarning(one)).toBe('A Claude Code session is running in here. Stopping ends it.');
 
     const several: readonly (ClaudeStatus | undefined)[] = [
-      { kind: 'running', sessions: [{ pid: 1, command: 'claude' }] },
+      { kind: 'running', sessions: [{ pid: 1, command: 'claude', activity: { kind: 'idle' } }] },
       {
         kind: 'running',
         sessions: [
-          { pid: 2, command: 'claude' },
-          { pid: 3, command: 'claude' },
+          { pid: 2, command: 'claude', activity: { kind: 'idle' } },
+          { pid: 3, command: 'claude', activity: { kind: 'idle' } },
         ],
       },
     ];
@@ -398,7 +406,7 @@ describe('stopWarning and the editor', () => {
 
   it('carries both warnings at once, since Stop does both things', () => {
     const warning = stopWarning(
-      [{ kind: 'running', sessions: [{ pid: 1, command: 'claude' }] }],
+      [{ kind: 'running', sessions: [{ pid: 1, command: 'claude', activity: { kind: 'idle' } }] }],
       [{ kind: 'attached', editors: ['vscode'] }],
     );
     expect(warning).toContain('Claude Code session');
@@ -683,5 +691,193 @@ describe('updateSummary', () => {
       NOW,
     );
     expect(dev.label).toBe('boxwarden 0.0.0 · development build');
+  });
+});
+
+describe('branchChip counts', () => {
+  it('shows the dirty count when the tree has been read and has changes', () => {
+    const chip = branchChip({
+      kind: 'branch',
+      branch: 'main',
+      tree: { kind: 'dirty', changed: 3 },
+    });
+    expect(chip?.dirty).toBe(3);
+    expect(chip?.title).toContain('3 uncommitted changes');
+  });
+
+  /**
+   * The discipline the whole feature rests on: absent is "not asked", which is
+   * the ordinary state on a machine with no git installed, and it must not
+   * render as a zero.
+   */
+  it('carries no count at all when the tree was never read', () => {
+    const chip = branchChip({ kind: 'branch', branch: 'main' });
+    expect(chip).not.toHaveProperty('dirty');
+    expect(chip).not.toHaveProperty('ahead');
+    expect(chip).not.toHaveProperty('behind');
+  });
+
+  it('omits a clean tree rather than showing zero', () => {
+    expect(
+      branchChip({ kind: 'branch', branch: 'main', tree: { kind: 'clean' } }),
+    ).not.toHaveProperty('dirty');
+  });
+
+  it('shows ahead and behind separately', () => {
+    const chip = branchChip({
+      kind: 'branch',
+      branch: 'main',
+      tree: { kind: 'clean' },
+      tracking: { ahead: 2, behind: 5 },
+    });
+    expect(chip?.ahead).toBe(2);
+    expect(chip?.behind).toBe(5);
+    expect(chip?.title).toContain('2 commits not pushed');
+    expect(chip?.title).toContain('5 commits on the upstream not pulled');
+  });
+
+  it('omits a zero side of the divergence', () => {
+    const chip = branchChip({
+      kind: 'branch',
+      branch: 'main',
+      tree: { kind: 'clean' },
+      tracking: { ahead: 0, behind: 3 },
+    });
+    expect(chip).not.toHaveProperty('ahead');
+    expect(chip?.behind).toBe(3);
+  });
+
+  /**
+   * The glyphs are aria-hidden, so this is the only place a screen reader meets
+   * the counts.
+   */
+  it('puts the counts in the accessible name too', () => {
+    const chip = branchChip({
+      kind: 'branch',
+      branch: 'main',
+      tree: { kind: 'dirty', changed: 1 },
+      tracking: { ahead: 1, behind: 0 },
+    });
+    expect(chip?.label).toContain('1 uncommitted change.');
+    expect(chip?.label).toContain('1 commit not pushed yet.');
+  });
+
+  /** A detached HEAD has a tree to count in, and no upstream to diverge from. */
+  it('counts a dirty tree on a detached HEAD, with no tracking', () => {
+    const chip = branchChip({
+      kind: 'detached',
+      commit: '4f2c1ab9d3e5f70123456789abcdef0123456789',
+      tree: { kind: 'dirty', changed: 2 },
+    });
+    expect(chip?.dirty).toBe(2);
+    expect(chip).not.toHaveProperty('ahead');
+  });
+});
+
+describe('branchMenu', () => {
+  const READY: BranchListing = {
+    kind: 'ready',
+    tree: { kind: 'clean' },
+    branches: [
+      { name: 'main', current: true },
+      { name: 'feature/dark-theme', current: false },
+      { name: 'agent-3', current: false, checkedOutAt: '/home/dev/wt/agent-3' },
+    ],
+  };
+
+  /**
+   * A real state here in a way it is not for the chip: listing branches spawns
+   * a `git` process, so unlike everything else on a card there is a wait the
+   * user can see.
+   */
+  it('reports a listing that has not come back yet', () => {
+    expect(branchMenu(undefined)).toEqual({ kind: 'loading' });
+  });
+
+  it('marks the current branch and disables it', () => {
+    const view = branchMenu(READY);
+    expect(view.kind).toBe('ready');
+    if (view.kind !== 'ready') return;
+
+    const current = view.items.find((item) => item.name === 'main');
+    expect(current).toMatchObject({ current: true, disabled: true });
+    expect(current?.reason).toContain('already on');
+  });
+
+  it('offers an ordinary branch on a clean tree', () => {
+    const view = branchMenu(READY);
+    if (view.kind !== 'ready') throw new Error('expected a ready menu');
+
+    expect(view.items.find((item) => item.name === 'feature/dark-theme')).toEqual({
+      name: 'feature/dark-theme',
+      current: false,
+      disabled: false,
+    });
+    expect(view.warning).toBeUndefined();
+  });
+
+  /**
+   * The invariant behind every disabled row in this menu: a control that is off
+   * for no stated reason is exactly what the "refuse, and say why" choice was
+   * made to avoid.
+   */
+  it('gives every disabled row a reason', () => {
+    const view = branchMenu({ ...READY, tree: { kind: 'dirty', changed: 2 } });
+    if (view.kind !== 'ready') throw new Error('expected a ready menu');
+
+    for (const item of view.items) {
+      if (item.disabled) expect(item.reason).toBeTruthy();
+    }
+    expect(view.items.every((item) => item.disabled)).toBe(true);
+  });
+
+  /** Said once above the list, not repeated into every row's tooltip. */
+  it('hoists the dirty-tree refusal into a single warning', () => {
+    const view = branchMenu({ ...READY, tree: { kind: 'dirty', changed: 2 } });
+    if (view.kind !== 'ready') throw new Error('expected a ready menu');
+
+    expect(view.warning).toContain('2 uncommitted changes');
+  });
+
+  it('keeps a worktree refusal on its own row even when the tree is dirty', () => {
+    const view = branchMenu({ ...READY, tree: { kind: 'dirty', changed: 2 } });
+    if (view.kind !== 'ready') throw new Error('expected a ready menu');
+
+    expect(view.items.find((item) => item.name === 'agent-3')?.reason).toContain(
+      '/home/dev/wt/agent-3',
+    );
+  });
+
+  it('passes an unavailable listing through with its reason', () => {
+    expect(branchMenu({ kind: 'unavailable', reason: 'git was not found.' })).toEqual({
+      kind: 'unavailable',
+      reason: 'git was not found.',
+    });
+  });
+
+  /**
+   * `exactOptionalPropertyTypes` is on, so the absent case has to be an absent
+   * KEY rather than an explicit undefined — which is also what keeps the View's
+   * `!== undefined` check meaningful.
+   */
+  it('carries a fix command when there is one, and omits the key when there is not', () => {
+    const withFix = branchMenu({
+      kind: 'unavailable',
+      reason: 'git does not trust this repository.',
+      command: "git config --global --add safe.directory '%(prefix)///wsl.localhost/dev/home/s/a'",
+    });
+    expect(withFix).toMatchObject({
+      command: "git config --global --add safe.directory '%(prefix)///wsl.localhost/dev/home/s/a'",
+    });
+
+    expect(branchMenu({ kind: 'unavailable', reason: 'x' })).not.toHaveProperty('command');
+  });
+
+  /** Nothing to pick, so it renders as the same shape of answer rather than an empty list. */
+  it('reports a repository with no branches as unavailable, with a reason', () => {
+    const view = branchMenu({ kind: 'ready', tree: { kind: 'clean' }, branches: [] });
+    expect(view.kind).toBe('unavailable');
+    if (view.kind !== 'unavailable') return;
+    expect(view.reason).toContain('no local branches');
   });
 });

@@ -103,7 +103,7 @@ Docker daemon or a display, and why the shells stay small.
 
 ### The ViewModel layer
 
-`useAppViewModel()` composes ten, kept separate because their lifetimes
+`useAppViewModel()` composes eleven, kept separate because their lifetimes
 genuinely differ:
 
 | Hook              | Owns                                                        | Cadence                    |
@@ -115,6 +115,7 @@ genuinely differ:
 | `useNotices`      | the message bar and the copyable fallback                   | event-driven               |
 | `useClaudeStatus` | Claude Code presence per container                          | polled every 15s           |
 | `useGitStatus`    | the branch each workspace folder is on                      | polled every 30s           |
+| `useBranches`     | the open branch menu, its listing, and switching            | on click only              |
 | `useUpdate`       | the release check: banner, footer line, dismiss, off switch | asked hourly, GitHub daily |
 | `useAdvisories`   | which advice is hidden, and which screen is showing         | never touches IPC          |
 | `useTheme`        | layout + theme, persisted to localStorage                   | never touches IPC          |
@@ -143,7 +144,7 @@ Four conventions hold this together:
   is an arm of `UpdateStatus` instead, so it renders where the answer would
   have.
 
-**The IPC surface is nineteen narrow verbs** — see `src/shared/ipc.ts` — all
+**The IPC surface is twenty-one narrow verbs** — see `src/shared/ipc.ts` — all
 declared as a `BoxwardenApi` interface consumed by the renderer without
 importing Electron. They fall into three groups by cadence:
 
@@ -156,6 +157,7 @@ importing Electron. They fall into three groups by cadence:
 - **Container processes, polled every 15s**: `containerActivity` — Claude Code
   presence and attached editors, from one `top` each.
 - **The host's checkouts, polled every 30s**: `gitStatus`.
+- **One checkout, on a click**: `listBranches`, `switchBranch`.
 - **The release check, asked hourly and answered from GitHub once a day**:
   `updateStatus`, `dismissUpdate`, `setUpdateChecks`.
 
@@ -223,6 +225,40 @@ letter produces a valid-looking URI pointing at a container that doesn't
 exist, so VS Code offers to build a new one instead of reattaching. The
 `does not normalise the host path` test in `uri.test.ts` pins this — don't
 "fix" `authorityFor` to normalize.
+
+### The forks do not agree on the authority
+
+`vscode-remote://dev-container+<spec>/<container path>` is the shape, and
+**`<spec>` is not the same thing in every editor**. This is the divergence
+`remoteScheme` and `folderUriFlag` were added as insurance against, and it
+turned out to be neither of them — both of those match everywhere.
+
+| Editor            | `devContainerSpec` | `<spec>` is the hex of                                         |
+| ----------------- | ------------------ | -------------------------------------------------------------- |
+| VS Code, Insiders | `local-folder`     | the `devcontainer.local_folder` label, byte for byte           |
+| Cursor            | `config-json`      | `{settingType,workspacePath,devcontainerPath}` as compact JSON |
+| Windsurf          | `local-folder`     | assumed, unverified — no evidence it diverges                  |
+
+Three things follow:
+
+- **The editor is resolved BEFORE the URI is built** (`openInEditor` in
+  `ipc.ts`). It used to be the other way round, which meant every fork got VS
+  Code's spelling. The failure is silent and looks like the editor ignoring the
+  flag: an authority it cannot resolve just opens a default window.
+- **Cursor needs `devcontainer.config_file` as well as
+  `devcontainer.local_folder`.** Both are written side by side by the extension,
+  but a container built another way may carry only the first — so the Open
+  button refuses with a reason that says VS Code will still work.
+- **A workspace inside WSL needs a NESTED authority** —
+  `dev-container+<hex>@wsl+<distro>` — because the paths inside Cursor's JSON
+  are Linux paths. VS Code needs no equivalent, because its spec is the label
+  and the extension already wrote whatever it wrote.
+
+The raw-label rule still governs the `local-folder` arm and is unchanged. The
+`config-json` arm has its own version of it: the JSON is compact and its keys
+are emitted in the order Cursor documents, because the authority is also the
+identity a window is matched against — two spellings of one container would
+open two windows on it.
 
 ### Discovery
 
@@ -627,6 +663,77 @@ status into a chip, and `ContainerCard` gets a field.
 - **One read per FOLDER, not per container.** Every service in a compose project
   carries the same label, so a five-service workspace would otherwise stat one
   `.git` five times a poll.
+
+### Switching the branch
+
+The chip is also a menu. `src/models/git.ts` holds the whole decision —
+`parseBranchRefs`, `parseWorkingTree`, `branchSwitchBlockedReason`,
+`canSwitchTo`; `src/main/git/branches.ts` runs `git`; `useBranches` owns the
+open menu; `branchMenu` in `presenters.ts` folds a listing into rows.
+
+- **This half needs git; the chip does not.** Reading a branch is two file reads
+  (above) and works on a machine with no git installed. Changing one rewrites
+  the index and the working tree, and the only correct implementation of that is
+  git's own — so `branches.ts` shells out, and `git` being absent degrades to a
+  menu that says so rather than to a chip that stops working.
+- **A WSL workspace runs the DISTRO's git, over the distro's own path.** This is
+  the one place the two halves need different spellings of the same folder, and
+  it is `gitInvocation`'s whole reason for existing. `readableHostFolder` gives
+  `\\wsl.localhost\<distro>\…` because that is what Windows can OPEN, which is
+  right for `status.ts` and wrong here: the files belong to the Linux user, so
+  Windows git sees an owner that is not the account it is running as and
+  `safe.directory` — added after CVE-2022-24765 — refuses the repository
+  outright. The fix is not to disable that check but to stop asking the wrong
+  git, so the WSL arm is `wsl.exe -d <distro> --exec git -C /home/…`. Ownership
+  then matches, and it is faster besides: 9P is a network filesystem and
+  `for-each-ref` over one is slow enough to feel. **`--exec` and not `--`**, the
+  same trap `containerExecArgv` documents at length. The argv rule is easier
+  here than in `terminal/command.ts` and it is worth knowing why before anyone
+  reaches for base64: nothing on this path goes through `wt.exe`, which is the
+  layer that re-joins an argv into a command line.
+- **`safe.directory` still gets a legible answer when it does fire** — a native
+  Windows repo owned by another account, say. `parseDubiousOwnership` lifts
+  git's OWN suggested command out of stderr and the menu shows it with a Copy
+  button. Parsed and not rebuilt, for the raw-label reason: git spells a UNC
+  path there as `%(prefix)///wsl.localhost/…`, an escaping rule that exists
+  because `//` is meaningful to the config parser, and reconstructing it means
+  reimplementing that rule on every platform. **It is never run for the user.**
+  Writing that exception disables a check about whether a repository can be
+  trusted, which is not a thing to do on a click nobody read.
+- **It REFUSES rather than forces, and that is the feature.** A dirty tree, a
+  branch another worktree holds, and the branch already checked out are all
+  `{ ok: false, message }` naming what to do instead. There is no `--force`, no
+  `--merge` and no stash anywhere in it: a stash boxwarden created is one the
+  user has to remember to pop, and a discarded change is one nobody can get
+  back. Same call as copying `devcontainer up` instead of running it.
+- **The renderer picks; it never names.** `switchBranch(id, branch)` carries the
+  one free-form string in the whole IPC surface, and it is not escaped and not
+  sanitised — the main process re-lists `refs/heads` itself and refuses anything
+  that is not in its own answer, so the only strings reaching `git checkout` are
+  ones git printed moments earlier. Escaping would be modelling a parser;
+  matching is modelling none. Same shape of argument as `encodeShellScript`.
+- **The tree is re-read immediately before the checkout, not trusted from the
+  menu.** A person can save a file between opening a popover and clicking in it,
+  so `canSwitchTo` runs twice: once in `branchMenu` to decide what is greyed
+  out, and once in `switchBranch` to decide what happens. The disabled row was
+  never the check.
+- **A disabled row always says why.** The whole point of refusing was to be able
+  to explain, so a greyed item with no `title` is the one bug this feature
+  cannot afford. The dirty-tree reason blocks EVERY row, so it is hoisted into
+  one warning above the list instead of repeated into eight identical tooltips.
+- **`%(worktreepath)` is set for the current branch too**, naming the worktree
+  being asked. Carrying it through would disable the branch the user is on with
+  a sentence pointing at their own folder, so `current` clears it.
+- **Untracked files are excluded from the dirty check** (`--untracked-files=no`).
+  git carries them across a checkout without complaint, so counting them would
+  block switching on a repo whose only "change" is a `node_modules` its
+  `.gitignore` missed. What is counted is what git will actually refuse over.
+- **One menu open at a time, and the listing is discarded on close.** A cached
+  listing goes stale the moment the user runs git in a terminal — which is the
+  machine this app is for. `useBranches` also keeps a `wanted` ref, because
+  `listBranches` spawns a process: without it, opening card A then card B lets
+  A's slower answer render under B's name, which is a wrong answer that looks
+  exactly like a right one.
 
 ### The release check
 

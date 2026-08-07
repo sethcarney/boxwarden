@@ -329,6 +329,36 @@ button.link {
   border-style: dashed;
 }
 
+/*
+ * The running/stopped accent, from the same three-way `displayStatus` the dot
+ * uses. One decision, rendered twice at two sizes: the dot answers "what is
+ * this card" and the edge answers "what is this GRID", which is the question a
+ * person actually has when six containers are on screen.
+ *
+ * `box-shadow: inset` and not `border-left`, deliberately. A border is part of
+ * the box, so a 3px edge on running cards alone would shift their contents
+ * three pixels sideways relative to the stopped ones — and shift them again the
+ * moment a container started, on a list that re-renders every five seconds. An
+ * inset shadow paints INSIDE the existing box, follows `border-radius` without
+ * being told to, and costs no layout at all.
+ *
+ * Stopped is deliberately not a colour. It is the resting state of half this
+ * list and an edge that shouts on every card is one that distinguishes nothing;
+ * a muted grey keeps the shape consistent so the running cards read as
+ * highlighted rather than as differently built.
+ */
+.card-running {
+  box-shadow: inset 3px 0 0 var(--ok);
+}
+
+.card-transitional {
+  box-shadow: inset 3px 0 0 var(--transitional);
+}
+
+.card-stopped {
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--stopped) 40%, transparent);
+}
+
 .card-head {
   display: flex;
   align-items: center;
@@ -339,13 +369,46 @@ button.link {
 .card-title {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px 8px;
   /* Grows into the space the right-hand badges do not use, so the branch chip
      beside the name is bounded by the WINDOW rather than by a number in this
      file. `min-width: 0` is what lets the two children below ellipsise at all —
      a flex item's floor is its content width until you say otherwise. */
   flex: 1 1 auto;
   min-width: 0;
+  /*
+   * WRAPS, which is the third and last round of the branch chip's fight with
+   * the width of a card.
+   *
+   * Round one bounded it at `22ch` and truncated names on a window with inches
+   * to spare. Round two took the bound off and let it shrink instead, which
+   * fixed the wide window and left the narrow one: in GRID layout a card is
+   * ~320px, the name and the chip are on one line, and `flex-shrink: 4` means
+   * the chip pays for the name until it hits its 9ch floor and ellipsises. That
+   * floor is a real constraint — below it the chip clips to a lone `⎇` — so no
+   * amount of shrink tuning wins, because the line is genuinely too short for
+   * both.
+   *
+   * Wrapping is the way out, because the second line is FREE: the card is a
+   * column and the header is its own row, so a title that takes two lines costs
+   * nothing but its own height. Flexbox collects items onto a line at their
+   * hypothetical size and only shrinks what still overflows, so the chip now
+   * drops WHOLE to its own line instead of ellipsising against the name — and
+   * once it is alone there it has the full card width and nothing to give room
+   * to. The name keeps its own ellipsis for the case it is too long by itself,
+   * which is the one case where shortening is the honest answer.
+   */
+  flex-wrap: wrap;
+}
+
+/*
+ * …except in rows layout, whose whole premise is one LINE per container. Here
+ * the ellipsis is correct: there is no free second line to drop to, and a chip
+ * that wrapped would double the height of every row it appeared on. The full
+ * branch stays in the chip's `title`, as it always has.
+ */
+.list[data-layout='rows'] .card-title {
+  flex-wrap: nowrap;
 }
 
 .card-title h2 {
@@ -379,6 +442,28 @@ button.link {
 }
 
 /*
+ * The status words, tinted to match the edge.
+ *
+ * This is the accent's non-positional half. An edge alone is a colour and
+ * nothing else, so on a display or a pair of eyes that does not separate the
+ * greens it carries no information; the words beside it always say "Up 2
+ * hours" or "Exited (137)" regardless, and tinting them ties the two together
+ * for everyone who CAN see the difference without becoming the only thing
+ * carrying the state for anyone who cannot.
+ *
+ * Stopped inherits `--text-dim` from the rule above rather than restating it:
+ * quiet is the point, and a `.card-status-stopped` that set the same value
+ * would be a rule that looks like it does something.
+ */
+.card-status-running {
+  color: var(--ok);
+}
+
+.card-status-transitional {
+  color: var(--transitional);
+}
+
+/*
  * The workspace branch.
  *
  * Quiet by design: it sits beside the container's name, where it identifies a
@@ -404,13 +489,32 @@ button.link {
  * after which the remainder falls on the name. Both ellipsise, and both keep
  * the full text in `title`.
  */
-.branch-chip {
+/*
+ * The chip's positioning context, and the flex item `.card-title` actually
+ * sees.
+ *
+ * The chip gained a menu that hangs below it, and an absolutely positioned menu
+ * needs a `position: relative` ancestor that is the CHIP and not the card —
+ * anchored to the card the menu would open under the container's name on one
+ * card and off the edge on another. The slot exists to be that ancestor and
+ * nothing else, so the flex sizing that used to live on the chip lives here now:
+ * it is what the title row is laying out.
+ */
+.branch-chip-slot {
+  position: relative;
+  display: inline-flex;
   flex: 0 4 auto;
   /* A floor of its own, or the chip shrinks to the icon and its `overflow:
      hidden` clips the name away entirely — a lone `⎇` that reads as a
      rendering fault. Roughly the icon plus five characters, which is enough to
      tell `main` from `feat/…`. */
   min-width: 9ch;
+}
+
+.branch-chip {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
   display: inline-flex;
   align-items: baseline;
   gap: 4px;
@@ -452,6 +556,184 @@ button.link {
   border-style: dashed;
 }
 
+/*
+ * The chip as a control.
+ *
+ * A `<button>` picks up the global button rule above — 6px radius, a raised
+ * background, 5px/12px padding — all of which would make it a foreign object on
+ * a line of 10px chips. So the visual identity stays entirely in `.branch-chip`
+ * and this only puts back what `button` took: the background, the padding and
+ * the radius. Nothing here is a colour or a size of its own, which is what
+ * keeps the two spellings of the chip looking identical.
+ */
+.branch-chip-button {
+  background: none;
+  padding: 1px 5px;
+  border-radius: 3px;
+  /* `help` says "hover me"; this one does something. */
+  cursor: pointer;
+}
+
+.branch-chip-button:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+/* ---------- the branch menu ---------- */
+
+/*
+ * The outside click, caught by an element rather than a document listener.
+ *
+ * Under the menu (below it in z-order) and over everything else, so a click
+ * anywhere but the menu closes it — including on another card's chip, which is
+ * why opening a second menu takes two clicks rather than silently swapping.
+ * That is the correct trade: a popover that changes what it is describing while
+ * the pointer moves across the grid is worse than one extra click.
+ */
+.menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+}
+
+.branch-menu {
+  position: absolute;
+  /* Below the chip and left-aligned with it. The chip sits near the left of a
+     card, so there is no side to flip to and no collision worth detecting. */
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 21;
+  min-width: 220px;
+  /* Wider than the chip on purpose: this is where a long branch name is read
+     in full, which is the whole reason the chip is allowed to ellipsise. */
+  max-width: 320px;
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  /* A dark shadow in BOTH themes, unlike every other colour here. A dropdown's
+     shadow is the light it blocks, not a tint of the surface, so this is the
+     one place where the same rgba is right on white and on near-black. */
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.branch-menu-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.branch-menu-item {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.branch-menu-item:hover:not(:disabled) {
+  background: var(--hover);
+  /* The global rule paints the BORDER on hover, which these do not have. */
+  border-color: transparent;
+}
+
+/*
+ * After `:disabled`, and that ordering is the rule.
+ *
+ * The current branch is always disabled — you cannot switch to where you are —
+ * so under the global `button:disabled` it would fade to 45% and become the
+ * hardest row to find in a list whose job is telling you where you are. The
+ * weight and the full-strength text put it back.
+ */
+.branch-menu-item.current {
+  font-weight: 600;
+  opacity: 1;
+  color: var(--text);
+}
+
+/* A fixed slot, so the names start at the same x whether or not a row is
+   ticked — a list that jogged sideways on one line would be slower to scan
+   than one with no tick at all. */
+.branch-menu-mark {
+  flex: 0 0 auto;
+  width: 1ch;
+  color: var(--ok);
+}
+
+.branch-menu-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.branch-menu-note {
+  margin: 0;
+  padding: 6px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+
+/*
+ * The copyable fix under an unavailable listing. Same construction as
+ * `.advice-commands li`, at popover scale.
+ *
+ * `overflow-x: auto` on the code and `flex: 0 0 auto` on the button for the
+ * reason the advice rows have them: the string this shows is a full path with
+ * git's `%(prefix)/` spelling on the front, and a long one must scroll inside
+ * its own box rather than push the Copy button out of the menu.
+ */
+.branch-menu-fix {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 6px 6px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+}
+
+.branch-menu-fix code {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  background: none;
+  font-size: 11px;
+  overflow-x: auto;
+  white-space: pre;
+  user-select: text;
+}
+
+.branch-menu-fix button {
+  flex: 0 0 auto;
+}
+
+/*
+ * The one refusal that applies to every row. Warning-toned rather than
+ * error-toned: nothing has failed, and a dirty working tree is the ordinary
+ * state of a repository somebody is working in.
+ */
+.branch-menu-warning {
+  margin: 0 0 4px;
+  padding: 6px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--transitional);
+  border: 1px solid color-mix(in srgb, var(--transitional) 45%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--transitional) 10%, transparent);
+}
+
 /* ---------- Claude Code presence ---------- */
 
 .badge {
@@ -470,6 +752,25 @@ button.link {
   border-color: var(--claude-border);
   background: var(--claude-bg);
   color: var(--claude);
+}
+
+/*
+ * A session that is doing something right now.
+ *
+ * The SAME hue as `running`, turned up — filled rather than tinted, so it
+ * reads as more of the thing it already was rather than as a different fact.
+ * A second colour here would compete with the card's own status accent and
+ * with the Claude mark, on a badge whose whole job is to be recognised at a
+ * glance, and the state it marks is the loudest thing on the card already.
+ *
+ * This carries the signal on its own in rows layout, where there is room for
+ * the mark and a count and nothing else — `denseLabel` drops the word.
+ */
+.badge-claude-working {
+  border-color: var(--claude);
+  background: color-mix(in srgb, var(--claude) 22%, transparent);
+  color: var(--claude);
+  font-weight: 600;
 }
 
 /* "Could not tell" has to look different from "nothing running", which is the
@@ -1702,4 +2003,77 @@ button.foot-update:hover:not(:disabled) {
     padding-top: 12px;
     padding-bottom: 12px;
   }
+}
+
+/*
+ * The counts on the branch chip: uncommitted changes, and drift from upstream.
+ *
+ * `flex: 0 0 auto` and placed AFTER the name, so when the line runs out it is
+ * the branch name that ellipsises and never these — a truncated `↑` would be a
+ * different number rather than a shortened one, which is the distinction the
+ * name's own ellipsis relies on being safe.
+ */
+.branch-counts {
+  flex: 0 0 auto;
+  display: inline-flex;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.branch-count {
+  white-space: nowrap;
+}
+
+/* Uncommitted work: the one count that BLOCKS something (switching), so it is
+   the one that gets the warning colour. */
+.branch-count.dirty {
+  color: var(--transitional);
+}
+
+/* Ahead and behind block nothing, so they stay the chip's own dim text. They
+   are told apart by the arrow, not by colour — two more hues on a 10px chip
+   beside a status accent and a Claude badge is where a card stops being read. */
+.branch-count.ahead,
+.branch-count.behind {
+  color: var(--text-dim);
+}
+
+/*
+ * A panel heading that is also its disclosure control.
+ *
+ * Strips the global button chrome back to nothing — this has to look like the
+ * `<h2>` it contains, not like a control sitting next to one. The whole bar is
+ * the hit target rather than a chevron beside it, which is what makes it
+ * usable without aiming.
+ */
+.disclosure-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: inherit;
+  text-align: left;
+}
+
+.disclosure-heading:hover:not(:disabled) {
+  border-color: transparent;
+  color: var(--accent);
+}
+
+.disclosure-heading h2 {
+  margin: 0;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* Fixed width so the title does not shift sideways as the caret turns. */
+.disclosure-caret {
+  flex: 0 0 auto;
+  width: 1em;
+  color: var(--text-dim);
+  font-size: 10px;
 }

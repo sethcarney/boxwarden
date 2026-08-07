@@ -245,6 +245,13 @@ export function useDiscovery(
               ? `Opening a new window on ${container.name}…`
               : `Opening ${container.name}…`,
           );
+          // The URI is kept on SUCCESS too, not only on failure. "Succeeded"
+          // here means the process was spawned, which is a weaker claim than it
+          // looks: an editor that does not understand the authority opens an
+          // empty window and exits zero, and that is indistinguishable from
+          // working unless the user can see the URI that was handed over. The
+          // copy button is how a fork gets verified against a real install.
+          rememberFallback({ label: 'Copy URI', value: result.uri });
           return { ok: true };
         }
         // Only the fallback here — `withBusy` shows the message, and setting

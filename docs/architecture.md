@@ -78,7 +78,7 @@ They are React hooks — the idiomatic ViewModel in a function-component
 codebase — and they hold every piece of state the UI has, every command it can
 issue, and every value derived from the two.
 
-`useAppViewModel()` composes ten, kept apart because their lifetimes differ:
+`useAppViewModel()` composes eleven, kept apart because their lifetimes differ:
 
 | Hook              | Owns                                                        | Cadence           |
 | ----------------- | ----------------------------------------------------------- | ----------------- |
@@ -89,6 +89,7 @@ issue, and every value derived from the two.
 | `useNotices`      | the message bar and the copyable fallback                   | event-driven      |
 | `useClaudeStatus` | Claude Code presence per container                          | polled every 15s  |
 | `useGitStatus`    | the branch each workspace folder is on                      | polled every 30s  |
+| `useBranches`     | the open branch menu, its listing, and switching            | on click only     |
 | `useUpdate`       | the release check, its banner and its off switch            | asked hourly      |
 | `useAdvisories`   | which advice is hidden, which screen is showing             | never touches IPC |
 | `useTheme`        | layout + theme, persisted to localStorage                   | never touches IPC |

@@ -1,12 +1,16 @@
 import { ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron';
 import type {
+  BranchListing,
   ContainerCli,
   ContainerId,
   DevContainer,
   DevContainerProject,
+  BranchTracking,
   DockerEnvironment,
   EngineSelection,
   GitStatus,
+  HostPath,
+  WorkingTree,
   ProjectId,
   ProjectRoot,
   ProjectScan,
@@ -39,7 +43,7 @@ import type { DockerBackend } from './docker/backend.js';
 import { EDITOR_TARGETS, editorTarget } from './editor/targets.js';
 import { resolveEditor } from './editor/resolve.js';
 import { launchEditor } from './editor/launch.js';
-import { devContainerUri, folderUri } from './editor/uri.js';
+import { cursorDevContainerUri, devContainerUri, folderUri } from './editor/uri.js';
 import { scanForProjects } from './projects/scan.js';
 import { probeSshAgent } from './ssh-agent.js';
 import {
@@ -107,6 +111,12 @@ export interface TerminalsContext {
   setStartupCommand(key: string, command: string): void;
 }
 
+/** What `workingTree` answers with — the two counts the chip can show. */
+export interface GitWorkingTree {
+  readonly tree: WorkingTree;
+  readonly tracking?: BranchTracking;
+}
+
 /**
  * Reading a checkout, behind a seam for the same reason the folder picker is:
  * so that the fixture run can answer without touching the disk, and so this
@@ -115,8 +125,45 @@ export interface TerminalsContext {
 export interface GitContext {
   /** `process.platform`. Passed in for the same reason `ProjectsContext` takes it. */
   readonly platform: string;
-  /** Never rejects; every failure is a `GitStatus` arm. */
+  /**
+   * Never rejects; every failure is a `GitStatus` arm.
+   *
+   * A STRING, unlike the two below, and the difference is the point. This only
+   * opens files, so it wants the spelling the host OS can open — which for a
+   * WSL workspace is the `\\wsl.localhost\…` UNC form `readableHostFolder`
+   * produces.
+   */
   status(folder: string): Promise<GitStatus>;
+  /**
+   * Never rejects; every failure is the `unavailable` arm of `BranchListing`.
+   *
+   * A `HostPath` and not a string, because this SPAWNS git and the two
+   * questions have different answers: a WSL workspace is opened through a UNC
+   * path and reasoned about through the distro plus a Linux path. Flattening it
+   * to a string here is exactly the bug `gitInvocation` exists to prevent —
+   * Windows git against a `\\wsl.localhost\…` path refuses on ownership.
+   */
+  branches(folder: HostPath): Promise<BranchListing>;
+  /**
+   * The dirty count and the divergence for one workspace, or undefined.
+   *
+   * Never rejects, and silent about WHY it could not answer: this decorates a
+   * chip that must keep working on a machine with no git installed, so a
+   * missing count has to read as an ordinary absence rather than a fault. The
+   * branch MENU is where a git failure gets explained, because that is where
+   * the user asked for something git had to do.
+   *
+   * `key` is the same folder string the branch read is deduplicated by, and it
+   * is what the implementation caches against — this is the expensive half of
+   * the poll and it is deliberately allowed to be stale.
+   */
+  workingTree(folder: HostPath, key: string): Promise<GitWorkingTree | undefined>;
+  /**
+   * Check a branch out. Never rejects — a refusal is `{ ok: false, message }`,
+   * and the refusal is decided behind this seam rather than in front of it, so
+   * the fixture run enforces the same rules the real one does.
+   */
+  switchBranch(folder: HostPath, branch: string): Promise<ActionResult>;
 }
 
 /**
@@ -299,6 +346,10 @@ export function registerIpcHandlers(context: IpcContext): void {
         id: entry.target.id,
         displayName: entry.target.displayName,
         available: entry.ok,
+        // The resolver already knows both of these and used to drop them on the
+        // floor here. Carrying them is what lets the setup page say WHICH
+        // `cursor` it found — see the note on EditorOption.
+        ...(entry.ok ? { binaryPath: entry.binaryPath, via: entry.via } : {}),
       }));
     },
     () => [],
@@ -325,24 +376,58 @@ export function registerIpcHandlers(context: IpcContext): void {
         };
       }
 
-      // The RAW label, not the parsed path — see src/main/editor/uri.ts.
-      const uri = devContainerUri(container.labels.localFolderRaw, container.workspaceFolder);
-      if (uri === undefined) {
-        return {
-          ok: false,
-          code: 'unresolved-host-path',
-          message:
-            'The devcontainer.local_folder label is empty, so there is no folder to reattach to.',
-        };
-      }
-
+      // The EDITOR is resolved before the URI, and that ordering is the fix for
+      // a real bug: the two VS Code-family forks do not agree on how the
+      // `dev-container` authority is spelled, so a URI built before the target
+      // was known was VS Code's spelling handed to everyone. See
+      // `EditorTarget.devContainerSpec`.
       const target = editorTarget(String(rawEditorId));
       if (target === undefined) {
         return {
           ok: false,
           code: 'editor-not-found',
           message: `Unknown editor: ${String(rawEditorId)}`,
-          uri,
+        };
+      }
+
+      let uri: string | undefined;
+      if (target.devContainerSpec === 'config-json') {
+        // Cursor resolves the container from its CONFIG, so it needs the
+        // devcontainer.json path as well as the workspace. Both labels are
+        // written side by side by the same extension, but a container built
+        // some other way may carry only the first.
+        const devcontainerPath = container.labels.configFileRaw;
+        if (devcontainerPath === undefined || devcontainerPath.trim() === '') {
+          return {
+            ok: false,
+            code: 'unresolved-host-path',
+            message: `${target.displayName} needs the path of this container's devcontainer.json, and it carries no devcontainer.config_file label. VS Code does not need it, so opening in VS Code still works.`,
+          };
+        }
+
+        uri = cursorDevContainerUri(
+          {
+            workspacePath: container.labels.localFolderRaw,
+            devcontainerPath,
+            // A workspace inside a distro needs the nested `@wsl+<distro>`
+            // authority — the paths in the spec are Linux paths.
+            ...(container.localFolder.kind === 'wsl'
+              ? { distro: container.localFolder.distro }
+              : {}),
+          },
+          container.workspaceFolder,
+        );
+      } else {
+        // The RAW label, not the parsed path — see src/main/editor/uri.ts.
+        uri = devContainerUri(container.labels.localFolderRaw, container.workspaceFolder);
+      }
+
+      if (uri === undefined) {
+        return {
+          ok: false,
+          code: 'unresolved-host-path',
+          message:
+            'The devcontainer.local_folder label is empty, so there is no folder to reattach to.',
         };
       }
 
@@ -722,13 +807,16 @@ export function registerIpcHandlers(context: IpcContext): void {
       // workspace would otherwise stat the same `.git` five times a poll to
       // arrive at one answer.
       const pending = new Map<string, Promise<GitStatus>>();
+      const trees = new Map<string, Promise<GitWorkingTree | undefined>>();
       const folders = new Map<ContainerId, string>();
 
       for (const container of containers) {
-        const folder = readableHostFolder(container.localFolder, platform);
-        if (folder === undefined) {
+        const localFolder = container.localFolder;
+        const folder =
+          localFolder.kind === 'unresolved' ? undefined : readableHostFolder(localFolder, platform);
+        if (folder === undefined || localFolder.kind === 'unresolved') {
           statuses[container.id] =
-            container.localFolder.kind === 'unresolved'
+            localFolder.kind === 'unresolved'
               ? {
                   kind: 'unknown',
                   reason:
@@ -742,7 +830,21 @@ export function registerIpcHandlers(context: IpcContext): void {
           continue;
         }
         folders.set(container.id, folder);
-        if (!pending.has(folder)) pending.set(folder, context.git.status(folder));
+        if (!pending.has(folder)) {
+          pending.set(folder, context.git.status(folder));
+          // Alongside the branch read, keyed by the same folder so a compose
+          // project's five services still cost one of each. This one is cached
+          // behind the seam on a clock of its own — it spawns git, where the
+          // branch read opens two files.
+          trees.set(
+            folder,
+            context.git
+              .workingTree(localFolder, folder)
+              // Never lets one folder's failure reach the batch: the branch is
+              // the feature, and the counts are decoration on it.
+              .catch(() => undefined),
+          );
+        }
       }
 
       const read = new Map(
@@ -763,16 +865,117 @@ export function registerIpcHandlers(context: IpcContext): void {
         ),
       );
 
+      const readTrees = new Map(
+        await Promise.all(
+          [...trees].map(
+            async ([folder, work]): Promise<readonly [string, GitWorkingTree | undefined]> => [
+              folder,
+              await work,
+            ],
+          ),
+        ),
+      );
+
       for (const [id, folder] of folders) {
-        statuses[id] = read.get(folder) ?? {
+        const status = read.get(folder) ?? {
           kind: 'unknown',
           reason: 'That folder was not read this time round.',
         };
+
+        // The counts ride along on the two arms that have a checkout to count
+        // in. `none` and `unknown` get nothing: a folder that is not a
+        // repository has no dirty count, and one we could not read has no
+        // answer — putting a `0` on either would be inventing one.
+        const extra = readTrees.get(folder);
+        statuses[id] =
+          extra === undefined || (status.kind !== 'branch' && status.kind !== 'detached')
+            ? status
+            : status.kind === 'branch'
+              ? {
+                  ...status,
+                  tree: extra.tree,
+                  ...(extra.tracking === undefined ? {} : { tracking: extra.tracking }),
+                }
+              : { ...status, tree: extra.tree };
       }
 
       return statuses;
     },
     () => ({}),
+  );
+
+  /**
+   * A container id to a folder on THIS machine, or the sentence saying why not.
+   *
+   * The same resolution the batch above does per container, factored out
+   * because the two branch verbs need it one at a time — and because it is the
+   * single place where an id becomes a path this process reads and writes. A
+   * folder never arrives over the bridge; it is always looked up here, from the
+   * main process's own last scan.
+   */
+  function workspaceFolder(
+    rawId: unknown,
+  ):
+    | { readonly ok: true; readonly folder: HostPath }
+    | { readonly ok: false; readonly message: string } {
+    const container = typeof rawId === 'string' ? known.get(rawId as ContainerId) : undefined;
+    if (container === undefined) {
+      return {
+        ok: false,
+        message: 'That container was not in the last scan, so its workspace folder is not known.',
+      };
+    }
+
+    // `readableHostFolder` is the GATE here, not the answer. What it decides is
+    // whether this folder belongs to the machine boxwarden is running on — the
+    // check that keeps a Windows label from being read off a Linux root. What
+    // it RETURNS is the spelling for opening a file, and running git is a
+    // different question, so the structured path travels on and
+    // `gitInvocation` decides how to address it. Flattening to the string here
+    // is precisely the bug that makes Windows git refuse a WSL workspace.
+    const readable = readableHostFolder(container.localFolder, hostPlatform(context.git.platform));
+    const folder = container.localFolder;
+    if (readable === undefined || folder.kind === 'unresolved') {
+      return {
+        ok: false,
+        message:
+          folder.kind === 'unresolved'
+            ? 'The devcontainer.local_folder label could not be parsed, so there is no folder to switch a branch in.'
+            : 'That folder is on a different operating system from the one boxwarden is running on, so its checkout cannot be changed from here.',
+      };
+    }
+
+    return { ok: true, folder };
+  }
+
+  handle<BranchListing>(
+    IPC.listBranches,
+    async (rawId) => {
+      const resolved = workspaceFolder(rawId);
+      return resolved.ok
+        ? await context.git.branches(resolved.folder)
+        : { kind: 'unavailable', reason: resolved.message };
+    },
+    (reason) => ({ kind: 'unavailable', reason }),
+  );
+
+  handle<ActionResult>(
+    IPC.switchBranch,
+    async (rawId, rawBranch) => {
+      const resolved = workspaceFolder(rawId);
+      if (!resolved.ok) return { ok: false, message: resolved.message };
+
+      // Type only. Whether this string is ALLOWED is not decided here and
+      // cannot be: `switchBranch` re-lists the branches itself and refuses
+      // anything git did not just print. Checking a shape here and trusting it
+      // downstream is the pattern that rule exists to avoid.
+      if (typeof rawBranch !== 'string' || rawBranch === '') {
+        return { ok: false, message: 'No branch was named.' };
+      }
+
+      return await context.git.switchBranch(resolved.folder, rawBranch);
+    },
+    (message) => ({ ok: false, message }),
   );
 
   // ---- Self-update ----

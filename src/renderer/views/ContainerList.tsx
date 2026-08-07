@@ -9,6 +9,7 @@ import type {
 import { ComposeGroup } from '../components/ComposeGroup.js';
 import { ContainerCard } from '../components/ContainerCard.js';
 import type { ContainerGroup } from '../grouping.js';
+import type { BranchMenuBinding } from '../presenters.js';
 import type { LayoutMode } from '../view.js';
 
 interface Props {
@@ -35,6 +36,11 @@ interface Props {
   ) => readonly (EditorAttachment | undefined)[];
   /** The workspace branch, looked up per container. Undefined means "no answer yet". */
   readonly gitFor: (id: DevContainer['id']) => GitStatus | undefined;
+  /**
+   * What makes each chip a control: the open flag, the listing and the two
+   * callbacks, already bound to that container's id by the ViewModel.
+   */
+  readonly branchMenuFor: (id: DevContainer['id']) => BranchMenuBinding;
   readonly onStart: (container: DevContainer) => void;
   readonly onStop: (container: DevContainer) => void;
   readonly onOpen: (container: DevContainer, mode?: OpenInEditorMode) => void;
@@ -68,6 +74,7 @@ export function ContainerList({
   editorFor,
   editorsForAll,
   gitFor,
+  branchMenuFor,
   onStart,
   onStop,
   onOpen,
@@ -96,6 +103,7 @@ export function ContainerList({
       claude={claudeFor(container.id)}
       editor={editorFor(container.id)}
       git={gitFor(container.id)}
+      branchMenu={branchMenuFor(container.id)}
       onStart={onStart}
       onStop={onStop}
       onOpen={onOpen}

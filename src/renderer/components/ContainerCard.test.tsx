@@ -4,10 +4,41 @@ import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ContainerCard } from './ContainerCard.js';
 import { devContainer, unresolvedContainer } from '../test-fixtures.js';
-import type { ClaudeStatus, DevContainer } from '../../models/index.js';
+import type { BranchListing, ClaudeStatus, DevContainer, GitStatus } from '../../models/index.js';
+import type { BranchMenuBinding } from '../presenters.js';
 import { asContainerPath } from '../../models/index.js';
 
 const NOW = new Date('2026-07-27T12:00:00Z').getTime();
+
+const ON_MAIN: GitStatus = { kind: 'branch', branch: 'main' };
+
+const CLEAN: BranchListing = {
+  kind: 'ready',
+  tree: { kind: 'clean' },
+  branches: [
+    { name: 'main', current: true },
+    { name: 'feature/dark-theme', current: false },
+  ],
+};
+
+/**
+ * A literal binding, built here rather than by running `useBranches`.
+ *
+ * The View-test rule: a View is driven by a hand-built ViewModel value and
+ * asserted on only through what it renders. Whether a switch is ALLOWED is the
+ * models layer's business and is tested there; what this file cares about is
+ * that a disabled row says why and an enabled one calls back.
+ */
+function binding(overrides: Partial<BranchMenuBinding> = {}): BranchMenuBinding {
+  return {
+    open: false,
+    listing: undefined,
+    busy: false,
+    onToggle: vi.fn(),
+    onSwitch: vi.fn(),
+    ...overrides,
+  };
+}
 
 function renderCard(
   container: DevContainer,
@@ -431,7 +462,9 @@ describe('ContainerCard', () => {
   describe('the Claude Code badge', () => {
     const oneSession: ClaudeStatus = {
       kind: 'running',
-      sessions: [{ pid: 412, command: 'claude', elapsed: '1h12m33.0s' }],
+      sessions: [
+        { pid: 412, command: 'claude', activity: { kind: 'idle' }, elapsed: '1h12m33.0s' },
+      ],
     };
 
     it('renders when a session is running', () => {
@@ -457,8 +490,8 @@ describe('ContainerCard', () => {
         claude: {
           kind: 'running',
           sessions: [
-            { pid: 412, command: 'claude', elapsed: '1h12m33.0s' },
-            { pid: 907, command: 'claude', elapsed: '4m8.0s' },
+            { pid: 412, command: 'claude', activity: { kind: 'idle' }, elapsed: '1h12m33.0s' },
+            { pid: 907, command: 'claude', activity: { kind: 'idle' }, elapsed: '4m8.0s' },
           ],
         },
       });
@@ -493,8 +526,8 @@ describe('ContainerCard', () => {
         claude: {
           kind: 'running',
           sessions: [
-            { pid: 412, command: 'claude', elapsed: '1h12m33.0s' },
-            { pid: 907, command: 'claude', elapsed: '4m8.0s' },
+            { pid: 412, command: 'claude', activity: { kind: 'idle' }, elapsed: '1h12m33.0s' },
+            { pid: 907, command: 'claude', activity: { kind: 'idle' }, elapsed: '4m8.0s' },
           ],
         },
       });
@@ -534,7 +567,10 @@ describe('ContainerCard', () => {
   describe('the Stop button when a session is live', () => {
     it('warns in the title and stays clickable', async () => {
       const { onStop } = renderCard(devContainer(), {
-        claude: { kind: 'running', sessions: [{ pid: 412, command: 'claude' }] },
+        claude: {
+          kind: 'running',
+          sessions: [{ pid: 412, command: 'claude', activity: { kind: 'idle' } }],
+        },
       });
 
       const stop = screen.getByRole('button', { name: 'Stop' });
@@ -601,6 +637,233 @@ describe('ContainerCard', () => {
 
       renderCard(devContainer());
       expect(document.querySelector('.branch-chip')).toBeNull();
+    });
+
+    /**
+     * The chip is a LABEL without a binding and a CONTROL with one. A button
+     * that opens nothing is a control lying about being one, so the two
+     * spellings are deliberately not interchangeable.
+     */
+    it('is not a button when the card was given no menu to open', () => {
+      const { dom } = renderCard(devContainer(), { git: ON_MAIN });
+      expect(dom.querySelector('.branch-chip')?.tagName).toBe('SPAN');
+    });
+  });
+
+  describe('the branch counts', () => {
+    it('draws the dirty count and the divergence beside the name', () => {
+      const { dom } = renderCard(devContainer(), {
+        git: {
+          kind: 'branch',
+          branch: 'main',
+          tree: { kind: 'dirty', changed: 3 },
+          tracking: { ahead: 2, behind: 1 },
+        },
+      });
+
+      expect(dom.querySelector('.branch-count.dirty')?.textContent).toBe('●3');
+      expect(dom.querySelector('.branch-count.ahead')?.textContent).toBe('↑2');
+      expect(dom.querySelector('.branch-count.behind')?.textContent).toBe('↓1');
+    });
+
+    /**
+     * The chip on a machine with no git, which is the state the whole optional
+     * chain exists to keep working. No counts, and no empty container either.
+     */
+    it('draws nothing at all when the counts were never read', () => {
+      const { dom } = renderCard(devContainer(), { git: ON_MAIN });
+      expect(dom.querySelector('.branch-counts')).toBeNull();
+    });
+
+    it('draws no marks for a clean tree in sync with its upstream', () => {
+      const { dom } = renderCard(devContainer(), {
+        git: {
+          kind: 'branch',
+          branch: 'main',
+          tree: { kind: 'clean' },
+          tracking: { ahead: 0, behind: 0 },
+        },
+      });
+      expect(dom.querySelector('.branch-counts')).toBeNull();
+    });
+
+    /** The glyphs are decoration; the words live in the accessible name. */
+    it('keeps the counts out of the accessible name as symbols and in it as words', () => {
+      renderCard(devContainer(), {
+        git: { kind: 'branch', branch: 'main', tree: { kind: 'dirty', changed: 1 } },
+      });
+      expect(screen.getByLabelText(/1 uncommitted change/)).toBeDefined();
+    });
+  });
+
+  describe('the branch menu', () => {
+    it('turns the chip into a button when a binding is supplied', () => {
+      const { dom } = renderCard(devContainer(), { git: ON_MAIN, branchMenu: binding() });
+      const chip = dom.querySelector('.branch-chip');
+      expect(chip?.tagName).toBe('BUTTON');
+      expect(chip?.getAttribute('aria-haspopup')).toBe('menu');
+      expect(chip?.getAttribute('aria-expanded')).toBe('false');
+    });
+
+    it('asks the ViewModel to open when the chip is clicked', async () => {
+      const onToggle = vi.fn();
+      renderCard(devContainer(), { git: ON_MAIN, branchMenu: binding({ onToggle }) });
+
+      await userEvent.click(screen.getByRole('button', { name: /Switch branch/ }));
+      expect(onToggle).toHaveBeenCalled();
+    });
+
+    it('shows nothing until the binding says it is open', () => {
+      renderCard(devContainer(), { git: ON_MAIN, branchMenu: binding() });
+      expect(screen.queryByRole('menu')).toBeNull();
+    });
+
+    it('says it is reading while the listing is outstanding', () => {
+      renderCard(devContainer(), {
+        git: ON_MAIN,
+        branchMenu: binding({ open: true, listing: undefined }),
+      });
+      expect(screen.getByRole('menu')).toBeDefined();
+      expect(screen.getByText('Reading branches…')).toBeDefined();
+    });
+
+    it('lists the branches, marking the current one', () => {
+      renderCard(devContainer(), {
+        git: ON_MAIN,
+        branchMenu: binding({ open: true, listing: CLEAN }),
+      });
+
+      const current = screen.getByRole('menuitem', { name: /main/ });
+      expect(current.className).toContain('current');
+      expect(current.hasAttribute('disabled')).toBe(true);
+      expect(screen.getByRole('menuitem', { name: /feature\/dark-theme/ })).toBeDefined();
+    });
+
+    it('switches to the branch that was clicked', async () => {
+      const onSwitch = vi.fn();
+      renderCard(devContainer(), {
+        git: ON_MAIN,
+        branchMenu: binding({ open: true, listing: CLEAN, onSwitch }),
+      });
+
+      await userEvent.click(screen.getByRole('menuitem', { name: /feature\/dark-theme/ }));
+      expect(onSwitch).toHaveBeenCalledWith('feature/dark-theme');
+    });
+
+    /**
+     * The chosen posture, on screen: a dirty tree refuses every row and the
+     * reason is stated once, above them, rather than hidden in eight identical
+     * tooltips.
+     */
+    it('refuses every branch on a dirty tree, and says so once', () => {
+      const { dom } = renderCard(devContainer(), {
+        git: ON_MAIN,
+        branchMenu: {
+          ...binding(),
+          open: true,
+          listing: { ...CLEAN, tree: { kind: 'dirty', changed: 3 } },
+        },
+      });
+
+      expect(dom.querySelectorAll('.branch-menu-warning')).toHaveLength(1);
+      expect(screen.getByText(/3 uncommitted changes/)).toBeDefined();
+      for (const item of screen.getAllByRole('menuitem')) {
+        expect(item.hasAttribute('disabled')).toBe(true);
+      }
+    });
+
+    it('gives every disabled row a title saying why', () => {
+      renderCard(devContainer(), {
+        git: ON_MAIN,
+        branchMenu: binding({ open: true, listing: CLEAN }),
+      });
+
+      for (const item of screen.getAllByRole('menuitem')) {
+        if (item.hasAttribute('disabled')) expect(item.getAttribute('title')).toBeTruthy();
+      }
+    });
+
+    it('makes the rows inert while a checkout is running', () => {
+      renderCard(devContainer(), {
+        git: ON_MAIN,
+        branchMenu: binding({ open: true, listing: CLEAN, busy: true }),
+      });
+
+      for (const item of screen.getAllByRole('menuitem')) {
+        expect(item.hasAttribute('disabled')).toBe(true);
+      }
+    });
+
+    /**
+     * The chip is how the menu closes, so it must not go inert with the rows —
+     * a slow checkout would otherwise trap the user in a popover they cannot
+     * dismiss by the route they opened it.
+     */
+    it('leaves the chip itself clickable while a checkout is running', () => {
+      const { dom } = renderCard(devContainer(), {
+        git: ON_MAIN,
+        branchMenu: binding({ open: true, listing: CLEAN, busy: true }),
+      });
+      expect(dom.querySelector('.branch-chip')?.hasAttribute('disabled')).toBe(false);
+    });
+
+    it('closes when the backdrop is clicked', async () => {
+      const onToggle = vi.fn();
+      const { dom } = renderCard(devContainer(), {
+        git: ON_MAIN,
+        branchMenu: binding({ open: true, listing: CLEAN, onToggle }),
+      });
+
+      const backdrop = dom.querySelector('.menu-backdrop');
+      if (backdrop === null) throw new Error('expected a backdrop to catch the outside click');
+      await userEvent.click(backdrop);
+      expect(onToggle).toHaveBeenCalled();
+    });
+
+    it('shows the reason when there is nothing to list', () => {
+      renderCard(devContainer(), {
+        git: ON_MAIN,
+        branchMenu: binding({
+          open: true,
+          listing: { kind: 'unavailable', reason: 'git was not found on this machine.' },
+        }),
+      });
+
+      expect(screen.getByText('git was not found on this machine.')).toBeDefined();
+      expect(screen.queryAllByRole('menuitem')).toHaveLength(0);
+    });
+
+    /**
+     * The `safe.directory` case, which is what a Windows user whose code lives
+     * in a WSL distro hits. boxwarden shows git's own command and a Copy
+     * button; it does not run it, because writing that exception is disabling a
+     * check about whether a repository can be trusted.
+     */
+    it('offers the fix command to copy, and does not run it', () => {
+      const command =
+        "git config --global --add safe.directory '%(prefix)///wsl.localhost/dev/home/s/a'";
+      renderCard(devContainer(), {
+        git: ON_MAIN,
+        branchMenu: binding({
+          open: true,
+          listing: { kind: 'unavailable', reason: 'git does not trust this repository.', command },
+        }),
+      });
+
+      expect(screen.getByText(command)).toBeDefined();
+      expect(screen.getByRole('button', { name: 'Copy' })).toBeDefined();
+    });
+
+    it('shows no copy button when git named no fix', () => {
+      renderCard(devContainer(), {
+        git: ON_MAIN,
+        branchMenu: binding({
+          open: true,
+          listing: { kind: 'unavailable', reason: 'fatal: not a git repository' },
+        }),
+      });
+
+      expect(screen.queryByRole('button', { name: 'Copy' })).toBeNull();
     });
   });
 });

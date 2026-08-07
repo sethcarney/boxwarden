@@ -8,6 +8,7 @@ import type {
   DockerEnvironment,
   EndpointProbe,
 } from '../../models/index.js';
+import type { EditorOption } from '../../shared/ipc.js';
 import { partitionAdvice, setupBadge, setupSummary } from '../advisories.js';
 import type { AdvisoriesViewModel } from '../viewmodels/index.js';
 import { SetupView } from './SetupView.js';
@@ -87,10 +88,26 @@ function advisoriesVm(options: VmOptions = {}): AdvisoriesViewModel {
   };
 }
 
+/**
+ * A found editor and a missing one, so the inventory renders both arms without
+ * every test having to say so.
+ */
+const EDITORS: readonly EditorOption[] = [
+  {
+    id: 'vscode',
+    displayName: 'VS Code',
+    available: true,
+    binaryPath: '/usr/share/code/bin/code',
+    via: 'well-known-dir',
+  },
+  { id: 'cursor', displayName: 'Cursor', available: false },
+];
+
 function renderPage(options: VmOptions = {}, env?: DockerEnvironment) {
   return render(
     <SetupView
       advisories={advisoriesVm(options)}
+      editors={EDITORS}
       environment={env}
       scannedLabel="scanned 2 minutes ago"
     />,
@@ -181,5 +198,29 @@ describe('SetupView', () => {
   it('reports a clean machine as a finding rather than as an empty page', () => {
     renderPage({}, environment([CONNECTED]));
     expect(screen.getByText(/found nothing to advise/)).toBeDefined();
+  });
+});
+
+describe('the editor inventory', () => {
+  /**
+   * The fact the panel exists for. "Found" alone cannot distinguish an editor's
+   * CLI from its GUI executable, and those handle `--folder-uri` differently —
+   * which is what a window opening with no folder in it looks like.
+   */
+  it('names the exact binary each editor resolved to', () => {
+    renderPage();
+    expect(screen.getByText('/usr/share/code/bin/code')).toBeDefined();
+  });
+
+  it('says how it was found, in words rather than the strategy id', () => {
+    renderPage();
+    expect(screen.getByText(/in a well-known install location/)).toBeDefined();
+  });
+
+  it('lists an editor that was not found, rather than omitting it', () => {
+    renderPage();
+    expect(screen.getByText('Cursor')).toBeDefined();
+    expect(screen.getByText('not found')).toBeDefined();
+    expect(screen.getByText(/not on PATH/)).toBeDefined();
   });
 });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { DevContainerProject, HostPath } from '../models/index.js';
+import type { DevContainerProject, DevContainerRuntime, HostPath } from '../models/index.js';
 import { asProjectId } from '../models/index.js';
-import { devcontainerUpCommand, statusDotClass } from './format.js';
+import { cardClass, devcontainerUpCommand, statusDotClass, statusTextClass } from './format.js';
 
 function projectAt(folder: HostPath): DevContainerProject {
   return {
@@ -164,5 +164,53 @@ describe('statusDotClass', () => {
 
   it('gives restarting its own bucket', () => {
     expect(statusDotClass({ state: 'restarting' })).toBe('dot dot-transitional');
+  });
+});
+
+describe('cardClass', () => {
+  /**
+   * The accent and the dot are one decision rendered twice, so the thing worth
+   * pinning is that they cannot disagree: both go through `displayStatus`, and
+   * `paused` is the case where a reader of `runtime.state` would give them
+   * different answers.
+   */
+  it('agrees with the dot on a paused container', () => {
+    const runtime: DevContainerRuntime = { state: 'paused', startedAt: new Date(0), ports: [] };
+    expect(cardClass(runtime, false)).toBe('card card-running');
+    expect(statusDotClass(runtime)).toBe('dot dot-running');
+  });
+
+  it('reads a created container as stopped', () => {
+    expect(cardClass({ state: 'created' }, false)).toBe('card card-stopped');
+  });
+
+  /**
+   * Degraded is orthogonal to the runtime, and this is the pair that proves it:
+   * a container with an unparseable host path can be running, and folding the
+   * two into one bucket would lose either the accent or the dashed border.
+   */
+  it('carries the degraded flag alongside a running accent, not instead of it', () => {
+    expect(cardClass({ state: 'running', startedAt: new Date(0), ports: [] }, true)).toBe(
+      'card card-running card-degraded',
+    );
+  });
+});
+
+describe('statusTextClass', () => {
+  it('tints a running container', () => {
+    expect(statusTextClass({ state: 'running', startedAt: new Date(0), ports: [] })).toBe(
+      'card-status card-status-running',
+    );
+  });
+
+  /**
+   * Stopped gets a class with no rule behind it on purpose — it inherits the
+   * dim default. Asserting the class is still emitted keeps the three arms
+   * symmetrical, so adding a rule later needs no change here.
+   */
+  it('emits a stopped class even though the stylesheet leaves it dim', () => {
+    expect(statusTextClass({ state: 'exited', exitCode: 137, finishedAt: new Date(0) })).toBe(
+      'card-status card-status-stopped',
+    );
   });
 });
