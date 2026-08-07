@@ -694,6 +694,86 @@ describe('updateSummary', () => {
   });
 });
 
+describe('branchChip counts', () => {
+  it('shows the dirty count when the tree has been read and has changes', () => {
+    const chip = branchChip({
+      kind: 'branch',
+      branch: 'main',
+      tree: { kind: 'dirty', changed: 3 },
+    });
+    expect(chip?.dirty).toBe(3);
+    expect(chip?.title).toContain('3 uncommitted changes');
+  });
+
+  /**
+   * The discipline the whole feature rests on: absent is "not asked", which is
+   * the ordinary state on a machine with no git installed, and it must not
+   * render as a zero.
+   */
+  it('carries no count at all when the tree was never read', () => {
+    const chip = branchChip({ kind: 'branch', branch: 'main' });
+    expect(chip).not.toHaveProperty('dirty');
+    expect(chip).not.toHaveProperty('ahead');
+    expect(chip).not.toHaveProperty('behind');
+  });
+
+  it('omits a clean tree rather than showing zero', () => {
+    expect(
+      branchChip({ kind: 'branch', branch: 'main', tree: { kind: 'clean' } }),
+    ).not.toHaveProperty('dirty');
+  });
+
+  it('shows ahead and behind separately', () => {
+    const chip = branchChip({
+      kind: 'branch',
+      branch: 'main',
+      tree: { kind: 'clean' },
+      tracking: { ahead: 2, behind: 5 },
+    });
+    expect(chip?.ahead).toBe(2);
+    expect(chip?.behind).toBe(5);
+    expect(chip?.title).toContain('2 commits not pushed');
+    expect(chip?.title).toContain('5 commits on the upstream not pulled');
+  });
+
+  it('omits a zero side of the divergence', () => {
+    const chip = branchChip({
+      kind: 'branch',
+      branch: 'main',
+      tree: { kind: 'clean' },
+      tracking: { ahead: 0, behind: 3 },
+    });
+    expect(chip).not.toHaveProperty('ahead');
+    expect(chip?.behind).toBe(3);
+  });
+
+  /**
+   * The glyphs are aria-hidden, so this is the only place a screen reader meets
+   * the counts.
+   */
+  it('puts the counts in the accessible name too', () => {
+    const chip = branchChip({
+      kind: 'branch',
+      branch: 'main',
+      tree: { kind: 'dirty', changed: 1 },
+      tracking: { ahead: 1, behind: 0 },
+    });
+    expect(chip?.label).toContain('1 uncommitted change.');
+    expect(chip?.label).toContain('1 commit not pushed yet.');
+  });
+
+  /** A detached HEAD has a tree to count in, and no upstream to diverge from. */
+  it('counts a dirty tree on a detached HEAD, with no tracking', () => {
+    const chip = branchChip({
+      kind: 'detached',
+      commit: '4f2c1ab9d3e5f70123456789abcdef0123456789',
+      tree: { kind: 'dirty', changed: 2 },
+    });
+    expect(chip?.dirty).toBe(2);
+    expect(chip).not.toHaveProperty('ahead');
+  });
+});
+
 describe('branchMenu', () => {
   const READY: BranchListing = {
     kind: 'ready',

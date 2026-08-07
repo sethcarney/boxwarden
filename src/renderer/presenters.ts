@@ -372,6 +372,56 @@ export interface BranchChip {
   /** For the accessible name, since "4f2c1ab" alone does not say what it is. */
   readonly label: string;
   readonly tone: 'branch' | 'detached';
+  /**
+   * How many uncommitted changes, when the count has been read. Absent is not
+   * zero: it means git was never asked, which is the ordinary state on a
+   * machine that has none installed.
+   */
+  readonly dirty?: number;
+  /** Commits ahead of the upstream, when there is one and it is not zero. */
+  readonly ahead?: number;
+  /** Commits behind it. Kept apart from `ahead` — the two mean opposite things. */
+  readonly behind?: number;
+}
+
+/**
+ * The counts, as the sentences that go in the chip's tooltip.
+ *
+ * Words rather than the glyphs the chip shows, because `↑2` is a shape you
+ * learn and this is the place that teaches it. Zeroes are dropped rather than
+ * printed: "0 behind" is noise on the ninety per cent of chips that are in
+ * sync, and an absent upstream must not be reported as agreement.
+ */
+function describeCounts(status: GitStatus): readonly string[] {
+  if (status.kind !== 'branch' && status.kind !== 'detached') return [];
+
+  const lines: string[] = [];
+  if (status.tree?.kind === 'dirty') {
+    const { changed } = status.tree;
+    lines.push(`${String(changed)} uncommitted change${changed === 1 ? '' : 's'}.`);
+  }
+
+  if (status.kind === 'branch' && status.tracking !== undefined) {
+    const { ahead, behind } = status.tracking;
+    if (ahead > 0) lines.push(`${String(ahead)} commit${ahead === 1 ? '' : 's'} not pushed yet.`);
+    if (behind > 0) {
+      lines.push(`${String(behind)} commit${behind === 1 ? '' : 's'} on the upstream not pulled.`);
+    }
+  }
+
+  return lines;
+}
+
+/** The count fields, spread onto a chip. Absent keys, never zeroes — see `BranchChip`. */
+function countFields(status: GitStatus): Partial<BranchChip> {
+  if (status.kind !== 'branch' && status.kind !== 'detached') return {};
+  const tracking = status.kind === 'branch' ? status.tracking : undefined;
+
+  return {
+    ...(status.tree?.kind === 'dirty' ? { dirty: status.tree.changed } : {}),
+    ...(tracking !== undefined && tracking.ahead > 0 ? { ahead: tracking.ahead } : {}),
+    ...(tracking !== undefined && tracking.behind > 0 ? { behind: tracking.behind } : {}),
+  };
 }
 
 export function branchChip(status: GitStatus | undefined): BranchChip | undefined {
@@ -385,9 +435,15 @@ export function branchChip(status: GitStatus | undefined): BranchChip | undefine
     case 'branch':
       return {
         text: status.branch,
-        title: `The workspace folder is on branch ${status.branch}.`,
-        label: `Branch ${status.branch}`,
+        title: [`The workspace folder is on branch ${status.branch}.`, ...describeCounts(status)]
+          .join('\n')
+          .trim(),
+        // The counts join the accessible name, not just the tooltip: the
+        // glyphs that carry them on screen are `aria-hidden`, so this is the
+        // only place a screen reader meets them.
+        label: [`Branch ${status.branch}`, ...describeCounts(status)].join(' '),
         tone: 'branch',
+        ...countFields(status),
       };
 
     case 'detached': {
@@ -396,9 +452,13 @@ export function branchChip(status: GitStatus | undefined): BranchChip | undefine
         text: short,
         // The full id, because seven characters is a thing to search for and
         // forty is the thing to paste.
-        title: `The workspace folder has a detached HEAD at ${status.commit} — no branch is checked out.`,
-        label: `Detached HEAD at ${short}`,
+        title: [
+          `The workspace folder has a detached HEAD at ${status.commit} — no branch is checked out.`,
+          ...describeCounts(status),
+        ].join('\n'),
+        label: [`Detached HEAD at ${short}`, ...describeCounts(status)].join(' '),
         tone: 'detached',
+        ...countFields(status),
       };
     }
   }

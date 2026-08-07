@@ -46,7 +46,14 @@ export type {
   EndpointProbe,
 } from './docker-endpoint.js';
 
-export type { BranchListing, GitBranch, GitInvocation, GitStatus, WorkingTree } from './git.js';
+export type {
+  BranchListing,
+  BranchTracking,
+  GitBranch,
+  GitInvocation,
+  GitStatus,
+  WorkingTree,
+} from './git.js';
 export {
   BRANCH_REF_FORMAT,
   branchSwitchBlockedReason,
@@ -54,6 +61,7 @@ export {
   gitInvocation,
   parseBranchRefs,
   parseDubiousOwnership,
+  parseTracking,
   parseGitDirPointer,
   parseGitHead,
   parseWorkingTree,

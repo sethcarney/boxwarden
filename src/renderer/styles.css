@@ -2004,3 +2004,36 @@ button.foot-update:hover:not(:disabled) {
     padding-bottom: 12px;
   }
 }
+
+/*
+ * The counts on the branch chip: uncommitted changes, and drift from upstream.
+ *
+ * `flex: 0 0 auto` and placed AFTER the name, so when the line runs out it is
+ * the branch name that ellipsises and never these — a truncated `↑` would be a
+ * different number rather than a shortened one, which is the distinction the
+ * name's own ellipsis relies on being safe.
+ */
+.branch-counts {
+  flex: 0 0 auto;
+  display: inline-flex;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.branch-count {
+  white-space: nowrap;
+}
+
+/* Uncommitted work: the one count that BLOCKS something (switching), so it is
+   the one that gets the warning colour. */
+.branch-count.dirty {
+  color: var(--transitional);
+}
+
+/* Ahead and behind block nothing, so they stay the chip's own dim text. They
+   are told apart by the arrow, not by colour — two more hues on a 10px chip
+   beside a status accent and a Claude badge is where a card stops being read. */
+.branch-count.ahead,
+.branch-count.behind {
+  color: var(--text-dim);
+}

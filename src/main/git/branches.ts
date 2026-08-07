@@ -1,11 +1,12 @@
 import { execFile } from 'node:child_process';
-import type { BranchListing, HostPath } from '../../models/index.js';
+import type { BranchListing, BranchTracking, HostPath, WorkingTree } from '../../models/index.js';
 import {
   BRANCH_REF_FORMAT,
   canSwitchTo,
   gitInvocation,
   parseBranchRefs,
   parseDubiousOwnership,
+  parseTracking,
   parseWorkingTree,
 } from '../../models/index.js';
 import type { ActionResult } from '../../shared/ipc.js';
@@ -73,6 +74,80 @@ const CHECKOUT_TIMEOUT_MS = 120_000;
  * that happens instead.
  */
 const MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
+
+/**
+ * The one status command, shared by the menu and the chip.
+ *
+ * `--branch` costs nothing and adds the `## main...origin/main [ahead 1]`
+ * header, so ONE run answers both "can this branch be switched away from" and
+ * "how far has it diverged". Asking twice would double the cost of the poll
+ * below, which is the thing that had to be slowed down in the first place.
+ *
+ * `--untracked-files=no` is the load-bearing flag: git carries untracked files
+ * across a checkout without complaint, so counting them would block switching
+ * on a repo whose only "change" is a `node_modules` its `.gitignore` missed.
+ * What is counted is what git will actually refuse over.
+ */
+const STATUS_ARGS = ['status', '--porcelain', '--branch', '--untracked-files=no'] as const;
+
+/**
+ * How long a working-tree reading stays fresh.
+ *
+ * The chip's poll runs every thirty seconds and reads two FILES, which is cheap
+ * enough to do that often. This spawns git, which is not — so the reading is
+ * cached and the poll mostly gets the previous answer. Two minutes is chosen
+ * against what the number is for: it decorates a card with a rough sense of
+ * "this checkout has work in it", and nobody makes a decision on whether that
+ * count is ninety seconds stale.
+ */
+const WORKING_TREE_TTL_MS = 120_000;
+
+interface WorkingTreeReading {
+  readonly tree: WorkingTree;
+  readonly tracking?: BranchTracking;
+}
+
+/** The last reading per folder, with when it was taken. */
+const workingTreeCache = new Map<
+  string,
+  { readonly at: number; readonly reading: WorkingTreeReading }
+>();
+
+/**
+ * The dirty count and the divergence for one workspace, cached.
+ *
+ * `undefined` for every failure, and deliberately silent about which: this
+ * decorates a chip whose whole point is to work on a machine with no git, so a
+ * missing answer has to look like an ordinary absence rather than a fault. The
+ * branch menu is where a git failure gets explained, because that is where the
+ * user asked for something git had to do.
+ *
+ * `now` is a parameter for the reason every clock in this codebase is one.
+ */
+export async function readWorkingTree(
+  folder: HostPath,
+  key: string,
+  now: number = Date.now(),
+): Promise<WorkingTreeReading | undefined> {
+  const cached = workingTreeCache.get(key);
+  if (cached !== undefined && now - cached.at < WORKING_TREE_TTL_MS) return cached.reading;
+
+  const status = await run([...STATUS_ARGS], folder, READ_TIMEOUT_MS);
+  if (!status.ok) {
+    // The stale reading is kept rather than cleared: a transient failure should
+    // not blank a count that was true a minute ago, and the alternative is a
+    // chip that flickers on every hiccup.
+    return cached?.reading;
+  }
+
+  const tracking = parseTracking(status.stdout);
+  const reading: WorkingTreeReading = {
+    tree: parseWorkingTree(status.stdout),
+    ...(tracking === undefined ? {} : { tracking }),
+  };
+  workingTreeCache.set(key, { at: now, reading });
+  return reading;
+}
 
 interface GitRun {
   readonly ok: boolean;
@@ -189,7 +264,7 @@ function unavailable(run: GitRun): BranchListing {
 export async function readBranches(folder: HostPath): Promise<BranchListing> {
   const [refs, status] = await Promise.all([
     run(['for-each-ref', `--format=${BRANCH_REF_FORMAT}`, 'refs/heads'], folder, READ_TIMEOUT_MS),
-    run(['status', '--porcelain', '--untracked-files=no'], folder, READ_TIMEOUT_MS),
+    run(STATUS_ARGS, folder, READ_TIMEOUT_MS),
   ]);
 
   if (!refs.ok) return unavailable(refs);

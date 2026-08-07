@@ -14,7 +14,7 @@ import {
   statusLabel,
   statusTextClass,
 } from '../format.js';
-import type { BranchMenuBinding } from '../presenters.js';
+import type { BranchChip, BranchMenuBinding } from '../presenters.js';
 import {
   branchChip,
   branchMenu as branchMenuView,
@@ -174,12 +174,13 @@ export function ContainerCard({
                       container, so an unwrapped name is CLIPPED to nothing on a
                       narrow window instead of ellipsised to `clau…`. */}
                   <span className="branch-chip-name">{branch.text}</span>
+                  <BranchCounts chip={branch} />
                 </span>
               ) : (
                 <button
                   type="button"
                   className={`branch-chip branch-chip-${branch.tone} branch-chip-button`}
-                  title={`${branch.title} Click to switch.`}
+                  title={`${branch.title}\nClick to switch.`}
                   aria-label={`${branch.label}. Switch branch.`}
                   aria-haspopup="menu"
                   aria-expanded={branchMenu.open}
@@ -194,6 +195,7 @@ export function ContainerCard({
                     ⎇
                   </span>
                   <span className="branch-chip-name">{branch.text}</span>
+                  <BranchCounts chip={branch} />
                 </button>
               )}
 
@@ -390,5 +392,34 @@ export function ContainerCard({
         )}
       </footer>
     </article>
+  );
+}
+
+/**
+ * The counts that ride on the branch chip: uncommitted changes, and how far
+ * this branch has drifted from its upstream.
+ *
+ * Glyphs rather than words because the chip is 10px and already holds a branch
+ * name it is allowed to ellipsise — every character here competes with that.
+ * The words are in the chip's `title`, which is where `describeCounts` puts
+ * them, so nothing is only ever a symbol.
+ *
+ * Each one is absent rather than zero when it does not apply. That is the whole
+ * discipline of this feature: a chip with no `●` says the tree is clean, a chip
+ * with no `↑` says nothing is unpushed, and a chip on a machine with no git
+ * says neither — which is why absence had to mean "not asked" everywhere up the
+ * chain rather than "none".
+ */
+function BranchCounts({ chip }: { readonly chip: BranchChip }) {
+  if (chip.dirty === undefined && chip.ahead === undefined && chip.behind === undefined) {
+    return null;
+  }
+
+  return (
+    <span className="branch-counts" aria-hidden="true">
+      {chip.dirty !== undefined && <span className="branch-count dirty">●{chip.dirty}</span>}
+      {chip.ahead !== undefined && <span className="branch-count ahead">↑{chip.ahead}</span>}
+      {chip.behind !== undefined && <span className="branch-count behind">↓{chip.behind}</span>}
+    </span>
   );
 }

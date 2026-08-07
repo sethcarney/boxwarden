@@ -1,4 +1,5 @@
 import type { ActionResult } from '../../shared/ipc.js';
+import type { GitWorkingTree } from '../ipc.js';
 import type { BranchListing, GitStatus, HostPath } from '../../models/index.js';
 import { canSwitchTo } from '../../models/index.js';
 
@@ -133,4 +134,30 @@ export async function fakeSwitchBranch(folder: HostPath, branch: string): Promis
   if (allowed !== true) return { ok: false, message: allowed };
   switched.set(folder.path, branch);
   return { ok: true };
+}
+
+/**
+ * Dirty counts and divergence for the fixture folders.
+ *
+ * Chosen so all three shapes the chip can render are on screen at once: a
+ * clean branch ahead of its upstream, a dirty one that is in sync, and one
+ * with no upstream at all — which is a real state, not a pair of zeroes.
+ */
+const FIXTURE_TREES: Readonly<Record<string, GitWorkingTree>> = {
+  '/home/dev/code/webapp': { tree: { kind: 'clean' }, tracking: { ahead: 2, behind: 0 } },
+  '/home/dev/code/api-service': {
+    tree: { kind: 'dirty', changed: 3 },
+    tracking: { ahead: 0, behind: 0 },
+  },
+  '/home/dev/code/platform': {
+    tree: { kind: 'clean' },
+    tracking: { ahead: 1, behind: 4 },
+  },
+  // No `tracking` key at all — a local-only branch, which must render as
+  // nothing rather than as "0 ahead, 0 behind".
+  '/home/dev/infra-scripts': { tree: { kind: 'dirty', changed: 1 } },
+};
+
+export function fakeWorkingTree(folder: HostPath): Promise<GitWorkingTree | undefined> {
+  return Promise.resolve(FIXTURE_TREES[folder.path]);
 }

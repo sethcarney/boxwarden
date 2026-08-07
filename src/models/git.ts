@@ -36,9 +36,24 @@ import { formatHostPath } from './paths.js';
  * explain a missing branch to the user.
  */
 export type GitStatus =
-  | { readonly kind: 'branch'; readonly branch: string }
+  | {
+      readonly kind: 'branch';
+      readonly branch: string;
+      /**
+       * How much uncommitted work is in this checkout, when it has been read.
+       *
+       * OPTIONAL, and that is load-bearing rather than lazy. Reading the branch
+       * is two file reads and works on a machine with no git installed; reading
+       * the tree spawns git. Making this a required field would drag that
+       * dependency into the feature that deliberately does not have one, so its
+       * absence has to stay an ordinary state rather than an error.
+       */
+      readonly tree?: WorkingTree;
+      /** Ahead/behind the upstream, when there is one and it has been read. */
+      readonly tracking?: BranchTracking;
+    }
   /** HEAD points straight at a commit — a checked-out tag, a bisect, a rebase. */
-  | { readonly kind: 'detached'; readonly commit: string }
+  | { readonly kind: 'detached'; readonly commit: string; readonly tree?: WorkingTree }
   /** The folder exists and is not inside a git work tree. */
   | { readonly kind: 'none' }
   /** We could not read it, or could not reach it. Never rendered as a branch. */
@@ -153,6 +168,24 @@ export interface GitBranch {
  */
 export type WorkingTree =
   { readonly kind: 'clean' } | { readonly kind: 'dirty'; readonly changed: number };
+
+/**
+ * How far this branch has diverged from its upstream.
+ *
+ * A SEPARATE type from `WorkingTree` rather than a field on it, because the two
+ * answer different questions and only one of them gates a checkout: a tree with
+ * uncommitted changes cannot be switched away from, whereas a branch three
+ * commits ahead switches perfectly well. Folding them would put a number that
+ * blocks nothing beside one that blocks everything, in a type whose whole job
+ * is to decide whether switching is allowed.
+ *
+ * Absent entirely when the branch has no upstream — a local-only branch or a
+ * fresh worktree — which is a real state and not a pair of zeroes.
+ */
+export interface BranchTracking {
+  readonly ahead: number;
+  readonly behind: number;
+}
 
 /**
  * What the branch menu renders.
@@ -333,8 +366,53 @@ export function parseBranchRefs(stdout: string): readonly GitBranch[] {
  * counted is what git will actually refuse over.
  */
 export function parseWorkingTree(stdout: string): WorkingTree {
-  const changed = stdout.split('\n').filter((line) => line.trim() !== '').length;
+  const changed = stdout
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    // `--branch` puts a `## main...origin/main [ahead 1]` header on the front.
+    // It is not a changed file, and counting it would report every clean
+    // checkout in the app as having one uncommitted change.
+    .filter((line) => !line.startsWith(BRANCH_HEADER_PREFIX)).length;
   return changed === 0 ? { kind: 'clean' } : { kind: 'dirty', changed };
+}
+
+const BRANCH_HEADER_PREFIX = '## ';
+
+/**
+ * Read the `--branch` header of a porcelain status.
+ *
+ * `## <branch>...<upstream> [ahead 1, behind 2]`, with the bracket absent when
+ * the two agree and the whole `...<upstream>` part absent when there is no
+ * upstream at all. That last case answers `undefined` rather than
+ * `{ ahead: 0, behind: 0 }`: "in sync with origin" and "has no origin" are
+ * different things to tell someone, and only one of them means their work is
+ * safe somewhere else.
+ *
+ * The counts come from the SAME command as the dirty count, which is why
+ * `--branch` is on it — one `git status` answers both questions, and asking
+ * twice would double the cost of a poll that already has to be slowed down.
+ */
+export function parseTracking(stdout: string): BranchTracking | undefined {
+  const header = stdout
+    .split('\n')
+    .find((line) => line.startsWith(BRANCH_HEADER_PREFIX))
+    ?.slice(BRANCH_HEADER_PREFIX.length);
+  if (header === undefined) return undefined;
+
+  // No `...` means no upstream is configured — see above.
+  if (!header.includes('...')) return undefined;
+
+  // Anchored at the end, because a branch name may legally contain a bracket
+  // and the divergence note is always last.
+  const bracket = /\[([^\]]*)\]\s*$/.exec(header);
+  if (bracket === null) return { ahead: 0, behind: 0 };
+
+  const read = (label: string): number => {
+    const match = new RegExp(`${label} (\\d+)`).exec(bracket[1] ?? '');
+    return match?.[1] === undefined ? 0 : Number.parseInt(match[1], 10);
+  };
+
+  return { ahead: read('ahead'), behind: read('behind') };
 }
 
 /**

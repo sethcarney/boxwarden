@@ -5,10 +5,12 @@ import type {
   ContainerId,
   DevContainer,
   DevContainerProject,
+  BranchTracking,
   DockerEnvironment,
   EngineSelection,
   GitStatus,
   HostPath,
+  WorkingTree,
   ProjectId,
   ProjectRoot,
   ProjectScan,
@@ -109,6 +111,12 @@ export interface TerminalsContext {
   setStartupCommand(key: string, command: string): void;
 }
 
+/** What `workingTree` answers with — the two counts the chip can show. */
+export interface GitWorkingTree {
+  readonly tree: WorkingTree;
+  readonly tracking?: BranchTracking;
+}
+
 /**
  * Reading a checkout, behind a seam for the same reason the folder picker is:
  * so that the fixture run can answer without touching the disk, and so this
@@ -136,6 +144,20 @@ export interface GitContext {
    * Windows git against a `\\wsl.localhost\…` path refuses on ownership.
    */
   branches(folder: HostPath): Promise<BranchListing>;
+  /**
+   * The dirty count and the divergence for one workspace, or undefined.
+   *
+   * Never rejects, and silent about WHY it could not answer: this decorates a
+   * chip that must keep working on a machine with no git installed, so a
+   * missing count has to read as an ordinary absence rather than a fault. The
+   * branch MENU is where a git failure gets explained, because that is where
+   * the user asked for something git had to do.
+   *
+   * `key` is the same folder string the branch read is deduplicated by, and it
+   * is what the implementation caches against — this is the expensive half of
+   * the poll and it is deliberately allowed to be stale.
+   */
+  workingTree(folder: HostPath, key: string): Promise<GitWorkingTree | undefined>;
   /**
    * Check a branch out. Never rejects — a refusal is `{ ok: false, message }`,
    * and the refusal is decided behind this seam rather than in front of it, so
@@ -751,13 +773,16 @@ export function registerIpcHandlers(context: IpcContext): void {
       // workspace would otherwise stat the same `.git` five times a poll to
       // arrive at one answer.
       const pending = new Map<string, Promise<GitStatus>>();
+      const trees = new Map<string, Promise<GitWorkingTree | undefined>>();
       const folders = new Map<ContainerId, string>();
 
       for (const container of containers) {
-        const folder = readableHostFolder(container.localFolder, platform);
-        if (folder === undefined) {
+        const localFolder = container.localFolder;
+        const folder =
+          localFolder.kind === 'unresolved' ? undefined : readableHostFolder(localFolder, platform);
+        if (folder === undefined || localFolder.kind === 'unresolved') {
           statuses[container.id] =
-            container.localFolder.kind === 'unresolved'
+            localFolder.kind === 'unresolved'
               ? {
                   kind: 'unknown',
                   reason:
@@ -771,7 +796,21 @@ export function registerIpcHandlers(context: IpcContext): void {
           continue;
         }
         folders.set(container.id, folder);
-        if (!pending.has(folder)) pending.set(folder, context.git.status(folder));
+        if (!pending.has(folder)) {
+          pending.set(folder, context.git.status(folder));
+          // Alongside the branch read, keyed by the same folder so a compose
+          // project's five services still cost one of each. This one is cached
+          // behind the seam on a clock of its own — it spawns git, where the
+          // branch read opens two files.
+          trees.set(
+            folder,
+            context.git
+              .workingTree(localFolder, folder)
+              // Never lets one folder's failure reach the batch: the branch is
+              // the feature, and the counts are decoration on it.
+              .catch(() => undefined),
+          );
+        }
       }
 
       const read = new Map(
@@ -792,11 +831,38 @@ export function registerIpcHandlers(context: IpcContext): void {
         ),
       );
 
+      const readTrees = new Map(
+        await Promise.all(
+          [...trees].map(
+            async ([folder, work]): Promise<readonly [string, GitWorkingTree | undefined]> => [
+              folder,
+              await work,
+            ],
+          ),
+        ),
+      );
+
       for (const [id, folder] of folders) {
-        statuses[id] = read.get(folder) ?? {
+        const status = read.get(folder) ?? {
           kind: 'unknown',
           reason: 'That folder was not read this time round.',
         };
+
+        // The counts ride along on the two arms that have a checkout to count
+        // in. `none` and `unknown` get nothing: a folder that is not a
+        // repository has no dirty count, and one we could not read has no
+        // answer — putting a `0` on either would be inventing one.
+        const extra = readTrees.get(folder);
+        statuses[id] =
+          extra === undefined || (status.kind !== 'branch' && status.kind !== 'detached')
+            ? status
+            : status.kind === 'branch'
+              ? {
+                  ...status,
+                  tree: extra.tree,
+                  ...(extra.tracking === undefined ? {} : { tracking: extra.tracking }),
+                }
+              : { ...status, tree: extra.tree };
       }
 
       return statuses;

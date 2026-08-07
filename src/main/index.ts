@@ -13,8 +13,8 @@ import type { DockerBackend } from './docker/backend.js';
 import { DockerodeBackend } from './docker/client.js';
 import { FakeDockerBackend } from './docker/fake.js';
 import { shutdownWslServices } from './docker/wsl.js';
-import { readBranches, switchBranch } from './git/branches.js';
-import { fakeBranches, fakeGitStatus, fakeSwitchBranch } from './git/fake.js';
+import { readBranches, readWorkingTree, switchBranch } from './git/branches.js';
+import { fakeBranches, fakeGitStatus, fakeSwitchBranch, fakeWorkingTree } from './git/fake.js';
 import { readGitStatus } from './git/status.js';
 import { UpdateChecker } from './update/check.js';
 import { fakeUpdatesFromEnv } from './update/fake.js';
@@ -398,8 +398,18 @@ void app.whenReady().then(async () => {
       // folders that do not exist — so the switch that decides one decides all
       // of them.
       ...(process.env['BOXWARDEN_FAKE_DOCKER'] === '1'
-        ? { status: fakeGitStatus, branches: fakeBranches, switchBranch: fakeSwitchBranch }
-        : { status: readGitStatus, branches: readBranches, switchBranch }),
+        ? {
+            status: fakeGitStatus,
+            branches: fakeBranches,
+            workingTree: fakeWorkingTree,
+            switchBranch: fakeSwitchBranch,
+          }
+        : {
+            status: readGitStatus,
+            branches: readBranches,
+            workingTree: readWorkingTree,
+            switchBranch,
+          }),
     },
     projects: {
       platform: process.platform,

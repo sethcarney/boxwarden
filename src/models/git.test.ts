@@ -6,6 +6,7 @@ import {
   gitInvocation,
   parseBranchRefs,
   parseDubiousOwnership,
+  parseTracking,
   parseGitDirPointer,
   parseGitHead,
   parseWorkingTree,
@@ -386,5 +387,60 @@ describe('parseDubiousOwnership', () => {
     expect(
       parseDubiousOwnership("fatal: detected dubious ownership in repository at '/x'"),
     ).toBeUndefined();
+  });
+});
+
+describe('parseTracking', () => {
+  it('reads ahead and behind out of the --branch header', () => {
+    expect(parseTracking('## main...origin/main [ahead 2, behind 1]\n M src/a.ts\n')).toEqual({
+      ahead: 2,
+      behind: 1,
+    });
+  });
+
+  it('reads a header with only one of the two', () => {
+    expect(parseTracking('## main...origin/main [ahead 3]\n')).toEqual({ ahead: 3, behind: 0 });
+    expect(parseTracking('## main...origin/main [behind 4]\n')).toEqual({ ahead: 0, behind: 4 });
+  });
+
+  it('reads a branch that agrees with its upstream as zero on both', () => {
+    expect(parseTracking('## main...origin/main\n')).toEqual({ ahead: 0, behind: 0 });
+  });
+
+  /**
+   * The distinction the `undefined` arm exists for: "in sync with origin" and
+   * "has no origin" are different things to tell someone, and only one of them
+   * means the work is safe somewhere else.
+   */
+  it('answers nothing for a branch with no upstream', () => {
+    expect(parseTracking('## local-only\n')).toBeUndefined();
+    expect(parseTracking('## HEAD (no branch)\n')).toBeUndefined();
+    expect(parseTracking(' M src/a.ts\n')).toBeUndefined();
+    expect(parseTracking('')).toBeUndefined();
+  });
+
+  /** A branch name may legally contain a bracket; the divergence note is last. */
+  it('reads the trailing bracket, not one inside a branch name', () => {
+    expect(parseTracking('## feat[x]...origin/feat[x] [ahead 1]\n')).toEqual({
+      ahead: 1,
+      behind: 0,
+    });
+  });
+});
+
+describe('parseWorkingTree with the --branch header', () => {
+  /**
+   * The header is not a changed file. Counting it would report every clean
+   * checkout in the app as having exactly one uncommitted change.
+   */
+  it('does not count the header as a change', () => {
+    expect(parseWorkingTree('## main...origin/main [ahead 1]\n')).toEqual({ kind: 'clean' });
+  });
+
+  it('counts only the file lines beneath it', () => {
+    expect(parseWorkingTree('## main...origin/main\n M src/a.ts\nM  src/b.ts\n')).toEqual({
+      kind: 'dirty',
+      changed: 2,
+    });
   });
 });

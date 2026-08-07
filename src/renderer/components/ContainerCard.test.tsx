@@ -650,6 +650,52 @@ describe('ContainerCard', () => {
     });
   });
 
+  describe('the branch counts', () => {
+    it('draws the dirty count and the divergence beside the name', () => {
+      const { dom } = renderCard(devContainer(), {
+        git: {
+          kind: 'branch',
+          branch: 'main',
+          tree: { kind: 'dirty', changed: 3 },
+          tracking: { ahead: 2, behind: 1 },
+        },
+      });
+
+      expect(dom.querySelector('.branch-count.dirty')?.textContent).toBe('●3');
+      expect(dom.querySelector('.branch-count.ahead')?.textContent).toBe('↑2');
+      expect(dom.querySelector('.branch-count.behind')?.textContent).toBe('↓1');
+    });
+
+    /**
+     * The chip on a machine with no git, which is the state the whole optional
+     * chain exists to keep working. No counts, and no empty container either.
+     */
+    it('draws nothing at all when the counts were never read', () => {
+      const { dom } = renderCard(devContainer(), { git: ON_MAIN });
+      expect(dom.querySelector('.branch-counts')).toBeNull();
+    });
+
+    it('draws no marks for a clean tree in sync with its upstream', () => {
+      const { dom } = renderCard(devContainer(), {
+        git: {
+          kind: 'branch',
+          branch: 'main',
+          tree: { kind: 'clean' },
+          tracking: { ahead: 0, behind: 0 },
+        },
+      });
+      expect(dom.querySelector('.branch-counts')).toBeNull();
+    });
+
+    /** The glyphs are decoration; the words live in the accessible name. */
+    it('keeps the counts out of the accessible name as symbols and in it as words', () => {
+      renderCard(devContainer(), {
+        git: { kind: 'branch', branch: 'main', tree: { kind: 'dirty', changed: 1 } },
+      });
+      expect(screen.getByLabelText(/1 uncommitted change/)).toBeDefined();
+    });
+  });
+
   describe('the branch menu', () => {
     it('turns the chip into a button when a binding is supplied', () => {
       const { dom } = renderCard(devContainer(), { git: ON_MAIN, branchMenu: binding() });
