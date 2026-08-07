@@ -679,7 +679,43 @@ button.link {
   margin: 0;
   padding: 6px;
   font-size: 11px;
+  line-height: 1.45;
   color: var(--text-dim);
+}
+
+/*
+ * The copyable fix under an unavailable listing. Same construction as
+ * `.advice-commands li`, at popover scale.
+ *
+ * `overflow-x: auto` on the code and `flex: 0 0 auto` on the button for the
+ * reason the advice rows have them: the string this shows is a full path with
+ * git's `%(prefix)/` spelling on the front, and a long one must scroll inside
+ * its own box rather than push the Copy button out of the menu.
+ */
+.branch-menu-fix {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 6px 6px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+}
+
+.branch-menu-fix code {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  background: none;
+  font-size: 11px;
+  overflow-x: auto;
+  white-space: pre;
+  user-select: text;
+}
+
+.branch-menu-fix button {
+  flex: 0 0 auto;
 }
 
 /*

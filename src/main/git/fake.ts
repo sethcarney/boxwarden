@@ -1,5 +1,5 @@
 import type { ActionResult } from '../../shared/ipc.js';
-import type { BranchListing, GitStatus } from '../../models/index.js';
+import type { BranchListing, GitStatus, HostPath } from '../../models/index.js';
 import { canSwitchTo } from '../../models/index.js';
 
 /**
@@ -92,9 +92,18 @@ const FIXTURE_LISTINGS: Readonly<Record<string, BranchListing>> = {
   },
 };
 
-/** The listing, with any fixture switch already folded into which branch is current. */
-export function fakeBranches(folder: string): Promise<BranchListing> {
-  const listing = FIXTURE_LISTINGS[folder];
+/**
+ * The listing, with any fixture switch already folded into which branch is
+ * current.
+ *
+ * Keyed on `folder.path` rather than on the whole `HostPath`, which is exactly
+ * right for these fixtures and worth saying why: every fixture folder is
+ * `posix`, so `.path` IS the key the real seam would resolve. The WSL arm's own
+ * spelling is `gitInvocation`'s business and is tested there — there is no
+ * fixture repository behind a distro to list.
+ */
+export function fakeBranches(folder: HostPath): Promise<BranchListing> {
+  const listing = FIXTURE_LISTINGS[folder.path];
   if (listing === undefined) {
     return Promise.resolve({
       kind: 'unavailable',
@@ -102,7 +111,7 @@ export function fakeBranches(folder: string): Promise<BranchListing> {
     });
   }
 
-  const moved = switched.get(folder);
+  const moved = switched.get(folder.path);
   if (moved === undefined || listing.kind !== 'ready') return Promise.resolve(listing);
 
   return Promise.resolve({
@@ -119,9 +128,9 @@ export function fakeBranches(folder: string): Promise<BranchListing> {
  * decision — so the refusals seen on screen in fixture mode are the production
  * ones, and a bug in the ordering of those reasons shows up here.
  */
-export async function fakeSwitchBranch(folder: string, branch: string): Promise<ActionResult> {
+export async function fakeSwitchBranch(folder: HostPath, branch: string): Promise<ActionResult> {
   const allowed = canSwitchTo(branch, await fakeBranches(folder));
   if (allowed !== true) return { ok: false, message: allowed };
-  switched.set(folder, branch);
+  switched.set(folder.path, branch);
   return { ok: true };
 }

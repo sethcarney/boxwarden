@@ -781,5 +781,38 @@ describe('ContainerCard', () => {
       expect(screen.getByText('git was not found on this machine.')).toBeDefined();
       expect(screen.queryAllByRole('menuitem')).toHaveLength(0);
     });
+
+    /**
+     * The `safe.directory` case, which is what a Windows user whose code lives
+     * in a WSL distro hits. boxwarden shows git's own command and a Copy
+     * button; it does not run it, because writing that exception is disabling a
+     * check about whether a repository can be trusted.
+     */
+    it('offers the fix command to copy, and does not run it', () => {
+      const command =
+        "git config --global --add safe.directory '%(prefix)///wsl.localhost/dev/home/s/a'";
+      renderCard(devContainer(), {
+        git: ON_MAIN,
+        branchMenu: binding({
+          open: true,
+          listing: { kind: 'unavailable', reason: 'git does not trust this repository.', command },
+        }),
+      });
+
+      expect(screen.getByText(command)).toBeDefined();
+      expect(screen.getByRole('button', { name: 'Copy' })).toBeDefined();
+    });
+
+    it('shows no copy button when git named no fix', () => {
+      renderCard(devContainer(), {
+        git: ON_MAIN,
+        branchMenu: binding({
+          open: true,
+          listing: { kind: 'unavailable', reason: 'fatal: not a git repository' },
+        }),
+      });
+
+      expect(screen.queryByRole('button', { name: 'Copy' })).toBeNull();
+    });
   });
 });

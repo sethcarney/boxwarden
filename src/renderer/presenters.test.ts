@@ -768,6 +768,24 @@ describe('branchMenu', () => {
     });
   });
 
+  /**
+   * `exactOptionalPropertyTypes` is on, so the absent case has to be an absent
+   * KEY rather than an explicit undefined — which is also what keeps the View's
+   * `!== undefined` check meaningful.
+   */
+  it('carries a fix command when there is one, and omits the key when there is not', () => {
+    const withFix = branchMenu({
+      kind: 'unavailable',
+      reason: 'git does not trust this repository.',
+      command: "git config --global --add safe.directory '%(prefix)///wsl.localhost/dev/home/s/a'",
+    });
+    expect(withFix).toMatchObject({
+      command: "git config --global --add safe.directory '%(prefix)///wsl.localhost/dev/home/s/a'",
+    });
+
+    expect(branchMenu({ kind: 'unavailable', reason: 'x' })).not.toHaveProperty('command');
+  });
+
   /** Nothing to pick, so it renders as the same shape of answer rather than an empty list. */
   it('reports a repository with no branches as unavailable, with a reason', () => {
     const view = branchMenu({ kind: 'ready', tree: { kind: 'clean' }, branches: [] });

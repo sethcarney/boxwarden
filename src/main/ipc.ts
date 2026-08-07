@@ -8,6 +8,7 @@ import type {
   DockerEnvironment,
   EngineSelection,
   GitStatus,
+  HostPath,
   ProjectId,
   ProjectRoot,
   ProjectScan,
@@ -116,16 +117,31 @@ export interface TerminalsContext {
 export interface GitContext {
   /** `process.platform`. Passed in for the same reason `ProjectsContext` takes it. */
   readonly platform: string;
-  /** Never rejects; every failure is a `GitStatus` arm. */
+  /**
+   * Never rejects; every failure is a `GitStatus` arm.
+   *
+   * A STRING, unlike the two below, and the difference is the point. This only
+   * opens files, so it wants the spelling the host OS can open — which for a
+   * WSL workspace is the `\\wsl.localhost\…` UNC form `readableHostFolder`
+   * produces.
+   */
   status(folder: string): Promise<GitStatus>;
-  /** Never rejects; every failure is the `unavailable` arm of `BranchListing`. */
-  branches(folder: string): Promise<BranchListing>;
+  /**
+   * Never rejects; every failure is the `unavailable` arm of `BranchListing`.
+   *
+   * A `HostPath` and not a string, because this SPAWNS git and the two
+   * questions have different answers: a WSL workspace is opened through a UNC
+   * path and reasoned about through the distro plus a Linux path. Flattening it
+   * to a string here is exactly the bug `gitInvocation` exists to prevent —
+   * Windows git against a `\\wsl.localhost\…` path refuses on ownership.
+   */
+  branches(folder: HostPath): Promise<BranchListing>;
   /**
    * Check a branch out. Never rejects — a refusal is `{ ok: false, message }`,
    * and the refusal is decided behind this seam rather than in front of it, so
    * the fixture run enforces the same rules the real one does.
    */
-  switchBranch(folder: string, branch: string): Promise<ActionResult>;
+  switchBranch(folder: HostPath, branch: string): Promise<ActionResult>;
 }
 
 /**
@@ -796,7 +812,7 @@ export function registerIpcHandlers(context: IpcContext): void {
   function workspaceFolder(
     rawId: unknown,
   ):
-    | { readonly ok: true; readonly folder: string }
+    | { readonly ok: true; readonly folder: HostPath }
     | { readonly ok: false; readonly message: string } {
     const container = typeof rawId === 'string' ? known.get(rawId as ContainerId) : undefined;
     if (container === undefined) {
@@ -806,12 +822,20 @@ export function registerIpcHandlers(context: IpcContext): void {
       };
     }
 
-    const folder = readableHostFolder(container.localFolder, hostPlatform(context.git.platform));
-    if (folder === undefined) {
+    // `readableHostFolder` is the GATE here, not the answer. What it decides is
+    // whether this folder belongs to the machine boxwarden is running on — the
+    // check that keeps a Windows label from being read off a Linux root. What
+    // it RETURNS is the spelling for opening a file, and running git is a
+    // different question, so the structured path travels on and
+    // `gitInvocation` decides how to address it. Flattening to the string here
+    // is precisely the bug that makes Windows git refuse a WSL workspace.
+    const readable = readableHostFolder(container.localFolder, hostPlatform(context.git.platform));
+    const folder = container.localFolder;
+    if (readable === undefined || folder.kind === 'unresolved') {
       return {
         ok: false,
         message:
-          container.localFolder.kind === 'unresolved'
+          folder.kind === 'unresolved'
             ? 'The devcontainer.local_folder label could not be parsed, so there is no folder to switch a branch in.'
             : 'That folder is on a different operating system from the one boxwarden is running on, so its checkout cannot be changed from here.',
       };

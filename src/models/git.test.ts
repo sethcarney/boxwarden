@@ -3,7 +3,9 @@ import type { BranchListing, GitBranch } from './git.js';
 import {
   branchSwitchBlockedReason,
   canSwitchTo,
+  gitInvocation,
   parseBranchRefs,
+  parseDubiousOwnership,
   parseGitDirPointer,
   parseGitHead,
   parseWorkingTree,
@@ -308,5 +310,81 @@ describe('canSwitchTo', () => {
     expect(canSwitchTo('feature/x', { ...listing, tree: { kind: 'dirty', changed: 1 } })).toContain(
       'uncommitted',
     );
+  });
+});
+
+describe('gitInvocation', () => {
+  it('runs the host git against a posix path', () => {
+    expect(gitInvocation({ kind: 'posix', path: '/home/dev/app' })).toEqual({
+      file: 'git',
+      leading: ['--no-optional-locks', '-C', '/home/dev/app'],
+    });
+  });
+
+  it('runs the host git against a windows path', () => {
+    expect(gitInvocation({ kind: 'windows', path: 'C:\\Users\\dev\\app' })).toEqual({
+      file: 'git',
+      leading: ['--no-optional-locks', '-C', 'C:\\Users\\dev\\app'],
+    });
+  });
+
+  /**
+   * The bug this function exists for. Windows git against
+   * `\\wsl.localhost\<distro>\…` sees files owned by the Linux user and refuses
+   * on `safe.directory`, so the distro's own git runs instead — same files,
+   * matching owner, and no 9P round trip per ref.
+   */
+  it('reaches into the distro for a WSL workspace, over the LINUX path', () => {
+    expect(gitInvocation({ kind: 'wsl', distro: 'dev', path: '/home/seth/project' })).toEqual({
+      file: 'wsl.exe',
+      leading: ['-d', 'dev', '--exec', 'git', '--no-optional-locks', '-C', '/home/seth/project'],
+    });
+  });
+
+  /** `--exec` and not `--`: without it wsl.exe hands the line to a shell first. */
+  it('always passes --exec, and never the UNC spelling', () => {
+    const { leading } = gitInvocation({ kind: 'wsl', distro: 'dev', path: '/home/seth/p' });
+    expect(leading).toContain('--exec');
+    expect(leading).not.toContain('--');
+    expect(leading.some((arg) => arg.includes('wsl.localhost'))).toBe(false);
+  });
+});
+
+describe('parseDubiousOwnership', () => {
+  /** Exactly what git prints, down to the leading tab on the command line. */
+  const REFUSAL = [
+    "fatal: detected dubious ownership in repository at '//wsl.localhost/dev/home/seth/app'",
+    'To add an exception for this directory, call:',
+    '',
+    "\tgit config --global --add safe.directory '%(prefix)///wsl.localhost/dev/home/seth/app'",
+    '',
+  ].join('\n');
+
+  /**
+   * Taken from git's output rather than built from the folder. git's spelling
+   * of a UNC path in this config is `%(prefix)///…`, which exists because `//`
+   * is meaningful to the config parser — reconstructing it means reimplementing
+   * that rule, copying it means reimplementing none of it.
+   */
+  it('lifts git’s own suggested command out, %(prefix) and all', () => {
+    expect(parseDubiousOwnership(REFUSAL)).toBe(
+      "git config --global --add safe.directory '%(prefix)///wsl.localhost/dev/home/seth/app'",
+    );
+  });
+
+  it('says nothing about an unrelated failure', () => {
+    expect(parseDubiousOwnership('fatal: not a git repository')).toBeUndefined();
+    expect(parseDubiousOwnership('')).toBeUndefined();
+  });
+
+  /**
+   * A refusal whose suggestion git did not print — an older version, or a
+   * locale that reworded it. The caller then falls back to showing git's raw
+   * words, which is worse than a copy button and better than a blank box.
+   */
+  it('says nothing when the refusal carries no command to copy', () => {
+    expect(
+      parseDubiousOwnership("fatal: detected dubious ownership in repository at '/x'"),
+    ).toBeUndefined();
   });
 });

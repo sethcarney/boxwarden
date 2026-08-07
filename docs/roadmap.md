@@ -82,9 +82,17 @@ socket and no editor installed:
   ever been spawned by this code: `src/main/git/branches.ts` has no test of its
   own for the same reason `docker/client.ts` does not. Three things only a real
   run can settle — that `%(worktreepath)` is available on the git the user has
-  (it needs 2.23), that `git -C` accepts a `\\wsl.localhost\…` path on Windows,
-  and that a checkout under an attached VS Code window behaves the way it does
-  from a terminal.
+  (it needs 2.23), that `wsl.exe -d <distro> --exec git` resolves git inside the
+  distro, and that a checkout under an attached VS Code window behaves the way
+  it does from a terminal.
+
+  The **first** thing a real run did settle is already folded in. Windows git
+  against a `\\wsl.localhost\…` workspace refuses it as dubiously owned,
+  because the files belong to the Linux user rather than to the Windows
+  account. `gitInvocation` now routes a WSL workspace through the distro's own
+  git instead, and `parseDubiousOwnership` gives the refusal a copyable fix
+  wherever it still fires. See CLAUDE.md.
+
 - **The update check against a real release.** There are none yet, so nothing
   has ever come back from `/releases/latest` — the parser, the version
   comparison and the per-platform asset match are tested against fixture

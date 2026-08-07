@@ -22,7 +22,7 @@
  */
 
 import type { HostPlatform } from './advice.js';
-import type { MaybeHostPath } from './paths.js';
+import type { HostPath, MaybeHostPath } from './paths.js';
 import { formatHostPath } from './paths.js';
 
 /**
@@ -168,7 +168,113 @@ export type BranchListing =
       readonly branches: readonly GitBranch[];
       readonly tree: WorkingTree;
     }
-  | { readonly kind: 'unavailable'; readonly reason: string };
+  | {
+      readonly kind: 'unavailable';
+      readonly reason: string;
+      /**
+       * A command the USER can run to fix this, when git named one.
+       *
+       * Shown, never run — the same rule as `advice.ts` and `devcontainer up`,
+       * and the case it exists for makes that rule sharper rather than softer:
+       * the only failure that currently sets it is `safe.directory`, which is a
+       * security boundary git put there deliberately. An app that quietly wrote
+       * that exception on the user's behalf would be disabling a check about
+       * whether the repository can be trusted, from a button they did not read.
+       */
+      readonly command?: string;
+    };
+
+/** What to spawn to run git against one workspace folder. */
+export interface GitInvocation {
+  /** The program. `git` on this machine, or `wsl.exe` to reach a distro's own. */
+  readonly file: string;
+  /** Everything before the subcommand, `-C <folder>` included. */
+  readonly leading: readonly string[];
+}
+
+/**
+ * Decide WHICH git runs, and against which spelling of the folder.
+ *
+ * ## The WSL arm is the whole reason this function exists
+ *
+ * `readableHostFolder` turns a workspace inside a distro into
+ * `\\wsl.localhost\<distro>\home\...`, because that is the spelling Windows can
+ * OPEN — and opening is all `status.ts` does, so that is the right answer
+ * there. Handing the same string to Windows git is a different matter, and it
+ * fails in a way that looks like boxwarden's bug and is not:
+ *
+ *     fatal: detected dubious ownership in repository at
+ *     '//wsl.localhost/dev/home/you/project'
+ *
+ * The files belong to the Linux user inside the distro; Windows git sees an
+ * owner that is not the account it is running as, and `safe.directory` — added
+ * after CVE-2022-24765, where a repository on a shared path could execute its
+ * own config — refuses to touch it. That protection is right, and the fix is
+ * not to disable it. It is to stop asking the wrong git.
+ *
+ * So a WSL workspace runs the DISTRO's git, over the distro's own path, as the
+ * user who owns the files. Ownership matches, nothing is trusted that was not
+ * already, and it is faster too: 9P is a network filesystem, and `for-each-ref`
+ * over one is slow enough to feel.
+ *
+ * ## `--exec`, and the argv rule
+ *
+ * `--exec` and not `--`, for the reason `containerExecArgv` gives at length:
+ * without it `wsl.exe` hands the command line to the distro's default shell,
+ * which parses it a second time. With it the arguments cross as an argv.
+ *
+ * This is a much easier case than the terminal's, and it is worth saying why so
+ * nobody reaches for base64 here too: nothing on this path goes through
+ * `wt.exe`, which is the layer that re-joins an argv into a command line. It is
+ * `execFile` straight to `wsl.exe`, so Node's own CRT-compatible quoting is
+ * the only encoding involved and it round-trips a branch name containing a
+ * quote — which git permits, unlike a space or a control character.
+ */
+export function gitInvocation(folder: HostPath): GitInvocation {
+  // `--no-optional-locks` keeps a read from taking the index lock. It matters
+  // more here than in most tools: the editor attached to this very container is
+  // running git against the same checkout on its own schedule.
+  const git = ['--no-optional-locks', '-C'];
+
+  switch (folder.kind) {
+    case 'posix':
+    case 'windows':
+      return { file: 'git', leading: [...git, folder.path] };
+    case 'wsl':
+      // `git` bare, because it is resolved on the Linux side — a Windows path
+      // would be meaningless there. And `folder.path` rather than the UNC form,
+      // for the same reason: inside the distro this is just `/home/you/…`.
+      return {
+        file: 'wsl.exe',
+        leading: ['-d', folder.distro, '--exec', 'git', ...git, folder.path],
+      };
+  }
+}
+
+/**
+ * git's own suggested `safe.directory` command, when that is what went wrong.
+ *
+ * PARSED out of git's output rather than built from the folder, and that is
+ * deliberate in the same way the raw label rule is. git spells a UNC path in
+ * this config as `%(prefix)///wsl.localhost/dev/...` — a form with its own
+ * escaping rules that exists because `//` is meaningful to the config parser.
+ * Reconstructing it means reimplementing that spelling correctly on every
+ * platform, for a string whose only job is to be pasted; copying the one git
+ * printed means reimplementing none of it.
+ *
+ * Answers `undefined` unless this really is an ownership refusal, so an
+ * unrelated failure cannot pick up a fix that would not help.
+ */
+export function parseDubiousOwnership(stderr: string): string | undefined {
+  if (!/dubious ownership/i.test(stderr)) return undefined;
+
+  for (const line of stderr.split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('git config --global --add safe.directory')) return trimmed;
+  }
+
+  return undefined;
+}
 
 /**
  * The separator in the `for-each-ref` format below. A TAB, because it is the

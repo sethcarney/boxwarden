@@ -1,9 +1,11 @@
 import { execFile } from 'node:child_process';
-import type { BranchListing } from '../../models/index.js';
+import type { BranchListing, HostPath } from '../../models/index.js';
 import {
   BRANCH_REF_FORMAT,
   canSwitchTo,
+  gitInvocation,
   parseBranchRefs,
+  parseDubiousOwnership,
   parseWorkingTree,
 } from '../../models/index.js';
 import type { ActionResult } from '../../shared/ipc.js';
@@ -77,20 +79,26 @@ interface GitRun {
   readonly stdout: string;
   /** Already trimmed and collapsed to something showable in a notice bar. */
   readonly message: string;
+  /** A command the user can run to fix this, when git named one. */
+  readonly command?: string;
 }
 
 /**
- * Run one git command against a folder. Never rejects — every failure is data,
- * for the same reason the IPC verbs return `{ ok: false, message }`.
+ * Run one git command against a workspace. Never rejects — every failure is
+ * data, for the same reason the IPC verbs return `{ ok: false, message }`.
+ *
+ * WHICH git is `gitInvocation`'s decision, not this function's: a workspace
+ * inside a WSL distro runs the distro's own, over the distro's own path. See
+ * the note there — it is the difference between working and a `safe.directory`
+ * refusal on every Windows machine whose code lives in WSL.
  */
-function run(args: readonly string[], folder: string, timeoutMs: number): Promise<GitRun> {
+function run(args: readonly string[], folder: HostPath, timeoutMs: number): Promise<GitRun> {
+  const { file, leading } = gitInvocation(folder);
+
   return new Promise((resolve) => {
     execFile(
-      'git',
-      // `--no-optional-locks` keeps a read from taking the index lock, which
-      // matters here more than most places: the editor attached to this very
-      // container is running git against the same checkout on its own schedule.
-      ['--no-optional-locks', '-C', folder, ...args],
+      file,
+      [...leading, ...args],
       {
         timeout: timeoutMs,
         maxBuffer: MAX_OUTPUT_BYTES,
@@ -101,7 +109,12 @@ function run(args: readonly string[], folder: string, timeoutMs: number): Promis
           // to answer them on, so a git that asks is a git that hangs until the
           // timeout above.
           GIT_TERMINAL_PROMPT: '0',
-          // Keep git's own messages parseable and in one language.
+          // Keep git's own messages parseable and in one language. Note this
+          // does NOT cross into a distro — `wsl.exe` forwards only what WSLENV
+          // names — so the WSL arm can still answer in the user's locale. Every
+          // message here is passed through to the user rather than matched on,
+          // with one exception (`parseDubiousOwnership`), and that one is a
+          // failure the WSL arm exists to avoid in the first place.
           LC_ALL: 'C',
         },
       },
@@ -117,7 +130,9 @@ function run(args: readonly string[], folder: string, timeoutMs: number): Promis
             ok: false,
             stdout: '',
             message:
-              'git was not found on this machine, so branches cannot be listed or switched. Reading the current branch does not need it, which is why the chip still works.',
+              folder.kind === 'wsl'
+                ? `wsl.exe was not found, so the branches in ${folder.distro} cannot be listed or switched. Reading the current branch does not need it, which is why the chip still works.`
+                : 'git was not found on this machine, so branches cannot be listed or switched. Reading the current branch does not need it, which is why the chip still works.',
           });
           return;
         }
@@ -126,10 +141,35 @@ function run(args: readonly string[], folder: string, timeoutMs: number): Promis
         // repository", "pathspec did not match", "your local changes would be
         // overwritten" are all things a user can act on.
         const said = stderr.trim() === '' ? error.message.trim() : stderr.trim();
+
+        // …with one exception, because git's own wording here describes a
+        // decision the USER has to make and buries it under three lines of
+        // instruction. Said plainly, with git's exact command offered to copy.
+        const fix = parseDubiousOwnership(stderr);
+        if (fix !== undefined) {
+          resolve({
+            ok: false,
+            stdout: '',
+            message:
+              'git does not trust this repository: the files belong to a different user account from the one boxwarden is running as, so it refuses to read or change it. That check exists to stop a repository on a shared path from running its own config, so boxwarden will not turn it off for you.',
+            command: fix,
+          });
+          return;
+        }
+
         resolve({ ok: false, stdout: '', message: said });
       },
     );
   });
+}
+
+/** One failed run, as the arm the menu renders. Keeps `command` only when there is one. */
+function unavailable(run: GitRun): BranchListing {
+  return {
+    kind: 'unavailable',
+    reason: run.message,
+    ...(run.command === undefined ? {} : { command: run.command }),
+  };
 }
 
 /**
@@ -146,14 +186,14 @@ function run(args: readonly string[], folder: string, timeoutMs: number): Promis
  * a checkout — the chip would say nothing while this lists branches. The menu
  * naming its current branch is what keeps that legible rather than confusing.
  */
-export async function readBranches(folder: string): Promise<BranchListing> {
+export async function readBranches(folder: HostPath): Promise<BranchListing> {
   const [refs, status] = await Promise.all([
     run(['for-each-ref', `--format=${BRANCH_REF_FORMAT}`, 'refs/heads'], folder, READ_TIMEOUT_MS),
     run(['status', '--porcelain', '--untracked-files=no'], folder, READ_TIMEOUT_MS),
   ]);
 
-  if (!refs.ok) return { kind: 'unavailable', reason: refs.message };
-  if (!status.ok) return { kind: 'unavailable', reason: status.message };
+  if (!refs.ok) return unavailable(refs);
+  if (!status.ok) return unavailable(status);
 
   return {
     kind: 'ready',
@@ -176,7 +216,7 @@ export async function readBranches(folder: string): Promise<BranchListing> {
  * work or leaves some behind for the user to remember; refusing costs them one
  * command in a terminal they already have open.
  */
-export async function switchBranch(folder: string, branch: string): Promise<ActionResult> {
+export async function switchBranch(folder: HostPath, branch: string): Promise<ActionResult> {
   const allowed = canSwitchTo(branch, await readBranches(folder));
   if (allowed !== true) return { ok: false, message: allowed };
 

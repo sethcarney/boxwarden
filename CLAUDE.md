@@ -642,6 +642,30 @@ open menu; `branchMenu` in `presenters.ts` folds a listing into rows.
   the index and the working tree, and the only correct implementation of that is
   git's own — so `branches.ts` shells out, and `git` being absent degrades to a
   menu that says so rather than to a chip that stops working.
+- **A WSL workspace runs the DISTRO's git, over the distro's own path.** This is
+  the one place the two halves need different spellings of the same folder, and
+  it is `gitInvocation`'s whole reason for existing. `readableHostFolder` gives
+  `\\wsl.localhost\<distro>\…` because that is what Windows can OPEN, which is
+  right for `status.ts` and wrong here: the files belong to the Linux user, so
+  Windows git sees an owner that is not the account it is running as and
+  `safe.directory` — added after CVE-2022-24765 — refuses the repository
+  outright. The fix is not to disable that check but to stop asking the wrong
+  git, so the WSL arm is `wsl.exe -d <distro> --exec git -C /home/…`. Ownership
+  then matches, and it is faster besides: 9P is a network filesystem and
+  `for-each-ref` over one is slow enough to feel. **`--exec` and not `--`**, the
+  same trap `containerExecArgv` documents at length. The argv rule is easier
+  here than in `terminal/command.ts` and it is worth knowing why before anyone
+  reaches for base64: nothing on this path goes through `wt.exe`, which is the
+  layer that re-joins an argv into a command line.
+- **`safe.directory` still gets a legible answer when it does fire** — a native
+  Windows repo owned by another account, say. `parseDubiousOwnership` lifts
+  git's OWN suggested command out of stderr and the menu shows it with a Copy
+  button. Parsed and not rebuilt, for the raw-label reason: git spells a UNC
+  path there as `%(prefix)///wsl.localhost/…`, an escaping rule that exists
+  because `//` is meaningful to the config parser, and reconstructing it means
+  reimplementing that rule on every platform. **It is never run for the user.**
+  Writing that exception disables a check about whether a repository can be
+  trusted, which is not a thing to do on a click nobody read.
 - **It REFUSES rather than forces, and that is the feature.** A dirty tree, a
   branch another worktree holds, and the branch already checked out are all
   `{ ok: false, message }` naming what to do instead. There is no `--force`, no

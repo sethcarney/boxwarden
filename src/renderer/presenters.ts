@@ -427,7 +427,18 @@ export interface BranchMenuItem {
  */
 export type BranchMenuView =
   | { readonly kind: 'loading' }
-  | { readonly kind: 'unavailable'; readonly reason: string }
+  | {
+      readonly kind: 'unavailable';
+      readonly reason: string;
+      /**
+       * A command that would fix it, shown with a Copy button and never run —
+       * the same bargain `advice.ts` makes, for a sharper reason: the one
+       * failure that currently sets this is git's `safe.directory` check, and
+       * an app that silently disabled a repository-trust check on a click is an
+       * app nobody should hand a Docker socket.
+       */
+      readonly command?: string;
+    }
   | {
       readonly kind: 'ready';
       /**
@@ -453,7 +464,13 @@ export type BranchMenuView =
  */
 export function branchMenu(listing: BranchListing | undefined): BranchMenuView {
   if (listing === undefined) return { kind: 'loading' };
-  if (listing.kind === 'unavailable') return { kind: 'unavailable', reason: listing.reason };
+  if (listing.kind === 'unavailable') {
+    return {
+      kind: 'unavailable',
+      reason: listing.reason,
+      ...(listing.command === undefined ? {} : { command: listing.command }),
+    };
+  }
 
   if (listing.branches.length === 0) {
     return {

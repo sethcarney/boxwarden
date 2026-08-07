@@ -1,4 +1,5 @@
 import type { BranchMenuView } from '../presenters.js';
+import { useCopyToClipboard } from '../viewmodels/useCopyToClipboard.js';
 
 interface Props {
   readonly view: BranchMenuView;
@@ -38,7 +39,16 @@ export function BranchMenu({ view, busy, onSwitch, onClose }: Props) {
       <div className="branch-menu" role="menu" aria-label="Switch branch">
         {view.kind === 'loading' && <p className="branch-menu-note">Reading branches…</p>}
 
-        {view.kind === 'unavailable' && <p className="branch-menu-note">{view.reason}</p>}
+        {view.kind === 'unavailable' && (
+          <>
+            <p className="branch-menu-note">{view.reason}</p>
+            {/* Shown, never run — see the note on `command`. The Copy button is
+                the whole reason it is worth printing: this is a long path with
+                git's own `%(prefix)/` spelling in it, which is precisely the
+                kind of string nobody should be retyping from a screenshot. */}
+            {view.command !== undefined && <FixCommand command={view.command} />}
+          </>
+        )}
 
         {view.kind === 'ready' && (
           <>
@@ -78,5 +88,35 @@ export function BranchMenu({ view, busy, onSwitch, onClose }: Props) {
         )}
       </div>
     </>
+  );
+}
+
+/**
+ * The command that would fix an unavailable listing, with the copy button that
+ * is the point of showing it.
+ *
+ * The same shape as `CommandRow` in `Advisories.tsx`, and deliberately not
+ * shared with it: that one is a `<li>` inside a list of several, this one is a
+ * single block inside a popover, and factoring them together would mean a
+ * component taking a wrapper element as a prop to serve two callers. The thing
+ * worth not duplicating — the clipboard write and its self-cancelling "Copied"
+ * flash — is `useCopyToClipboard`, and both use it.
+ */
+function FixCommand({ command }: { readonly command: string }) {
+  const { copied, copy } = useCopyToClipboard();
+
+  return (
+    <div className="branch-menu-fix">
+      <code>{command}</code>
+      <button
+        type="button"
+        className="link"
+        onClick={() => {
+          copy(command);
+        }}
+      >
+        {copied ? 'Copied' : 'Copy'}
+      </button>
+    </div>
   );
 }
