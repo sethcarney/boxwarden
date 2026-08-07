@@ -28,6 +28,13 @@ unblocks the most.
 - **Shows the branch each workspace folder is on**, read from `.git/HEAD` on the
   host — worktrees included — so several containers over one repository are
   told apart at a glance.
+- **Switches that branch from the chip**, listing the repository's local
+  branches and running `git checkout` on the host. Refuses — with the reason on
+  screen — on a dirty tree, on a branch another worktree holds, and on the one
+  already checked out. It never stashes, forces or discards.
+- **Colours the card by state**, so a grid says what is running without being
+  read: a status-keyed accent down the card's edge and a tinted status line,
+  both from the same three-way `displayStatus` the dot uses.
 - **Finds dev container projects that have never been built** by walking the
   filesystem for `devcontainer.json`, listing the ones no container claims, and
   offering to open the folder so the editor can prompt "Reopen in Container".
@@ -69,6 +76,15 @@ socket and no editor installed:
 - Claude Code detection against a real container. The parser is tested against
   fixture `top` responses in both engines' column layouts, but no daemon has
   returned a real one and no real `claude` process has been matched.
+- **Branch switching against a real repository.** The parsers are tested
+  against fixture `for-each-ref` and `status --porcelain` output and the
+  refusals are tested against the real `canSwitchTo`, but no `git` process has
+  ever been spawned by this code: `src/main/git/branches.ts` has no test of its
+  own for the same reason `docker/client.ts` does not. Three things only a real
+  run can settle — that `%(worktreepath)` is available on the git the user has
+  (it needs 2.23), that `git -C` accepts a `\\wsl.localhost\…` path on Windows,
+  and that a checkout under an attached VS Code window behaves the way it does
+  from a terminal.
 - **The update check against a real release.** There are none yet, so nothing
   has ever come back from `/releases/latest` — the parser, the version
   comparison and the per-platform asset match are tested against fixture
@@ -222,8 +238,9 @@ deliberately left out of v1, in this order:
 
 ## 8. The workspace branch — what it does not do
 
-The branch chip reads `.git/HEAD` on the host and stops there. Three things it
-deliberately does not answer, in rough order of how often they will be missed:
+The chip reads `.git/HEAD` on the host, and its menu lists the local branches
+and checks one out. Three things the READING deliberately does not answer, in
+rough order of how often they will be missed:
 
 - **Whether the tree is dirty, or ahead of its remote.** Both mean walking the
   index and the refs — orders of magnitude more work than reading one file, on
@@ -238,6 +255,24 @@ deliberately does not answer, in rough order of how often they will be missed:
   has a checkout this cannot see, and will report the host folder's branch — or
   `none` — for it. That is the trade that buys the whole feature its cost of two
   file reads; the alternative is an `exec` per container.
+
+And four the SWITCHING does not do, each left out on purpose rather than for
+lack of time:
+
+- **Create a branch, or check out a remote one.** The menu offers `refs/heads`
+  and nothing else. `git switch -c` and tracking a `refs/remotes` ref are both
+  one command away in a terminal, and both would put boxwarden in the business
+  of naming refs — which is exactly what makes the current design safe, since
+  the renderer can only ever pick from a list git printed.
+- **Stash, or carry changes across.** Refusing on a dirty tree is the whole
+  posture (see CLAUDE.md), and reversing it is a product decision, not a patch.
+  If it ever lands it wants an explicit "Stash and switch" that also offers to
+  pop — a half-done stash is worse than a refusal.
+- **Fetch or pull.** Nothing here touches the network, which is why there is no
+  credential path to think about. `GIT_TERMINAL_PROMPT=0` is set anyway, because
+  an LFS smudge filter can turn a local checkout into a download.
+- **Switch a branch for an unbuilt project.** Same join problem as reading one:
+  the scan is on demand and this hangs off a container card.
 
 ## 9. Port forwarding, and why the terminal cannot provide it
 

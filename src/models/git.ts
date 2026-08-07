@@ -111,6 +111,183 @@ export function shortCommit(commit: string): string {
   return commit.slice(0, 7);
 }
 
+/*
+ * ---- Switching branches ----
+ *
+ * Reading a branch is two file reads and needs no git at all (above). CHANGING
+ * one is the opposite: it rewrites the index and the working tree, and the only
+ * correct implementation of that is git's own. So this half is a parser for
+ * what `git` says plus the decision about when not to call it — the spawn lives
+ * in src/main/git/branches.ts, and everything here stays pure.
+ *
+ * The rule the whole feature is shaped around: **boxwarden never discards the
+ * user's work.** A checkout that would have to carry, stash or clobber
+ * uncommitted changes is refused with a reason, not attempted with a flag. That
+ * is the same call as showing `devcontainer up` instead of running it, and it
+ * is why there is no `--force` anywhere below.
+ */
+
+/** One local branch, as `git for-each-ref` reported it. */
+export interface GitBranch {
+  readonly name: string;
+  /** HEAD is on it, in the worktree that was asked. */
+  readonly current: boolean;
+  /**
+   * Another worktree of the same repository has it checked out.
+   *
+   * Worth a field of its own rather than letting the checkout fail: git refuses
+   * this outright, and one worktree per agent is the pattern that made the
+   * branch chip worth building — so on the machines this feature is FOR, it is
+   * a common state rather than an exotic one.
+   */
+  readonly checkedOutAt?: string;
+}
+
+/**
+ * Whether the working tree has changes a checkout would have to deal with.
+ *
+ * `changed` is a count and not a list: what the user needs from the menu is
+ * whether switching is available and roughly how much is in the way, and a file
+ * list is something their editor is already showing them better than a tooltip
+ * can.
+ */
+export type WorkingTree =
+  { readonly kind: 'clean' } | { readonly kind: 'dirty'; readonly changed: number };
+
+/**
+ * What the branch menu renders.
+ *
+ * `unavailable` carries the reason for the same reason `GitStatus.unknown`
+ * does: "there is no git on this machine" and "that folder is not a
+ * repository" and "git exited 128" are three different things to tell someone,
+ * and a menu that was simply empty would say none of them.
+ */
+export type BranchListing =
+  | {
+      readonly kind: 'ready';
+      readonly branches: readonly GitBranch[];
+      readonly tree: WorkingTree;
+    }
+  | { readonly kind: 'unavailable'; readonly reason: string };
+
+/**
+ * The separator in the `for-each-ref` format below. A TAB, because it is the
+ * one character a branch name cannot contain — git's own `check-ref-format`
+ * rejects control characters — and a worktree PATH can contain spaces.
+ */
+const FIELD = '\t';
+
+/**
+ * The format string, kept here beside its parser so the two cannot drift.
+ *
+ * `%(worktreepath)` needs git 2.23 (2019). Older git fails the whole command
+ * with "unknown field name", which surfaces as `unavailable` carrying that
+ * text — a legible failure, and a better trade than dropping the field and
+ * offering a click that git will reject.
+ */
+export const BRANCH_REF_FORMAT = `%(refname:short)${FIELD}%(HEAD)${FIELD}%(worktreepath)`;
+
+/**
+ * Parse `git for-each-ref --format=<BRANCH_REF_FORMAT> refs/heads`.
+ *
+ * The one subtlety is `%(worktreepath)`, which is set for the CURRENT branch
+ * too — it names the worktree being asked. Reporting that as "checked out
+ * elsewhere" would disable the branch the user is already on with a sentence
+ * pointing at their own folder, so `current` wins and clears it.
+ */
+export function parseBranchRefs(stdout: string): readonly GitBranch[] {
+  const branches: GitBranch[] = [];
+
+  for (const line of stdout.split('\n')) {
+    if (line.trim() === '') continue;
+    const [name = '', head = '', worktree = ''] = line.split(FIELD);
+    if (name === '') continue;
+
+    // git writes '*' for the checked-out branch and a space for the rest.
+    const current = head.trim() === '*';
+    const checkedOutAt = worktree.trim();
+
+    branches.push({
+      name,
+      current,
+      ...(current || checkedOutAt === '' ? {} : { checkedOutAt }),
+    });
+  }
+
+  return branches;
+}
+
+/**
+ * Parse `git status --porcelain --untracked-files=no`.
+ *
+ * Untracked files are excluded deliberately, and it is the difference between a
+ * useful predicate and an annoying one: git carries untracked files across a
+ * checkout without complaint, so counting them would block switching on a repo
+ * whose only "change" is a `node_modules` its `.gitignore` missed. What is
+ * counted is what git will actually refuse over.
+ */
+export function parseWorkingTree(stdout: string): WorkingTree {
+  const changed = stdout.split('\n').filter((line) => line.trim() !== '').length;
+  return changed === 0 ? { kind: 'clean' } : { kind: 'dirty', changed };
+}
+
+/**
+ * Why this branch cannot be switched to, or undefined.
+ *
+ * Ordered most-specific first, because the string ends up in one item's tooltip:
+ * a dirty tree blocks EVERY item and is said once above the list
+ * (`treeBlockedReason`), whereas "you are on it" and "another worktree has it"
+ * are facts about this row and would be lost if the shared reason won.
+ */
+export function branchSwitchBlockedReason(
+  branch: GitBranch,
+  tree: WorkingTree,
+): string | undefined {
+  if (branch.current) return 'This is the branch the workspace is already on.';
+  if (branch.checkedOutAt !== undefined) {
+    return `git will not check one branch out in two worktrees at once — ${branch.name} is already checked out in ${branch.checkedOutAt}.`;
+  }
+  return treeBlockedReason(tree);
+}
+
+/**
+ * Why NOTHING can be switched to, or undefined. Said once, above the list.
+ *
+ * The wording names the two ways out and neither of them is boxwarden: a stash
+ * this app created is one the user has to remember to pop, and a discarded
+ * change is one nobody can get back. Refusing and saying why is the whole
+ * feature — see the note at the top of this section.
+ */
+export function treeBlockedReason(tree: WorkingTree): string | undefined {
+  if (tree.kind === 'clean') return undefined;
+  const files =
+    tree.changed === 1 ? '1 uncommitted change' : `${String(tree.changed)} uncommitted changes`;
+  return `The workspace has ${files}. Commit or stash them first — boxwarden will not discard or stash your work for you.`;
+}
+
+/**
+ * Whether a switch to `name` may be attempted at all, decided from a listing.
+ *
+ * The main process runs this a SECOND time, against a listing it re-read, just
+ * before spawning the checkout. The menu's copy decides what is disabled; this
+ * copy is the one that decides what happens, because between opening a menu and
+ * clicking in it a person can save a file — and a dirty-tree check the renderer
+ * performed thirty seconds ago is not a check.
+ */
+export function canSwitchTo(name: string, listing: BranchListing): true | string {
+  if (listing.kind === 'unavailable') return listing.reason;
+
+  const branch = listing.branches.find((candidate) => candidate.name === name);
+  // Not a refusal about the tree: it means the name is not one git listed. The
+  // main process treats that as the security answer as well as the UI one —
+  // nothing is ever passed to `git checkout` that git did not itself name.
+  if (branch === undefined) {
+    return `${name} is not a local branch of this repository.`;
+  }
+
+  return branchSwitchBlockedReason(branch, listing.tree) ?? true;
+}
+
 /**
  * The path to look in for a container's checkout, or undefined when there is
  * nowhere on THIS machine to look.

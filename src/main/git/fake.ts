@@ -1,8 +1,10 @@
-import type { GitStatus } from '../../models/index.js';
+import type { ActionResult } from '../../shared/ipc.js';
+import type { BranchListing, GitStatus } from '../../models/index.js';
+import { canSwitchTo } from '../../models/index.js';
 
 /**
- * Branches for the fixture containers, so the branch chip can be worked on
- * without checkouts on disk at those paths.
+ * Branches for the fixture containers, so the branch chip and its menu can be
+ * worked on without checkouts on disk at those paths.
  *
  * The counterpart to `FakeDockerBackend` and `fakeUpdatesFromEnv`, and gated on
  * the SAME switch as the container fixtures (BOXWARDEN_FAKE_DOCKER=1): the
@@ -23,6 +25,103 @@ const FIXTURE_BRANCHES: Readonly<Record<string, GitStatus>> = {
   },
 };
 
+/**
+ * Where a fixture switch lands.
+ *
+ * Mutable, and that is the whole point: a menu whose click changed nothing
+ * would exercise the click and none of what follows it — the refresh, the chip
+ * re-reading, the menu closing on a branch that is now current. Reset when the
+ * process restarts, like every other fixture here.
+ */
+const switched = new Map<string, string>();
+
 export function fakeGitStatus(folder: string): Promise<GitStatus> {
+  const moved = switched.get(folder);
+  if (moved !== undefined) return Promise.resolve({ kind: 'branch', branch: moved });
   return Promise.resolve(FIXTURE_BRANCHES[folder] ?? { kind: 'none' });
+}
+
+/**
+ * The branch lists, chosen to put every arm of the menu on screen.
+ *
+ * - webapp is the ordinary case: a clean tree and somewhere to go.
+ * - api-service has a DIRTY tree, so the whole menu is refused with a reason —
+ *   the arm that is otherwise only reachable by editing a file mid-demo.
+ * - platform has a branch held by another WORKTREE, which is the per-row
+ *   refusal, and the state this feature exists for.
+ * - infra-scripts is detached, so the menu has no current branch to mark.
+ */
+const FIXTURE_LISTINGS: Readonly<Record<string, BranchListing>> = {
+  '/home/dev/code/webapp': {
+    kind: 'ready',
+    tree: { kind: 'clean' },
+    branches: [
+      { name: 'main', current: true },
+      { name: 'feature/dark-theme', current: false },
+      { name: 'fix/port-parsing', current: false },
+    ],
+  },
+  '/home/dev/code/api-service': {
+    kind: 'ready',
+    tree: { kind: 'dirty', changed: 3 },
+    branches: [
+      { name: 'feature/rate-limiting', current: true },
+      { name: 'main', current: false },
+    ],
+  },
+  '/home/dev/code/platform': {
+    kind: 'ready',
+    tree: { kind: 'clean' },
+    branches: [
+      { name: 'release/2026.08', current: true },
+      { name: 'main', current: false },
+      {
+        name: 'agent-3',
+        current: false,
+        checkedOutAt: '/home/dev/code/platform-worktrees/agent-3',
+      },
+    ],
+  },
+  '/home/dev/infra-scripts': {
+    kind: 'ready',
+    tree: { kind: 'clean' },
+    branches: [
+      { name: 'main', current: false },
+      { name: 'terraform-1.9', current: false },
+    ],
+  },
+};
+
+/** The listing, with any fixture switch already folded into which branch is current. */
+export function fakeBranches(folder: string): Promise<BranchListing> {
+  const listing = FIXTURE_LISTINGS[folder];
+  if (listing === undefined) {
+    return Promise.resolve({
+      kind: 'unavailable',
+      reason: 'This fixture folder is not a git repository.',
+    });
+  }
+
+  const moved = switched.get(folder);
+  if (moved === undefined || listing.kind !== 'ready') return Promise.resolve(listing);
+
+  return Promise.resolve({
+    ...listing,
+    branches: listing.branches.map((branch) => ({ ...branch, current: branch.name === moved })),
+  });
+}
+
+/**
+ * A fixture switch, through the REAL `canSwitchTo`.
+ *
+ * The same bargain the update fixture makes by folding a fabricated release
+ * through the real `foldUpdateStatus`: what is fake is the repository, not the
+ * decision — so the refusals seen on screen in fixture mode are the production
+ * ones, and a bug in the ordering of those reasons shows up here.
+ */
+export async function fakeSwitchBranch(folder: string, branch: string): Promise<ActionResult> {
+  const allowed = canSwitchTo(branch, await fakeBranches(folder));
+  if (allowed !== true) return { ok: false, message: allowed };
+  switched.set(folder, branch);
+  return { ok: true };
 }

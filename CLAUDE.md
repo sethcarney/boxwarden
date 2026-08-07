@@ -103,7 +103,7 @@ Docker daemon or a display, and why the shells stay small.
 
 ### The ViewModel layer
 
-`useAppViewModel()` composes ten, kept separate because their lifetimes
+`useAppViewModel()` composes eleven, kept separate because their lifetimes
 genuinely differ:
 
 | Hook              | Owns                                                        | Cadence                    |
@@ -115,6 +115,7 @@ genuinely differ:
 | `useNotices`      | the message bar and the copyable fallback                   | event-driven               |
 | `useClaudeStatus` | Claude Code presence per container                          | polled every 15s           |
 | `useGitStatus`    | the branch each workspace folder is on                      | polled every 30s           |
+| `useBranches`     | the open branch menu, its listing, and switching            | on click only              |
 | `useUpdate`       | the release check: banner, footer line, dismiss, off switch | asked hourly, GitHub daily |
 | `useAdvisories`   | which advice is hidden, and which screen is showing         | never touches IPC          |
 | `useTheme`        | layout + theme, persisted to localStorage                   | never touches IPC          |
@@ -143,7 +144,7 @@ Four conventions hold this together:
   is an arm of `UpdateStatus` instead, so it renders where the answer would
   have.
 
-**The IPC surface is nineteen narrow verbs** — see `src/shared/ipc.ts` — all
+**The IPC surface is twenty-one narrow verbs** — see `src/shared/ipc.ts` — all
 declared as a `BoxwardenApi` interface consumed by the renderer without
 importing Electron. They fall into three groups by cadence:
 
@@ -156,6 +157,7 @@ importing Electron. They fall into three groups by cadence:
 - **Container processes, polled every 15s**: `containerActivity` — Claude Code
   presence and attached editors, from one `top` each.
 - **The host's checkouts, polled every 30s**: `gitStatus`.
+- **One checkout, on a click**: `listBranches`, `switchBranch`.
 - **The release check, asked hourly and answered from GitHub once a day**:
   `updateStatus`, `dismissUpdate`, `setUpdateChecks`.
 
@@ -627,6 +629,53 @@ status into a chip, and `ContainerCard` gets a field.
 - **One read per FOLDER, not per container.** Every service in a compose project
   carries the same label, so a five-service workspace would otherwise stat one
   `.git` five times a poll.
+
+### Switching the branch
+
+The chip is also a menu. `src/models/git.ts` holds the whole decision —
+`parseBranchRefs`, `parseWorkingTree`, `branchSwitchBlockedReason`,
+`canSwitchTo`; `src/main/git/branches.ts` runs `git`; `useBranches` owns the
+open menu; `branchMenu` in `presenters.ts` folds a listing into rows.
+
+- **This half needs git; the chip does not.** Reading a branch is two file reads
+  (above) and works on a machine with no git installed. Changing one rewrites
+  the index and the working tree, and the only correct implementation of that is
+  git's own — so `branches.ts` shells out, and `git` being absent degrades to a
+  menu that says so rather than to a chip that stops working.
+- **It REFUSES rather than forces, and that is the feature.** A dirty tree, a
+  branch another worktree holds, and the branch already checked out are all
+  `{ ok: false, message }` naming what to do instead. There is no `--force`, no
+  `--merge` and no stash anywhere in it: a stash boxwarden created is one the
+  user has to remember to pop, and a discarded change is one nobody can get
+  back. Same call as copying `devcontainer up` instead of running it.
+- **The renderer picks; it never names.** `switchBranch(id, branch)` carries the
+  one free-form string in the whole IPC surface, and it is not escaped and not
+  sanitised — the main process re-lists `refs/heads` itself and refuses anything
+  that is not in its own answer, so the only strings reaching `git checkout` are
+  ones git printed moments earlier. Escaping would be modelling a parser;
+  matching is modelling none. Same shape of argument as `encodeShellScript`.
+- **The tree is re-read immediately before the checkout, not trusted from the
+  menu.** A person can save a file between opening a popover and clicking in it,
+  so `canSwitchTo` runs twice: once in `branchMenu` to decide what is greyed
+  out, and once in `switchBranch` to decide what happens. The disabled row was
+  never the check.
+- **A disabled row always says why.** The whole point of refusing was to be able
+  to explain, so a greyed item with no `title` is the one bug this feature
+  cannot afford. The dirty-tree reason blocks EVERY row, so it is hoisted into
+  one warning above the list instead of repeated into eight identical tooltips.
+- **`%(worktreepath)` is set for the current branch too**, naming the worktree
+  being asked. Carrying it through would disable the branch the user is on with
+  a sentence pointing at their own folder, so `current` clears it.
+- **Untracked files are excluded from the dirty check** (`--untracked-files=no`).
+  git carries them across a checkout without complaint, so counting them would
+  block switching on a repo whose only "change" is a `node_modules` its
+  `.gitignore` missed. What is counted is what git will actually refuse over.
+- **One menu open at a time, and the listing is discarded on close.** A cached
+  listing goes stale the moment the user runs git in a terminal — which is the
+  machine this app is for. `useBranches` also keeps a `wanted` ref, because
+  `listBranches` spawns a process: without it, opening card A then card B lets
+  A's slower answer render under B's name, which is a wrong answer that looks
+  exactly like a right one.
 
 ### The release check
 

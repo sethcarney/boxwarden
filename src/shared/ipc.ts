@@ -1,5 +1,6 @@
 import type {
   Advice,
+  BranchListing,
   ClaudeStatus,
   ContainerId,
   DevContainer,
@@ -201,6 +202,8 @@ export const IPC = {
   setStartupCommand: 'boxwarden:set-startup-command',
   containerActivity: 'boxwarden:container-activity',
   gitStatus: 'boxwarden:git-status',
+  listBranches: 'boxwarden:list-branches',
+  switchBranch: 'boxwarden:switch-branch',
   updateStatus: 'boxwarden:update-status',
   dismissUpdate: 'boxwarden:dismiss-update',
   setUpdateChecks: 'boxwarden:set-update-checks',
@@ -355,6 +358,49 @@ export interface BoxwardenApi {
    * opens.
    */
   gitStatus(ids: readonly ContainerId[]): Promise<GitStatusMap>;
+
+  /**
+   * The local branches of one container's workspace, and whether its tree is
+   * clean. On the user's click — opening the branch menu — and never polled.
+   *
+   * Two verbs and not one, unlike `containerActivity`, and for the mirror of
+   * that reason. There the two answers came from ONE reading of one process
+   * table, so splitting them would have doubled the traffic to learn nothing.
+   * Here they are a read and a WRITE: this one runs on a click that changes
+   * nothing, `switchBranch` rewrites the user's working tree, and folding a
+   * mutation into the verb that populates a menu would mean the menu could not
+   * be opened without the possibility of it.
+   *
+   * It clears the cadence bar on its own terms: `gitStatus` is polled every
+   * thirty seconds across every container, and this spawns a `git` process for
+   * ONE of them, when asked. Folding it into that poll would put two git
+   * processes per container behind a clock, to answer a question nobody has
+   * until they open a menu.
+   */
+  listBranches(id: ContainerId): Promise<BranchListing>;
+
+  /**
+   * Check a branch out in one container's workspace folder.
+   *
+   * The `branch` string is the fourth input the renderer supplies anywhere in
+   * this surface, and it is the only one that is not a closed union — so it is
+   * guarded differently. It is not escaped and it is not sanitised: the main
+   * process re-lists the branches itself and refuses anything that is not in
+   * that answer, which means the only strings that ever reach `git` are ones
+   * git printed under `refs/heads` moments earlier. A renderer cannot name an
+   * option, a path, or a ref in another namespace, because it cannot name
+   * anything at all — it can only pick.
+   *
+   * The folder is not a parameter, for the same reason it is not one on
+   * `gitStatus`: what an id resolves to here is a path on the user's disk that
+   * this process then WRITES to.
+   *
+   * Refuses rather than forces. A dirty tree, a branch another worktree holds,
+   * and a branch that is already current all come back as
+   * `{ ok: false, message }` — the message is the sentence shown to the user,
+   * and it names what to do instead. See src/models/git.ts.
+   */
+  switchBranch(id: ContainerId, branch: string): Promise<ActionResult>;
 
   /**
    * ---- Self-update ----

@@ -42,8 +42,19 @@ export type {
   EndpointProbe,
 } from './docker-endpoint.js';
 
-export type { GitStatus } from './git.js';
-export { parseGitDirPointer, parseGitHead, readableHostFolder, shortCommit } from './git.js';
+export type { BranchListing, GitBranch, GitStatus, WorkingTree } from './git.js';
+export {
+  BRANCH_REF_FORMAT,
+  branchSwitchBlockedReason,
+  canSwitchTo,
+  parseBranchRefs,
+  parseGitDirPointer,
+  parseGitHead,
+  parseWorkingTree,
+  readableHostFolder,
+  shortCommit,
+  treeBlockedReason,
+} from './git.js';
 
 export type { SshAgentState } from './ssh-agent.js';
 export { SSH_AUTH_SOCK, containersMissingAgentSocket, sshAgentState } from './ssh-agent.js';

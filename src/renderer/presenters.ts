@@ -15,6 +15,7 @@
  */
 
 import type {
+  BranchListing,
   ClaudeSession,
   ClaudeStatus,
   DevContainer,
@@ -28,7 +29,14 @@ import type {
   UpdateInstructions,
   UpdateStatus,
 } from '../models/index.js';
-import { attachedEditorsIn, editorDisplayName, projectName, shortCommit } from '../models/index.js';
+import {
+  attachedEditorsIn,
+  branchSwitchBlockedReason,
+  editorDisplayName,
+  projectName,
+  shortCommit,
+  treeBlockedReason,
+} from '../models/index.js';
 import type { DiscoverySnapshot } from '../shared/ipc.js';
 import { canExec, describeTarget, relativeTime, runtimeLabel } from './format.js';
 
@@ -392,6 +400,102 @@ export function branchChip(status: GitStatus | undefined): BranchChip | undefine
       };
     }
   }
+}
+
+/** One row of the branch menu. */
+export interface BranchMenuItem {
+  readonly name: string;
+  /** Marked rather than hidden — a menu that omitted it would look incomplete. */
+  readonly current: boolean;
+  readonly disabled: boolean;
+  /**
+   * Why it is disabled, for the row's `title`. Always present when `disabled`
+   * is true: a control that is off for no stated reason is the thing this
+   * whole feature was chosen to avoid.
+   */
+  readonly reason?: string;
+}
+
+/**
+ * What the branch menu renders.
+ *
+ * `unavailable` and an empty `ready` are folded into one arm on purpose. From
+ * the user's side "git is not installed", "that folder is not a repository"
+ * and "this repository has no branches yet" are the same shape of answer —
+ * there is nothing to pick, and here is why — and giving them separate arms
+ * would buy three code paths that render one box.
+ */
+export type BranchMenuView =
+  | { readonly kind: 'loading' }
+  | { readonly kind: 'unavailable'; readonly reason: string }
+  | {
+      readonly kind: 'ready';
+      /**
+       * The one refusal that applies to every row, said ONCE above the list
+       * rather than repeated into eight identical tooltips.
+       */
+      readonly warning?: string;
+      readonly items: readonly BranchMenuItem[];
+    };
+
+/**
+ * Fold a listing into the menu.
+ *
+ * `undefined` is "the click landed and the answer has not come back", which is
+ * a real state here in a way it is not for the chip: listing branches spawns a
+ * `git` process, so unlike everything else on a card there is a visible wait.
+ *
+ * The disabled reasons come from `branchSwitchBlockedReason` in the models —
+ * the SAME function the main process applies before it spawns a checkout. That
+ * is what makes the greyed-out row and the refusal agree; two copies of this
+ * rule would be free to disagree, and the one the user would meet is the one
+ * that is not on screen.
+ */
+export function branchMenu(listing: BranchListing | undefined): BranchMenuView {
+  if (listing === undefined) return { kind: 'loading' };
+  if (listing.kind === 'unavailable') return { kind: 'unavailable', reason: listing.reason };
+
+  if (listing.branches.length === 0) {
+    return {
+      kind: 'unavailable',
+      reason: 'This repository has no local branches yet.',
+    };
+  }
+
+  const warning = treeBlockedReason(listing.tree);
+
+  return {
+    kind: 'ready',
+    ...(warning === undefined ? {} : { warning }),
+    items: listing.branches.map((branch) => {
+      const reason = branchSwitchBlockedReason(branch, listing.tree);
+      return {
+        name: branch.name,
+        current: branch.current,
+        disabled: reason !== undefined,
+        ...(reason === undefined ? {} : { reason }),
+      };
+    }),
+  };
+}
+
+/**
+ * Everything the card needs to render an interactive chip, in one prop.
+ *
+ * Grouped rather than spread across five, because they are one thing: without
+ * any of them the menu cannot work, and a card that received three of the five
+ * would render a button that does nothing. The absence of the whole object is
+ * then the honest way to say "this chip does not open" — which is what a test
+ * that only cares about the branch TEXT wants to say.
+ */
+export interface BranchMenuBinding {
+  readonly open: boolean;
+  /** Undefined until the first listing comes back — rendered as `loading`. */
+  readonly listing: BranchListing | undefined;
+  /** A checkout is in flight. Every row is inert while it is. */
+  readonly busy: boolean;
+  readonly onToggle: () => void;
+  readonly onSwitch: (branch: string) => void;
 }
 
 /**

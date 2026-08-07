@@ -51,6 +51,36 @@ export function statusDotClass(runtime: DevContainerRuntime): string {
 }
 
 /**
+ * The card's own class, carrying the same three-way bucket as the dot.
+ *
+ * The dot is an 8px circle in the corner of a card that is otherwise identical
+ * whatever the container is doing, which is fine when you are reading one card
+ * and useless when you are scanning twenty. The accent it turns into
+ * (`styles.css`) is the same decision rendered at the size of the card, so a
+ * grid answers "what is up right now" without being read.
+ *
+ * `degraded` stays a separate input rather than being folded into the bucket:
+ * an unparseable host path is orthogonal to the runtime state — a degraded
+ * card can be running — and collapsing them would cost the dashed border that
+ * says which of the two is wrong.
+ */
+export function cardClass(runtime: DevContainerRuntime, degraded: boolean): string {
+  return `card card-${displayStatus(runtime)}${degraded ? ' card-degraded' : ''}`;
+}
+
+/**
+ * The status TEXT's class, from the same bucket again.
+ *
+ * Tinting the words as well as the edge is what keeps the accent legible to
+ * somebody who cannot separate the two greens: the colour is a second
+ * encoding of a state that is already spelled out in `statusLabel`, never the
+ * only one carrying it.
+ */
+export function statusTextClass(runtime: DevContainerRuntime): string {
+  return `card-status card-status-${displayStatus(runtime)}`;
+}
+
+/**
  * The precise state, spelled out. The coarse three-way bucket for colour comes
  * from the domain's `displayStatus`; this is the text beside it, and it keeps
  * the detail that the bucket discards — a non-zero exit code above all, since

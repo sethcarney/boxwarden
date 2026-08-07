@@ -1,5 +1,6 @@
 import { ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron';
 import type {
+  BranchListing,
   ContainerCli,
   ContainerId,
   DevContainer,
@@ -117,6 +118,14 @@ export interface GitContext {
   readonly platform: string;
   /** Never rejects; every failure is a `GitStatus` arm. */
   status(folder: string): Promise<GitStatus>;
+  /** Never rejects; every failure is the `unavailable` arm of `BranchListing`. */
+  branches(folder: string): Promise<BranchListing>;
+  /**
+   * Check a branch out. Never rejects — a refusal is `{ ok: false, message }`,
+   * and the refusal is decided behind this seam rather than in front of it, so
+   * the fixture run enforces the same rules the real one does.
+   */
+  switchBranch(folder: string, branch: string): Promise<ActionResult>;
 }
 
 /**
@@ -773,6 +782,72 @@ export function registerIpcHandlers(context: IpcContext): void {
       return statuses;
     },
     () => ({}),
+  );
+
+  /**
+   * A container id to a folder on THIS machine, or the sentence saying why not.
+   *
+   * The same resolution the batch above does per container, factored out
+   * because the two branch verbs need it one at a time — and because it is the
+   * single place where an id becomes a path this process reads and writes. A
+   * folder never arrives over the bridge; it is always looked up here, from the
+   * main process's own last scan.
+   */
+  function workspaceFolder(
+    rawId: unknown,
+  ):
+    | { readonly ok: true; readonly folder: string }
+    | { readonly ok: false; readonly message: string } {
+    const container = typeof rawId === 'string' ? known.get(rawId as ContainerId) : undefined;
+    if (container === undefined) {
+      return {
+        ok: false,
+        message: 'That container was not in the last scan, so its workspace folder is not known.',
+      };
+    }
+
+    const folder = readableHostFolder(container.localFolder, hostPlatform(context.git.platform));
+    if (folder === undefined) {
+      return {
+        ok: false,
+        message:
+          container.localFolder.kind === 'unresolved'
+            ? 'The devcontainer.local_folder label could not be parsed, so there is no folder to switch a branch in.'
+            : 'That folder is on a different operating system from the one boxwarden is running on, so its checkout cannot be changed from here.',
+      };
+    }
+
+    return { ok: true, folder };
+  }
+
+  handle<BranchListing>(
+    IPC.listBranches,
+    async (rawId) => {
+      const resolved = workspaceFolder(rawId);
+      return resolved.ok
+        ? await context.git.branches(resolved.folder)
+        : { kind: 'unavailable', reason: resolved.message };
+    },
+    (reason) => ({ kind: 'unavailable', reason }),
+  );
+
+  handle<ActionResult>(
+    IPC.switchBranch,
+    async (rawId, rawBranch) => {
+      const resolved = workspaceFolder(rawId);
+      if (!resolved.ok) return { ok: false, message: resolved.message };
+
+      // Type only. Whether this string is ALLOWED is not decided here and
+      // cannot be: `switchBranch` re-lists the branches itself and refuses
+      // anything git did not just print. Checking a shape here and trusting it
+      // downstream is the pattern that rule exists to avoid.
+      if (typeof rawBranch !== 'string' || rawBranch === '') {
+        return { ok: false, message: 'No branch was named.' };
+      }
+
+      return await context.git.switchBranch(resolved.folder, rawBranch);
+    },
+    (message) => ({ ok: false, message }),
   );
 
   // ---- Self-update ----

@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import type { ClaudeStatus, EngineId } from '../models/index.js';
+import type { BranchListing, ClaudeStatus, EngineId } from '../models/index.js';
 import { devContainer } from './test-fixtures.js';
 import {
   branchChip,
+  branchMenu,
   claudeBadge,
   editorActions,
   editorBadge,
@@ -683,5 +684,95 @@ describe('updateSummary', () => {
       NOW,
     );
     expect(dev.label).toBe('boxwarden 0.0.0 · development build');
+  });
+});
+
+describe('branchMenu', () => {
+  const READY: BranchListing = {
+    kind: 'ready',
+    tree: { kind: 'clean' },
+    branches: [
+      { name: 'main', current: true },
+      { name: 'feature/dark-theme', current: false },
+      { name: 'agent-3', current: false, checkedOutAt: '/home/dev/wt/agent-3' },
+    ],
+  };
+
+  /**
+   * A real state here in a way it is not for the chip: listing branches spawns
+   * a `git` process, so unlike everything else on a card there is a wait the
+   * user can see.
+   */
+  it('reports a listing that has not come back yet', () => {
+    expect(branchMenu(undefined)).toEqual({ kind: 'loading' });
+  });
+
+  it('marks the current branch and disables it', () => {
+    const view = branchMenu(READY);
+    expect(view.kind).toBe('ready');
+    if (view.kind !== 'ready') return;
+
+    const current = view.items.find((item) => item.name === 'main');
+    expect(current).toMatchObject({ current: true, disabled: true });
+    expect(current?.reason).toContain('already on');
+  });
+
+  it('offers an ordinary branch on a clean tree', () => {
+    const view = branchMenu(READY);
+    if (view.kind !== 'ready') throw new Error('expected a ready menu');
+
+    expect(view.items.find((item) => item.name === 'feature/dark-theme')).toEqual({
+      name: 'feature/dark-theme',
+      current: false,
+      disabled: false,
+    });
+    expect(view.warning).toBeUndefined();
+  });
+
+  /**
+   * The invariant behind every disabled row in this menu: a control that is off
+   * for no stated reason is exactly what the "refuse, and say why" choice was
+   * made to avoid.
+   */
+  it('gives every disabled row a reason', () => {
+    const view = branchMenu({ ...READY, tree: { kind: 'dirty', changed: 2 } });
+    if (view.kind !== 'ready') throw new Error('expected a ready menu');
+
+    for (const item of view.items) {
+      if (item.disabled) expect(item.reason).toBeTruthy();
+    }
+    expect(view.items.every((item) => item.disabled)).toBe(true);
+  });
+
+  /** Said once above the list, not repeated into every row's tooltip. */
+  it('hoists the dirty-tree refusal into a single warning', () => {
+    const view = branchMenu({ ...READY, tree: { kind: 'dirty', changed: 2 } });
+    if (view.kind !== 'ready') throw new Error('expected a ready menu');
+
+    expect(view.warning).toContain('2 uncommitted changes');
+  });
+
+  it('keeps a worktree refusal on its own row even when the tree is dirty', () => {
+    const view = branchMenu({ ...READY, tree: { kind: 'dirty', changed: 2 } });
+    if (view.kind !== 'ready') throw new Error('expected a ready menu');
+
+    expect(view.items.find((item) => item.name === 'agent-3')?.reason).toContain(
+      '/home/dev/wt/agent-3',
+    );
+  });
+
+  it('passes an unavailable listing through with its reason', () => {
+    expect(branchMenu({ kind: 'unavailable', reason: 'git was not found.' })).toEqual({
+      kind: 'unavailable',
+      reason: 'git was not found.',
+    });
+  });
+
+  /** Nothing to pick, so it renders as the same shape of answer rather than an empty list. */
+  it('reports a repository with no branches as unavailable, with a reason', () => {
+    const view = branchMenu({ kind: 'ready', tree: { kind: 'clean' }, branches: [] });
+    expect(view.kind).toBe('unavailable');
+    if (view.kind !== 'unavailable') return;
+    expect(view.reason).toContain('no local branches');
   });
 });
