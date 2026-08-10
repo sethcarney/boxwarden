@@ -108,6 +108,10 @@ export function isAccessibilityRefusal(message: string): boolean {
 }
 
 export const macosBackend: DesktopWindowBackend = {
+  raw(): Promise<string> {
+    return runOsascript(LIST_SCRIPT);
+  },
+
   async list(): Promise<readonly DesktopWindow[]> {
     // The handle column repeats the process name: on this platform the pair
     // that addresses a window is (process, title), and `DesktopWindow` already

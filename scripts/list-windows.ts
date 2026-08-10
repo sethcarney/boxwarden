@@ -36,6 +36,22 @@ if (!backend.ok) {
 const windows = await backend.backend.list();
 console.log(`${String(windows.length)} window(s) enumerated on ${process.platform}.\n`);
 
+// An empty parse and a broken helper look identical from up here, and telling
+// them apart by hand is what cost a whole round trip the first time this ran on
+// a real Windows machine. So when there is nothing, print what the helper
+// actually said — including the case where that is also nothing, which is
+// itself the answer.
+if (windows.length === 0) {
+  console.log('--- raw helper output, because nothing parsed ---');
+  try {
+    const raw = await backend.backend.raw();
+    console.log(raw.trim() === '' ? '(the helper printed nothing at all)' : raw);
+  } catch (error) {
+    console.log(`the helper failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  console.log('');
+}
+
 const editors = windows.filter((window) => windowFlavour(window.process) !== undefined);
 
 console.log('--- windows belonging to an editor boxwarden recognises ---');

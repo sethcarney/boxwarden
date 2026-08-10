@@ -57,12 +57,19 @@ async function processName(pid: number): Promise<string> {
   }
 }
 
+async function wmctrlList(): Promise<string> {
+  const { stdout } = await execFileAsync('wmctrl', ['-l', '-p'], {
+    timeout: HELPER_TIMEOUT_MS,
+    maxBuffer: 4 * 1024 * 1024,
+  });
+  return stdout;
+}
+
 export const linuxBackend: DesktopWindowBackend = {
+  raw: wmctrlList,
+
   async list(): Promise<readonly DesktopWindow[]> {
-    const { stdout } = await execFileAsync('wmctrl', ['-l', '-p'], {
-      timeout: HELPER_TIMEOUT_MS,
-      maxBuffer: 4 * 1024 * 1024,
-    });
+    const stdout = await wmctrlList();
 
     const parsed = stdout
       .split(/\r?\n/)

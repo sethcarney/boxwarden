@@ -4,6 +4,7 @@ import { asContainerId, asContainerPath } from '../../models/index.js';
 import { closeAttachedEditorWindows, desktopBackend } from './close.js';
 import { isWaylandSession } from './linux.js';
 import { isAccessibilityRefusal } from './macos.js';
+import { windowsCloseScript } from './windows.js';
 
 describe('isWaylandSession', () => {
   it('believes XDG_SESSION_TYPE', () => {
@@ -120,5 +121,29 @@ describe('closeAttachedEditorWindows', () => {
     );
     expect(result.kind).toBe('unsupported');
     if (result.kind === 'unsupported') expect(result.reason).toContain('Wayland');
+  });
+});
+
+describe('windowsCloseScript', () => {
+  it('names the handles it was given', () => {
+    const script = windowsCloseScript(['123', '456']);
+    expect(script).toContain('@(123,456)');
+    expect(script).toContain('BoxwardenWindows');
+  });
+
+  /**
+   * The one place a string from outside this module reaches a program. A window
+   * handle originates in a window on the user's desktop, so "it came from our
+   * own enumeration" is a claim worth restating rather than assuming — and
+   * anything failing it is DROPPED, never escaped.
+   */
+  it('drops anything that is not a run of digits, rather than escaping it', () => {
+    const hostile = ["1'; Stop-Process -Name Code; '", '0x1234', '12 34', '', '-1', '1e3'];
+    expect(windowsCloseScript(hostile)).toBeUndefined();
+    expect(windowsCloseScript([...hostile, '99'])).toContain('@(99)');
+  });
+
+  it('answers undefined when there is nothing to close', () => {
+    expect(windowsCloseScript([])).toBeUndefined();
   });
 });

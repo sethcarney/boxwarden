@@ -32,6 +32,18 @@ export interface DesktopWindowBackend {
    * The caller re-enumerates to find out what actually happened.
    */
   close(windows: readonly DesktopWindow[]): Promise<void>;
+
+  /**
+   * The helper's output, unparsed, for `bun run debug:windows`.
+   *
+   * This exists because of a real failure: the Windows helper returned nothing
+   * at all on a real machine, and every layer above it faithfully reported an
+   * empty desktop. An empty parse and a broken helper look identical from here,
+   * and the only thing that tells them apart is what the helper actually
+   * printed — so the debug tool can ask for it, rather than the next person
+   * having to add a `console.log` to find out.
+   */
+  raw(): Promise<string>;
 }
 
 /**
