@@ -125,7 +125,16 @@ describe('useDiscovery', () => {
    */
   it('reports an attached window it could not find', async () => {
     const api = fakeApi({ snapshot: snapshot({ containers: [running] }) });
-    api.stop.mockResolvedValue({ ok: true, windows: { kind: 'not-found', editors: ['cursor'] } });
+    api.stop.mockResolvedValue({
+      ok: true,
+      windows: {
+        kind: 'not-found',
+        editors: ['cursor'],
+        saw: ['Code\tsomething else [Dev Container: other] - Visual Studio Code'],
+        enumerated: 9,
+        names: ['web-app'],
+      },
+    });
     const notices = stubNotices();
 
     const { result } = renderHook(() => useDiscovery(api, notices, 'vscode', 'gnome-terminal'));

@@ -17,7 +17,7 @@
 // Type-only, and it has to stay that way: `useNotices` imports `errorMessage`
 // from this module, so a value import here would close a runtime cycle.
 // `import type` is erased outright under `verbatimModuleSyntax`.
-import type { Notice } from './viewmodels/useNotices.js';
+import type { CopyableFallback, Notice } from './viewmodels/useNotices.js';
 import type {
   BranchListing,
   ClaudeSession,
@@ -834,9 +834,20 @@ export function windowClosureNotice(
     case 'not-found': {
       const names = closure.editors.map(editorDisplayName).join(' and ');
       const who = names === '' ? 'An editor is' : `${names} is`;
+      // Says which of the three gates it got stuck on, because they have
+      // completely different answers. Nothing enumerated at all is the desktop
+      // refusing to be read; editor windows enumerated but none matching is a
+      // title or a folder name that does not look the way this app expects, and
+      // the copy button carries the evidence for that one.
+      const detail =
+        closure.enumerated === 0
+          ? ' No windows could be enumerated at all on this desktop.'
+          : closure.saw.length === 0
+            ? ` None of the ${String(closure.enumerated)} windows on this desktop belongs to an editor boxwarden recognises.`
+            : ` ${String(closure.saw.length)} editor window(s) were found, none of them naming ${closure.names.join(' or ')}.`;
       return {
         tone: 'error',
-        message: `${who} attached to ${containerName}, but boxwarden could not find its window to close it. The window is still open and will offer to reload.`,
+        message: `${who} attached to ${containerName}, but boxwarden could not find its window to close it.${detail} The window is still open and will offer to reload.`,
       };
     }
 
@@ -849,6 +860,30 @@ export function windowClosureNotice(
         message: `Stopped ${containerName}, but closing the editor window failed: ${closure.reason}`,
       };
   }
+}
+
+/**
+ * The window titles a failed match actually saw, as something to paste into a
+ * bug report.
+ *
+ * The same job the "Copy URI" button does for a launch that succeeded into an
+ * empty window: the sentence says what went wrong, and this says what it went
+ * wrong ON. A title is the one input to this feature that nothing in the app
+ * can show the user otherwise — it lives on their window manager, not in any
+ * boxwarden state — so without a copy button the report is "it did not match"
+ * and there is nowhere to go from there.
+ *
+ * The container's own names go in the first line, because the mismatch is
+ * between the two halves and one of them without the other proves nothing.
+ */
+export function windowClosureEvidence(
+  closure: EditorWindowClosure | undefined,
+): CopyableFallback | undefined {
+  if (closure?.kind !== 'not-found' || closure.saw.length === 0) return undefined;
+  return {
+    label: 'Copy window titles',
+    value: [`looked for: ${closure.names.join(' or ')}`, ...closure.saw].join('\n'),
+  };
 }
 
 /**

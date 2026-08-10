@@ -5,7 +5,12 @@ import type {
   EditorAttachment,
   EditorWindowClosure,
 } from '../../models/index.js';
-import { editorWindowCriteria, flavoursOf, matchEditorWindows } from '../../models/index.js';
+import {
+  editorWindowCriteria,
+  flavoursOf,
+  matchEditorWindows,
+  windowFlavour,
+} from '../../models/index.js';
 import { resolveBinary } from '../discovery/resolve.js';
 import type { DesktopBackendResult, DesktopWindowBackend } from './backend.js';
 import { isWaylandSession, linuxBackend } from './linux.js';
@@ -154,15 +159,33 @@ export async function closeAttachedEditorWindows(
   if (!resolved.ok) return { kind: 'unsupported', reason: resolved.unsupported.reason };
   const { backend } = resolved;
 
+  const criteria = editorWindowCriteria(container, editors);
+
   let matches: readonly DesktopWindow[];
+  let seen: readonly DesktopWindow[];
   try {
-    const windows = await backend.list();
-    matches = matchEditorWindows(windows, editorWindowCriteria(container, editors));
+    seen = await backend.list();
+    matches = matchEditorWindows(seen, criteria);
   } catch (error) {
     return classifyFailure(error, os);
   }
 
-  if (matches.length === 0) return { kind: 'not-found', editors };
+  if (matches.length === 0) {
+    // The evidence, gathered here rather than left behind, because this is the
+    // only place that still has it. Narrowed to windows belonging to an editor:
+    // a developer's whole desktop is both too long for a copy button and none
+    // of this app's business, and the rows that matter are the ones that got
+    // past the first gate and failed a later one.
+    return {
+      kind: 'not-found',
+      editors,
+      saw: seen
+        .filter((window) => windowFlavour(window.process) !== undefined)
+        .map((window) => `${window.process}\t${window.title}`),
+      enumerated: seen.length,
+      names: criteria.names,
+    };
+  }
 
   try {
     await backend.close(matches);

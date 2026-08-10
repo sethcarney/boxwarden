@@ -385,8 +385,27 @@ export type EditorWindowClosure =
       readonly windows: number;
       readonly editors: readonly EditorFlavour[];
     }
-  /** An editor is attached, the desktop answered, and no window matched. */
-  | { readonly kind: 'not-found'; readonly editors: readonly EditorFlavour[] }
+  /**
+   * An editor is attached, the desktop answered, and no window matched.
+   *
+   * This arm carries EVIDENCE, and that is not decoration. Every other failure
+   * here names its own fix — install wmctrl, tick the Accessibility box, this
+   * is Wayland — but "no window matched" is a disagreement between three
+   * strings the user cannot see: the process name, the window title, and the
+   * folder name this app derived from a container label. Without them the
+   * message is a dead end, so `saw` is the same answer `DockerEnvironment.attempts`
+   * gives for a socket that did not connect: here is what was tried.
+   */
+  | {
+      readonly kind: 'not-found';
+      readonly editors: readonly EditorFlavour[];
+      /** Every window owned by an editor process, `process\ttitle`. */
+      readonly saw: readonly string[];
+      /** How many windows were enumerated in total — zero is its own diagnosis. */
+      readonly enumerated: number;
+      /** The names this container was matched under, so a mismatch is visible. */
+      readonly names: readonly string[];
+    }
   /** This desktop offers no way to close another application's window. */
   | { readonly kind: 'unsupported'; readonly reason: string }
   /** There is a way and it failed. */

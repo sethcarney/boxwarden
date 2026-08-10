@@ -33,6 +33,7 @@
     "check": "bun run typecheck && bun run lint && bun run format:check && bun run test && bun run check:devcontainer && bun run check:icons",
     "check:devcontainer": "node scripts/check-devcontainer.mjs",
     "check:icons": "node scripts/check-icons.mjs",
+    "debug:windows": "bun scripts/list-windows.ts",
     "icons:generate": "node scripts/generate-icons.mjs",
     "check:release-version": "node scripts/check-release-version.mjs"
   },

@@ -17,7 +17,12 @@ import { canStart, canStop } from '../format.js';
 import type { ContainerGroup } from '../grouping.js';
 import { groupContainers } from '../grouping.js';
 import type { EngineChip } from '../presenters.js';
-import { emptyListMessage, engineChip, windowClosureNotice } from '../presenters.js';
+import {
+  emptyListMessage,
+  engineChip,
+  windowClosureEvidence,
+  windowClosureNotice,
+} from '../presenters.js';
 import { useMounted } from './useMounted.js';
 import type { NoticesViewModel } from './useNotices.js';
 
@@ -186,10 +191,14 @@ export function useDiscovery(
     (result: StopResult, container: DevContainer) => {
       const notice = windowClosureNotice(result.windows, container.name);
       if (notice === undefined) return;
+      // The evidence first, so it is already in place when the message that
+      // refers to it lands. `rememberFallback` and not `showLaunchFailure`:
+      // the notice is set below, and setting both would render it twice.
+      rememberFallback(windowClosureEvidence(result.windows));
       if (notice.tone === 'error') showError(notice.message);
       else showInfo(notice.message);
     },
-    [showError, showInfo],
+    [rememberFallback, showError, showInfo],
   );
 
   const stop = useCallback(

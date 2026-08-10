@@ -473,7 +473,10 @@ describe('windowClosureNotice', () => {
    * into `none` is how that becomes invisible.
    */
   it('reports an attached editor whose window could not be found', () => {
-    const notice = windowClosureNotice({ kind: 'not-found', editors: ['cursor'] }, 'boxwarden');
+    const notice = windowClosureNotice(
+      { kind: 'not-found', editors: ['cursor'], saw: [], enumerated: 12, names: ['boxwarden'] },
+      'boxwarden',
+    );
     expect(notice?.tone).toBe('error');
     expect(notice?.message).toContain('Cursor is attached to boxwarden');
     expect(notice?.message).toMatch(/could not find its window/i);
