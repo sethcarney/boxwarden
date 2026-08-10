@@ -28,6 +28,8 @@ unblocks the most.
 - **Says which editor is already attached**, from the same process-table read, in
   that editor's own mark — and turns Open into **Focus** plus a quieter **New
   window** while a window is up.
+- **Closes that window when you press Stop**, before the container goes, so the
+  editor is not left offering to reload something that no longer exists.
 - **Connects to every engine that answers** and merges their lists, with a
   header picker once two are reachable and the choice persisted; plus a setup
   screen carrying every advisory and every socket tried.
@@ -90,6 +92,33 @@ things this document spent its first several revisions listing as unproven:
   emits.
 
 **What this branch adds is newer than that pass** and has not been through it:
+
+- **Closing an editor window on a real desktop.** The matcher is a pure function
+  with example and property tests over real title strings, but
+  `src/main/window/` spawns `powershell.exe`, `osascript` and `wmctrl` and has
+  no test of its own, for the reason `docker/client.ts` does not. Four things
+  only a real run can settle, one per platform and one shared:
+
+  - That a VS Code dev container window's title really is
+    `<file> - <workspace> [Dev Container: <name>] - Visual Studio Code` on each
+    platform, and that the workspace segment is the CONTAINER-side folder name
+    rather than the host one. Both are in `editorWindowCriteria`, which carries
+    the two spellings precisely because this is unverified.
+  - That System Events reports VS Code's process as `Code`, Insiders as
+    `Code - Insiders`, and the forks under their own names — the macOS
+    enumerator narrows by that list before it reads, so a wrong name there is a
+    silent no-match rather than an error.
+  - That `EnumWindows` + `WM_CLOSE` closes one VS Code window on Windows and not
+    the application, and that the PowerShell helper's `Add-Type` block compiles
+    on a stock Windows PowerShell 5.1 rather than only on PowerShell 7.
+  - That an unsaved buffer really does hold the window open long enough for the
+    six-second settle to see it — which is the whole basis of the `still-open`
+    refusal. If VS Code closes and reopens a prompt instead, that arm never
+    fires and the container stops under the dialog.
+
+  Wayland is not on this list because it is not unverified, it is impossible:
+  the protocol gives a client no way to act on another client's surfaces. That
+  arm reports the reason and Stop degrades to what it did before this feature.
 
 - **Branch switching against a real repository.** The parsers are tested against
   fixture `for-each-ref` and `status --porcelain` output and the refusals against

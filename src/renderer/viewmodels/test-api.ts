@@ -24,6 +24,7 @@ import type {
   OpenInEditorResult,
   OpenTerminalResult,
   ProjectRootsResult,
+  StopResult,
   TerminalOption,
 } from '../../shared/ipc.js';
 
@@ -98,7 +99,7 @@ export function projectScan(overrides: Partial<ProjectScan> = {}): ProjectScan {
 export interface FakeApi extends BoxwardenApi {
   readonly discover: Mock<() => Promise<DiscoverySnapshot>>;
   readonly start: Mock<(id: ContainerId) => Promise<ActionResult>>;
-  readonly stop: Mock<(id: ContainerId) => Promise<ActionResult>>;
+  readonly stop: Mock<(id: ContainerId) => Promise<StopResult>>;
   readonly listEditors: Mock<() => Promise<readonly EditorOption[]>>;
   openInEditor: Mock<
     (id: ContainerId, editorId: EditorId, mode?: OpenInEditorMode) => Promise<OpenInEditorResult>
@@ -213,7 +214,9 @@ export function fakeApi(options: FakeApiOptions = {}): FakeApi {
   return {
     discover: vi.fn<() => Promise<DiscoverySnapshot>>(() => Promise.resolve(current)),
     start: vi.fn<(id: ContainerId) => Promise<ActionResult>>(() => Promise.resolve({ ok: true })),
-    stop: vi.fn<(id: ContainerId) => Promise<ActionResult>>(() => Promise.resolve({ ok: true })),
+    stop: vi.fn<(id: ContainerId) => Promise<StopResult>>(() =>
+      Promise.resolve({ ok: true, windows: { kind: 'none' } }),
+    ),
     listEditors: vi.fn<() => Promise<readonly EditorOption[]>>(() => Promise.resolve(editors)),
     openInEditor: vi.fn<
       (id: ContainerId, editorId: EditorId, mode?: OpenInEditorMode) => Promise<OpenInEditorResult>

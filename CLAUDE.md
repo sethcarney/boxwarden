@@ -609,12 +609,10 @@ would double the poll's Docker traffic to learn nothing extra.
   The presenter supplies `{ flavour, name }` pairs because a View may not call
   `editorDisplayName`; the lint rule enforces that.
 
-- **boxwarden cannot close the window, and does not try.** The `code` CLI can
-  open windows and install extensions; it cannot enumerate or close them, and
-  killing the host process would take unsaved buffers with it. So Stop is
-  ANNOTATED, the same as it is for a Claude session — `stopWarning` folds both,
-  and words them differently on purpose: an agent is ENDED by stopping, a window
-  is STRANDED by it.
+- **Stop CLOSES the window before stopping the container** — see "Closing the
+  attached window" below. The Claude half is still only annotated, and
+  `stopWarning` folds both and words them differently on purpose: an agent is
+  ENDED by stopping, a window is CLOSED before it.
 - **It also decides how many buttons the card has.** With a window attached, the
   primary action becomes **Focus** and a quieter **New window** appears beside
   it (`editorActions` in `presenters.ts`, `OpenInEditorMode` in the models).
@@ -625,6 +623,65 @@ would double the poll's Docker traffic to learn nothing extra.
   would be a different and worse thing, taking over whichever window was last
   active. `--new-window` is therefore the only flag in the table, and the
   asymmetry is the design rather than an omission.
+
+### Closing the attached window
+
+Clicking Stop on a container with an editor attached closes that editor's
+window first, waits for it to actually go, and only then stops the container.
+`src/models/editor-window.ts` is the pure half — which window belongs to which
+container, and what became of it — and `src/main/window/` is the three-platform
+shell that enumerates and closes.
+
+**There is still no way to ask VS Code.** The remote server's CLI socket
+handles four commands (`open`, `openExternal`, `status`,
+`extensionManagement`); the host `code` CLI is the same set;
+`workbench.action.closeWindow` exists only inside a window. So the request goes
+to the **window manager** — `PostMessage(WM_CLOSE)` on Windows, System Events'
+`AXCloseButton` on macOS, `wmctrl -i -c` (`_NET_CLOSE_WINDOW`) on X11 — which
+is the same close the title bar's X sends. That is not the "find the host
+process and kill it" the old note ruled out: a kill takes unsaved buffers, a
+close is a request VS Code handles itself.
+
+Six things this breaks on if they are forgotten:
+
+- **The boundary is WHITESPACE, not "any non-letter".** A folder called
+  `not-boxwarden` ends with `boxwarden` behind a hyphen, and the looser rule
+  closes a completely unrelated container's window. What actually separates the
+  file name from the workspace name in a VS Code title is a separator with
+  spaces around it, so whitespace is both the tighter rule and the accurate one.
+  `editor-window.property.test.ts` pins it: for whitespace-free names, a window
+  matches only when the names are the SAME string.
+- **Every rule fails towards closing NOTHING.** A window needs an editor
+  process, the `[Dev Container` marker, and a workspace-name match on that
+  boundary — and when both the container's declared name and the window's are
+  known, they must agree. A user who has rewritten `window.title` gets no match,
+  no close, and the behaviour Stop had before this feature. That is the correct
+  direction: a stranded window costs a moment, someone else's closed window
+  costs whatever was in it.
+- **It REFUSES rather than forces.** A window that will not close after six
+  seconds is nearly always one holding a "save your changes?" dialog, and the
+  stop comes back `{ ok: false }` naming that — pulling the container out from
+  under an unanswered save prompt is the original bug wearing a hat. Same call
+  as `switchBranch` over a dirty tree.
+- **`none` and `not-found` are different answers.** Nothing attached renders
+  nothing; an editor attached whose window could not be found is an ERROR in the
+  message bar, because the user has been left with exactly the stranded window
+  this feature promised to close. Same rule as `ClaudeStatus`'s `unknown`.
+- **The tooltip says "will TRY to close".** It is written before anything is
+  attempted, and the attempt genuinely declines on Wayland (no protocol lets one
+  client close another's surface — this is the security property X11 lacks) and
+  without the macOS Accessibility grant. Promising the close there and
+  correcting it in the notice afterwards would be the wrong way round.
+- **No new IPC verb.** `stop` returns `StopResult`, an intersection with
+  `ActionResult` so every existing caller keeps working. Closing the window is
+  not something the renderer decides — it is part of what stopping now means,
+  and a second verb would let the two drift apart into the state this feature
+  exists to abolish.
+
+The matching is done in Node over strings; nothing boxwarden knows about a
+container is ever interpolated into a program that closes a window. The handles
+handed to the closer are ones the enumerator printed moments earlier — the same
+shape `switchBranch` uses.
 
 ### The workspace branch
 

@@ -7,6 +7,8 @@ import type {
   DevContainerProject,
   BranchTracking,
   DockerEnvironment,
+  EditorAttachment,
+  EditorWindowClosure,
   EngineSelection,
   GitStatus,
   HostPath,
@@ -37,6 +39,7 @@ import type {
   OpenInEditorResult,
   OpenTerminalResult,
   ProjectRootsResult,
+  StopResult,
   TerminalOption,
 } from '../shared/ipc.js';
 import type { DockerBackend } from './docker/backend.js';
@@ -55,6 +58,7 @@ import {
 import { launchTerminal } from './terminal/launch.js';
 import { resolveContainerCli, resolveTerminal } from './terminal/resolve.js';
 import { terminalsFor, terminalTarget } from './terminal/targets.js';
+import { closeAttachedEditorWindows } from './window/close.js';
 import type { UpdatesContext } from './update/check.js';
 
 /**
@@ -329,11 +333,53 @@ export function registerIpcHandlers(context: IpcContext): void {
     (message) => ({ ok: false, message }),
   );
 
-  handle<ActionResult>(
+  /**
+   * What is attached to a container right now, for the stop below.
+   *
+   * Asked here rather than taken from the renderer's poll for the usual reason
+   * — the renderer does not get to say what is running in a container — and one
+   * `top` on a click is a cost the 15s poll already pays sixty times an hour.
+   * Never rejects: a container that has gone away answers `unknown`, which
+   * `closeAttachedEditorWindows` treats as "look anyway".
+   */
+  async function attachedEditors(id: ContainerId): Promise<EditorAttachment> {
+    try {
+      const activity = await context.backend.containerActivity([id]);
+      return activity.get(id)?.editor ?? { kind: 'unknown', reason: 'Not in the last reading.' };
+    } catch (error) {
+      return { kind: 'unknown', reason: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  handle<StopResult>(
     IPC.stop,
     async (id) => {
-      await context.backend.stop(id as ContainerId);
-      return { ok: true };
+      const containerId = id as ContainerId;
+      const container = known.get(containerId);
+
+      // A container that is not in the last scan is still stopped — the id is
+      // handed to the backend either way — but nothing is closed for it. The
+      // window match needs the container's folder and labels, and inventing
+      // them from a bare id is exactly the trust inversion `known` exists to
+      // prevent.
+      const windows: EditorWindowClosure =
+        container === undefined
+          ? { kind: 'none' }
+          : await closeAttachedEditorWindows(container, await attachedEditors(containerId));
+
+      if (windows.kind === 'still-open') {
+        return {
+          ok: false,
+          windows,
+          message:
+            windows.windows === 1
+              ? 'The editor window would not close — it is probably asking about unsaved changes. Deal with that, then stop the container.'
+              : `${String(windows.windows)} editor windows would not close — they are probably asking about unsaved changes. Deal with that, then stop the container.`,
+        };
+      }
+
+      await context.backend.stop(containerId);
+      return { ok: true, windows };
     },
     (message) => ({ ok: false, message }),
   );

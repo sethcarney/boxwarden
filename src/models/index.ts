@@ -20,6 +20,25 @@ export {
   parseAttachedEditors,
 } from './editor-session.js';
 
+export type {
+  DesktopWindow,
+  DevContainerTitle,
+  EditorWindowClosure,
+  EditorWindowCriteria,
+} from './editor-window.js';
+export {
+  EDITOR_PROCESS_NAMES,
+  declaredContainerName,
+  editorWindowCriteria,
+  flavoursOf,
+  matchEditorWindows,
+  namesWorkspace,
+  parseDevContainerTitle,
+  parseWindowTable,
+  parseWmctrlLine,
+  windowFlavour,
+} from './editor-window.js';
+
 export type { ClaudeCpuSample, ClaudeSession, ClaudeStatus, SessionActivity } from './claude.js';
 export {
   classifyTopFailure,

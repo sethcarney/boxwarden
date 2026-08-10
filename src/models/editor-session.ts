@@ -5,15 +5,19 @@ import { hasNoProcessTable, readCommandLines } from './claude.js';
  *
  * ## What this is for
  *
- * Stopping a container with a VS Code window attached to it does not close the
- * window. It strands it: the remote server dies underneath, and the window sits
- * there offering to reload something that is no longer running. The user's next
- * move is to work out which window belonged to which container and close it by
- * hand, which is a puzzle they did not have before they clicked Stop.
+ * Stopping a container with a VS Code window attached to it strands the window:
+ * the remote server dies underneath, and the window sits there offering to
+ * reload something that is no longer running. The user's next move is to work
+ * out which window belonged to which container and close it by hand, which is a
+ * puzzle they did not have before they clicked Stop.
  *
- * boxwarden cannot close that window — see the note at the bottom — so it does
- * the next thing, which is the same thing it does for a Claude Code session:
- * say so on the Stop button, and let the click be an informed one.
+ * Stop now closes that window first — see `models/editor-window.ts` — and this
+ * detection is what tells it there is one to close. The warning on the button
+ * survives the change and is worded around it, because the close is a
+ * best-effort request to a window manager that can decline: on a Wayland
+ * session there is no protocol for it at all, and on macOS it needs an
+ * Accessibility grant the user may not have given. So this still says what is
+ * attached, and the button still says what stopping will do to it.
  *
  * ## What is actually detected
  *
@@ -30,13 +34,22 @@ import { hasNoProcessTable, readCommandLines } from './claude.js';
  * costs a moment's thought, and failing to warn about one that is open costs
  * the work in it. The wording says "attached", not "open", for that reason.
  *
- * ## Why not just close the window
+ * ## How the window is closed, and why not through VS Code
  *
- * There is no supported way. The `code` CLI can open windows and install
- * extensions; it cannot enumerate or close them, and VS Code exposes no local
- * endpoint for it. What is left is finding the host process and killing it,
- * which would take unsaved editor buffers with it — a data-loss risk this app
- * has no business taking on a button labelled Stop.
+ * There is still no supported way to ask VS Code itself. The `code` CLI can
+ * open windows and install extensions; it cannot enumerate or close them. The
+ * remote server's own CLI socket — the one `$VSCODE_IPC_HOOK_CLI` points at
+ * inside the container — handles exactly four commands (`open`, `openExternal`,
+ * `status`, `extensionManagement`) and none of them is a close.
+ *
+ * So the request goes to the WINDOW MANAGER instead, which is the one thing
+ * every desktop does expose: the same close the title bar's X sends. That is
+ * emphatically not the "find the host process and kill it" this note used to
+ * rule out — a kill takes unsaved buffers with it, whereas a close is a request
+ * VS Code handles itself and is entitled to refuse over exactly those buffers.
+ * `src/main/window/` is the machinery; `models/editor-window.ts` is the rule
+ * about which window belongs to which container, which is the part that has to
+ * be right.
  */
 
 /** Which editor left its server behind. `unknown` is a server we did not recognise. */

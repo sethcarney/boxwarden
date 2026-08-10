@@ -672,12 +672,60 @@ nothing extra.
   the CLI's own default resolves the folder URI against the open windows and
   raises the match — `--reuse-window` would take over whichever window was last
   active, which is a different and worse thing.
-- **boxwarden cannot close the window, and does not try.** The `code` CLI can
-  open windows and install extensions; it cannot enumerate or close them, and
-  killing the host process would take unsaved buffers with it. So Stop is
-  annotated rather than gated, exactly as it is for a Claude session —
+- **Stop closes the window before stopping the container.** See "Closing the
+  attached window" below. The Claude half stays annotated rather than gated, and
   `stopWarning` folds both and words them differently on purpose: an agent is
-  **ended** by stopping a container, a window is **stranded** by it.
+  **ended** by stopping a container, a window is **closed** before it.
+
+### Closing the attached window
+
+`src/models/editor-window.ts` (pure) decides which desktop window belongs to
+which container; `src/main/window/` enumerates and closes, one backend per
+platform.
+
+There is no supported way to ask VS Code. The remote server's CLI socket — the
+one `$VSCODE_IPC_HOOK_CLI` names inside the container — handles `open`,
+`openExternal`, `status` and `extensionManagement`, and nothing else; the host
+`code` CLI is the same set; `workbench.action.closeWindow` is reachable only
+from inside a window. So the request goes to the **window manager**:
+
+| Platform    | Mechanism                                                   |
+| ----------- | ----------------------------------------------------------- |
+| Windows     | `EnumWindows` + `PostMessage(hWnd, WM_CLOSE)` via PowerShell |
+| macOS       | System Events, clicking the window's `AXCloseButton`         |
+| Linux / X11 | `wmctrl -l -p`, then `wmctrl -i -c` (`_NET_CLOSE_WINDOW`)    |
+| Wayland     | none — the protocol has no such thing, by design             |
+
+That is the same close the title bar's X sends, which is why it is not the
+"find the host process and kill it" this document used to rule out: a kill takes
+unsaved buffers, a close is a request VS Code handles itself and may refuse
+over exactly those buffers.
+
+`EnumWindows` and not `Get-Process`, because every VS Code window on a machine
+belongs to one process — Electron creates its native windows on the browser
+process — so `MainWindowHandle` finds one of a developer's six windows and
+which one is a detail of Z-order. `PostMessage` and not `SendMessage`, because
+sending blocks until the target has handled it, i.e. until the user answers the
+save dialog they have not noticed yet.
+
+**The matching is the safety-critical half**, and it is a pure function over
+strings: an editor process, the `[Dev Container` marker, and the workspace name
+immediately before it matched on a **whitespace** boundary. Not "any
+non-letter" — `not-boxwarden` ends with `boxwarden` behind a hyphen, and what
+actually separates a title's parts is a separator with spaces around it. When
+both the container's declared name (from `devcontainer.metadata`) and the
+window's are known, they must also agree. Every rule fails towards closing
+nothing: no match means Stop behaves as it did before this feature, which is a
+stranded window rather than somebody else's closed one.
+
+The sequence refuses rather than forces. After the close is issued the
+enumeration is repeated until the windows are gone or six seconds pass; a window
+still there is nearly always one holding a save prompt, and the stop comes back
+`{ ok: false }` naming it rather than pulling the container out from under it.
+
+No new IPC verb: `stop` answers `StopResult`, an intersection with
+`ActionResult`, so existing callers are unaffected and closing the window cannot
+drift out of step with stopping.
 
 ### Why it is its own verb, on its own clock
 

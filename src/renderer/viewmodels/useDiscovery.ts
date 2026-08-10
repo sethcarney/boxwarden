@@ -7,12 +7,17 @@ import type {
   OpenInEditorMode,
   TerminalId,
 } from '../../models/index.js';
-import type { ActionResult, BoxwardenApi, DiscoverySnapshot } from '../../shared/ipc.js';
+import type {
+  ActionResult,
+  BoxwardenApi,
+  DiscoverySnapshot,
+  StopResult,
+} from '../../shared/ipc.js';
 import { canStart, canStop } from '../format.js';
 import type { ContainerGroup } from '../grouping.js';
 import { groupContainers } from '../grouping.js';
 import type { EngineChip } from '../presenters.js';
-import { emptyListMessage, engineChip } from '../presenters.js';
+import { emptyListMessage, engineChip, windowClosureNotice } from '../presenters.js';
 import { useMounted } from './useMounted.js';
 import type { NoticesViewModel } from './useNotices.js';
 
@@ -168,12 +173,35 @@ export function useDiscovery(
     [api, withBusy],
   );
 
+  /**
+   * Report what became of the container's editor window.
+   *
+   * Through `notices` like every other failure in this hook, and only on the
+   * arms that have something to say — see `windowClosureNotice`. It runs INSIDE
+   * `withBusy`'s action so a failed stop's own message still wins the bar:
+   * `withBusy` shows that after the action returns, so anything set here is
+   * overwritten by it, which is the ordering the `still-open` arm depends on.
+   */
+  const noteClosure = useCallback(
+    (result: StopResult, container: DevContainer) => {
+      const notice = windowClosureNotice(result.windows, container.name);
+      if (notice === undefined) return;
+      if (notice.tone === 'error') showError(notice.message);
+      else showInfo(notice.message);
+    },
+    [showError, showInfo],
+  );
+
   const stop = useCallback(
     (container: DevContainer) => {
       if (api === undefined) return;
-      void withBusy([container], () => api.stop(container.id));
+      void withBusy([container], async () => {
+        const result = await api.stop(container.id);
+        noteClosure(result, container);
+        return result;
+      });
     },
-    [api, withBusy],
+    [api, noteClosure, withBusy],
   );
 
   /**
@@ -201,6 +229,18 @@ export function useDiscovery(
           ),
         );
 
+        // Every service in a compose project carries the same workspace folder,
+        // but only the one an editor actually attached to reports anything other
+        // than `none` — so in practice this speaks at most once per group. The
+        // loop is not a fold for that reason: there is nothing to add up.
+        if (verb === 'stop') {
+          for (const [index, result] of results.entries()) {
+            const container = eligible[index];
+            if (result.status !== 'fulfilled' || container === undefined) continue;
+            noteClosure(result.value, container);
+          }
+        }
+
         const failures = results.flatMap((result, index) => {
           const name = eligible[index]?.name ?? 'a container';
           if (result.status === 'rejected') return [`${name}: ${String(result.reason)}`];
@@ -215,7 +255,7 @@ export function useDiscovery(
             };
       });
     },
-    [api, withBusy],
+    [api, noteClosure, withBusy],
   );
 
   const startAll = useCallback(

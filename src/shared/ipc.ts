@@ -7,6 +7,7 @@ import type {
   DockerEnvironment,
   EditorAttachment,
   EditorId,
+  EditorWindowClosure,
   EngineSelection,
   EngineSummary,
   GitStatus,
@@ -67,6 +68,26 @@ export interface DiscoverySnapshot {
  * which is precisely the information the UI needs to show.
  */
 export type ActionResult = { readonly ok: true } | { readonly ok: false; readonly message: string };
+
+/**
+ * What `stop` answers with: an `ActionResult`, plus what became of the editor
+ * window that was attached.
+ *
+ * An intersection rather than a new verb, and rather than a separate
+ * `closeEditorWindow` channel, because closing the window is not a thing the
+ * renderer decides — it is part of what stopping a container MEANS now. A
+ * second verb would let the two drift apart, which is precisely the state this
+ * feature exists to abolish: a container stopped without its window closed.
+ *
+ * Assignable to `ActionResult`, so every existing caller — `withBusy`, the
+ * "Stop all" fold — keeps working on the `ok`/`message` half and only the code
+ * that wants to talk about windows has to know this type exists.
+ *
+ * `ok: false` with a `windows` of `still-open` is the interesting arm: nothing
+ * was stopped, on purpose, because the editor would not close. See
+ * `EditorWindowClosure`.
+ */
+export type StopResult = ActionResult & { readonly windows?: EditorWindowClosure };
 
 export type OpenInEditorFailure =
   /** The container exposed no workspace path, so there is nothing to open. */
@@ -232,7 +253,29 @@ export const IPC = {
 export interface BoxwardenApi {
   discover(): Promise<DiscoverySnapshot>;
   start(id: ContainerId): Promise<ActionResult>;
-  stop(id: ContainerId): Promise<ActionResult>;
+  /**
+   * Stop a container, closing any editor window attached to it first.
+   *
+   * The window half is not optional and not a second call: stopping a container
+   * out from under an attached VS Code window strands it — the remote server
+   * dies and the window sits there offering to reload something that is gone —
+   * and the only moment that can be prevented is before the container goes
+   * away. So the main process closes the window, waits for it to actually go,
+   * and only then stops.
+   *
+   * It REFUSES rather than forces. A window that will not close is nearly
+   * always one holding a "save your changes?" dialog, and that comes back as
+   * `{ ok: false }` naming what to do — the same call `switchBranch` makes
+   * about a dirty tree. Every other way of failing to close a window
+   * (an unsupported desktop, a withheld permission, no matching window) still
+   * stops the container and reports what happened, because degrading to the
+   * behaviour this verb has always had beats refusing to stop anything.
+   *
+   * Takes an id, and the window is found from the main process's own copy of
+   * the container — the renderer cannot name a window any more than it can name
+   * a host path.
+   */
+  stop(id: ContainerId): Promise<StopResult>;
   listEditors(): Promise<readonly EditorOption[]>;
   /**
    * Open a container's workspace folder in an editor.

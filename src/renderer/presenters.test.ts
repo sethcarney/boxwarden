@@ -20,6 +20,7 @@ import {
   terminalBlockedReason,
   updatePanel,
   updateSummary,
+  windowClosureNotice,
   visiblePorts,
 } from './presenters.js';
 import { snapshot, unreachableSnapshot, updateAvailable } from './viewmodels/test-api.js';
@@ -389,13 +390,23 @@ describe('stopWarning', () => {
 describe('stopWarning and the editor', () => {
   /**
    * Worded differently from the Claude sentence on purpose: an agent is ENDED
-   * by stopping, an editor window is STRANDED — it survives, pointed at
-   * something that no longer exists.
+   * by stopping, an editor window is CLOSED before the container goes.
    */
-  it('says an attached window will be left offering to reload', () => {
+  it('says the attached window will be closed first', () => {
     const warning = stopWarning([], [{ kind: 'attached', editors: ['vscode'] }]);
     expect(warning).toContain('VS Code');
-    expect(warning).toMatch(/reload/i);
+    expect(warning).toMatch(/close the window first/i);
+  });
+
+  /**
+   * "will try to", never "will". This string is written before anything has
+   * been attempted, and the attempt genuinely declines on a Wayland session or
+   * without the macOS Accessibility grant. A tooltip is read before the click,
+   * so it is the one place that must not promise more than the notice
+   * afterwards can deliver.
+   */
+  it('does not promise the close, because the close can be refused', () => {
+    expect(stopWarning([], [{ kind: 'attached', editors: ['vscode'] }])).toMatch(/will try to/i);
   });
 
   it('names every attached editor', () => {
@@ -421,6 +432,68 @@ describe('stopWarning and the editor', () => {
   /** "Could not tell" is not "something is attached" — it must not invent a warning. */
   it('does not warn on an unknown attachment', () => {
     expect(stopWarning([], [{ kind: 'unknown', reason: 'engine went away' }])).toBeUndefined();
+  });
+});
+
+describe('windowClosureNotice', () => {
+  it('says nothing when there was no window to close', () => {
+    expect(windowClosureNotice({ kind: 'none' }, 'app')).toBeUndefined();
+    expect(windowClosureNotice(undefined, 'app')).toBeUndefined();
+  });
+
+  /**
+   * The stop itself failed here, and `withBusy` is already showing the sentence
+   * that explains why. A second notice about the same click would only push the
+   * first one off the bar.
+   */
+  it('says nothing when the window refused to close, because the stop reports that', () => {
+    expect(windowClosureNotice({ kind: 'still-open', windows: 1 }, 'app')).toBeUndefined();
+  });
+
+  it('names what it closed', () => {
+    const notice = windowClosureNotice(
+      { kind: 'closed', windows: 1, editors: ['vscode'] },
+      'boxwarden',
+    );
+    expect(notice?.tone).toBe('info');
+    expect(notice?.message).toBe('Closed the VS Code window and stopped boxwarden.');
+  });
+
+  it('counts several windows on one container', () => {
+    expect(
+      windowClosureNotice({ kind: 'closed', windows: 2, editors: ['vscode'] }, 'boxwarden')
+        ?.message,
+    ).toContain('2 VS Code windows');
+  });
+
+  /**
+   * The loudest arm, and the reason it exists: an editor IS attached, the
+   * desktop answered, and no window matched — so the user has been left with
+   * exactly the stranded window this feature promised to close. Collapsing this
+   * into `none` is how that becomes invisible.
+   */
+  it('reports an attached editor whose window could not be found', () => {
+    const notice = windowClosureNotice({ kind: 'not-found', editors: ['cursor'] }, 'boxwarden');
+    expect(notice?.tone).toBe('error');
+    expect(notice?.message).toContain('Cursor is attached to boxwarden');
+    expect(notice?.message).toMatch(/could not find its window/i);
+  });
+
+  it('passes an unsupported desktop’s reason through, since it names the fix', () => {
+    const notice = windowClosureNotice(
+      { kind: 'unsupported', reason: 'This is a Wayland session, which does not let…' },
+      'boxwarden',
+    );
+    expect(notice?.tone).toBe('error');
+    expect(notice?.message).toContain('Stopped boxwarden.');
+    expect(notice?.message).toContain('Wayland');
+  });
+
+  it('reports a failure without pretending the container is still up', () => {
+    const notice = windowClosureNotice({ kind: 'failed', reason: 'wmctrl exited 1' }, 'boxwarden');
+    expect(notice?.tone).toBe('error');
+    expect(notice?.message).toContain('Stopped boxwarden');
+    expect(notice?.message).toContain('wmctrl exited 1');
   });
 });
 

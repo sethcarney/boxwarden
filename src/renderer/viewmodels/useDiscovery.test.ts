@@ -90,6 +90,110 @@ describe('useDiscovery', () => {
     expect(api.discover).toHaveBeenCalledTimes(2);
   });
 
+  /**
+   * Stopping a container closes the editor window attached to it first, and
+   * that half has to be VISIBLE — a Stop that silently failed to close a window
+   * is indistinguishable from one that had no window to close.
+   */
+  it('reports the editor window a stop closed', async () => {
+    const api = fakeApi({ snapshot: snapshot({ containers: [running] }) });
+    api.stop.mockResolvedValue({
+      ok: true,
+      windows: { kind: 'closed', windows: 1, editors: ['vscode'] },
+    });
+    const notices = stubNotices();
+
+    const { result } = renderHook(() => useDiscovery(api, notices, 'vscode', 'gnome-terminal'));
+    await waitFor(() => {
+      expect(result.current.containers).toHaveLength(1);
+    });
+
+    await act(async () => {
+      result.current.stop(running);
+      await vi.waitFor(() => {
+        expect(notices.showInfo).toHaveBeenCalledWith(
+          expect.stringContaining('Closed the VS Code window') as unknown as string,
+        );
+      });
+    });
+  });
+
+  /**
+   * The arm that matters most: an editor IS attached and its window was not
+   * found, so the user has been left with exactly the stranded window this
+   * feature promised to close. It reports as an ERROR, not as silence.
+   */
+  it('reports an attached window it could not find', async () => {
+    const api = fakeApi({ snapshot: snapshot({ containers: [running] }) });
+    api.stop.mockResolvedValue({ ok: true, windows: { kind: 'not-found', editors: ['cursor'] } });
+    const notices = stubNotices();
+
+    const { result } = renderHook(() => useDiscovery(api, notices, 'vscode', 'gnome-terminal'));
+    await waitFor(() => {
+      expect(result.current.containers).toHaveLength(1);
+    });
+
+    await act(async () => {
+      result.current.stop(running);
+      await vi.waitFor(() => {
+        expect(notices.showError).toHaveBeenCalledWith(
+          expect.stringContaining('could not find its window') as unknown as string,
+        );
+      });
+    });
+  });
+
+  /**
+   * A refused stop already reports its own message through `withBusy`. A second
+   * notice about the same click would push the first one off the bar, which is
+   * why `windowClosureNotice` stays quiet on this arm.
+   */
+  it('does not add a second notice when the stop was refused over an open window', async () => {
+    const api = fakeApi({ snapshot: snapshot({ containers: [running] }) });
+    api.stop.mockResolvedValue({
+      ok: false,
+      message: 'The editor window would not close — unsaved changes.',
+      windows: { kind: 'still-open', windows: 1 },
+    });
+    const notices = stubNotices();
+
+    const { result } = renderHook(() => useDiscovery(api, notices, 'vscode', 'gnome-terminal'));
+    await waitFor(() => {
+      expect(result.current.containers).toHaveLength(1);
+    });
+
+    await act(async () => {
+      result.current.stop(running);
+      await vi.waitFor(() => {
+        expect(notices.showError).toHaveBeenCalledTimes(1);
+      });
+    });
+    expect(notices.showError).toHaveBeenCalledWith(
+      'The editor window would not close — unsaved changes.',
+    );
+    expect(notices.showInfo).not.toHaveBeenCalled();
+  });
+
+  /** Nothing attached is the ordinary case, and it says nothing at all. */
+  it('says nothing about windows when none was attached', async () => {
+    const api = fakeApi({ snapshot: snapshot({ containers: [running] }) });
+    const notices = stubNotices();
+
+    const { result } = renderHook(() => useDiscovery(api, notices, 'vscode', 'gnome-terminal'));
+    await waitFor(() => {
+      expect(result.current.containers).toHaveLength(1);
+    });
+
+    await act(async () => {
+      result.current.stop(running);
+      await vi.waitFor(() => {
+        expect(api.stop).toHaveBeenCalled();
+      });
+    });
+    expect(notices.showInfo).not.toHaveBeenCalled();
+    expect(notices.showError).not.toHaveBeenCalled();
+  });
+
   it('reports a lifecycle failure as a message rather than swallowing it', async () => {
     const api = fakeApi({ snapshot: snapshot({ containers: [stopped] }) });
     api.start.mockResolvedValue({ ok: false, message: 'no such image' });

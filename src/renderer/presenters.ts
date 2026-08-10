@@ -14,6 +14,10 @@
  * hooks stay thin and these can be tested without React or a DOM.
  */
 
+// Type-only, and it has to stay that way: `useNotices` imports `errorMessage`
+// from this module, so a value import here would close a runtime cycle.
+// `import type` is erased outright under `verbatimModuleSyntax`.
+import type { Notice } from './viewmodels/useNotices.js';
 import type {
   BranchListing,
   ClaudeSession,
@@ -21,6 +25,7 @@ import type {
   DevContainer,
   EditorAttachment,
   EditorFlavour,
+  EditorWindowClosure,
   EndpointProbe,
   EngineSelection,
   GitStatus,
@@ -763,18 +768,87 @@ export function stopWarning(
   }
 
   // Second, and separately worded: an agent is ENDED by stopping, whereas an
-  // editor window is stranded — it survives, pointed at something that no
-  // longer exists, and asks to reload into nothing. Telling the user which of
-  // those they are about to do is the whole point of the sentence.
+  // editor window is CLOSED — boxwarden asks the window manager to shut it
+  // before the container goes, so the window is not left pointing at something
+  // that no longer exists. Telling the user which of those they are about to do
+  // is the whole point of the sentence.
+  //
+  // "will try to" and not "will", because the attempt genuinely can decline and
+  // this string is written before anything has been attempted: a Wayland
+  // session, a macOS Accessibility grant nobody has ticked, a window title the
+  // user has reconfigured. Promising the close here and reporting the failure
+  // afterwards in the message bar would be the wrong way round — a tooltip is
+  // read before the click, and it is the only thing that can set the
+  // expectation the notice then has to correct.
   const attached = attachedEditorsIn(editors);
   if (attached.length > 0) {
     const names = attached.map(editorDisplayName).join(' and ');
     lines.push(
-      `${names} ${attached.length === 1 ? 'is' : 'are'} attached to this container. Stopping disconnects the window, which will sit there offering to reload — close it first to avoid that.`,
+      `${names} ${attached.length === 1 ? 'is' : 'are'} attached to this container. Stopping will try to close the window first, so it is not left offering to reload.`,
     );
   }
 
   return lines.length === 0 ? undefined : lines.join('\n');
+}
+
+/**
+ * What to say in the message bar about the window a Stop just closed — or
+ * didn't.
+ *
+ * Undefined for the two arms that have nothing to report: `none`, where no
+ * editor was attached, and `still-open`, where the stop itself failed and
+ * `withBusy` is already showing the sentence that explains why. A second notice
+ * about the same click would only push the first one off the bar.
+ *
+ * The other four all speak, and the reason `not-found` speaks loudest is the
+ * reason its arm exists at all: an editor IS attached, the desktop answered,
+ * and no window matched — so the user has been left with exactly the stranded
+ * window this feature promised to close, and is the one person who can see why.
+ */
+export function windowClosureNotice(
+  closure: EditorWindowClosure | undefined,
+  containerName: string,
+): Notice | undefined {
+  if (closure === undefined) return undefined;
+
+  switch (closure.kind) {
+    case 'none':
+    case 'still-open':
+      return undefined;
+
+    case 'closed': {
+      const names = closure.editors.map(editorDisplayName).join(' and ');
+      // `editor` is the fallback rather than a missing word: a window matched
+      // by a process name we could not classify still got closed, and the
+      // sentence has to survive not knowing what it was.
+      const what = names === '' ? 'editor' : names;
+      return {
+        tone: 'info',
+        message:
+          closure.windows === 1
+            ? `Closed the ${what} window and stopped ${containerName}.`
+            : `Closed ${String(closure.windows)} ${what} windows and stopped ${containerName}.`,
+      };
+    }
+
+    case 'not-found': {
+      const names = closure.editors.map(editorDisplayName).join(' and ');
+      const who = names === '' ? 'An editor is' : `${names} is`;
+      return {
+        tone: 'error',
+        message: `${who} attached to ${containerName}, but boxwarden could not find its window to close it. The window is still open and will offer to reload.`,
+      };
+    }
+
+    case 'unsupported':
+      return { tone: 'error', message: `Stopped ${containerName}. ${closure.reason}` };
+
+    case 'failed':
+      return {
+        tone: 'error',
+        message: `Stopped ${containerName}, but closing the editor window failed: ${closure.reason}`,
+      };
+  }
 }
 
 /**

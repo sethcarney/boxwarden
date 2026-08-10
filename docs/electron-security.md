@@ -10,26 +10,26 @@ this repo so a reviewer can check the claim rather than take it on trust.
 
 ## Where the settings live
 
-| Item                                           | Setting                                                                        | Where                                          |
-| ---------------------------------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------- |
-| 1. Only load secure content                    | Renderer is local; `connect-src 'none'` in production                          | `src/main/index.ts` (CSP)                      |
-| 2. No Node integration for remote content      | `nodeIntegration: false`, plus the worker and sub-frame variants               | `src/main/index.ts`                            |
-| 3. Enable context isolation                    | `contextIsolation: true`                                                       | `src/main/index.ts`                            |
-| 4. **Enable process sandboxing**               | `sandbox: true` **and** `app.enableSandbox()`                                  | `src/main/index.ts`                            |
-| 5. Handle permission requests                  | `setPermissionRequestHandler` / `setPermissionCheckHandler`, both blanket deny | `src/main/index.ts`                            |
-| 6. Do not disable `webSecurity`                | `webSecurity: true`                                                            | `src/main/index.ts`                            |
-| 7. Define a CSP                                | Response header, plus a `<meta>` fallback                                      | `src/main/index.ts`, `src/renderer/index.html` |
-| 8. Do not allow insecure content               | `allowRunningInsecureContent: false`                                           | `src/main/index.ts`                            |
-| 9. No experimental features                    | `experimentalFeatures: false`                                                  | `src/main/index.ts`                            |
-| 10. No `enableBlinkFeatures`                   | Never set                                                                      | —                                              |
-| 11/12. WebView hardening                       | `webviewTag: false`, `will-attach-webview` prevented                           | `src/main/index.ts`                            |
-| 13. Limit navigation                           | `will-navigate` blocked except the dev server                                  | `src/main/index.ts`                            |
-| 14. Limit new windows                          | `setWindowOpenHandler` returns `deny` unconditionally                          | `src/main/index.ts`                            |
-| 15. `shell.openExternal` only on trusted input | Closed origin allow-list; never a renderer-chosen URL                          | `src/main/index.ts`                            |
-| 16. Current Electron                           | Electron 43                                                                    | `package.json`                                 |
-| 17. Validate IPC senders                       | `isTrustedSender` compares the `WebContents` object                            | `src/main/ipc.ts`                              |
-| Spawning, generally                            | argv arrays only, never `shell: true`, for editors and terminals alike         | `src/main/{editor,terminal}/launch.ts`         |
-| Outbound network                               | One request, main process only, to a URL the renderer cannot name              | `src/main/update/github.ts`                    |
+| Item                                           | Setting                                                                          | Where                                                      |
+| ---------------------------------------------- | -------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| 1. Only load secure content                    | Renderer is local; `connect-src 'none'` in production                            | `src/main/index.ts` (CSP)                                  |
+| 2. No Node integration for remote content      | `nodeIntegration: false`, plus the worker and sub-frame variants                 | `src/main/index.ts`                                        |
+| 3. Enable context isolation                    | `contextIsolation: true`                                                         | `src/main/index.ts`                                        |
+| 4. **Enable process sandboxing**               | `sandbox: true` **and** `app.enableSandbox()`                                    | `src/main/index.ts`                                        |
+| 5. Handle permission requests                  | `setPermissionRequestHandler` / `setPermissionCheckHandler`, both blanket deny   | `src/main/index.ts`                                        |
+| 6. Do not disable `webSecurity`                | `webSecurity: true`                                                              | `src/main/index.ts`                                        |
+| 7. Define a CSP                                | Response header, plus a `<meta>` fallback                                        | `src/main/index.ts`, `src/renderer/index.html`             |
+| 8. Do not allow insecure content               | `allowRunningInsecureContent: false`                                             | `src/main/index.ts`                                        |
+| 9. No experimental features                    | `experimentalFeatures: false`                                                    | `src/main/index.ts`                                        |
+| 10. No `enableBlinkFeatures`                   | Never set                                                                        | —                                                          |
+| 11/12. WebView hardening                       | `webviewTag: false`, `will-attach-webview` prevented                             | `src/main/index.ts`                                        |
+| 13. Limit navigation                           | `will-navigate` blocked except the dev server                                    | `src/main/index.ts`                                        |
+| 14. Limit new windows                          | `setWindowOpenHandler` returns `deny` unconditionally                            | `src/main/index.ts`                                        |
+| 15. `shell.openExternal` only on trusted input | Closed origin allow-list; never a renderer-chosen URL                            | `src/main/index.ts`                                        |
+| 16. Current Electron                           | Electron 43                                                                      | `package.json`                                             |
+| 17. Validate IPC senders                       | `isTrustedSender` compares the `WebContents` object                              | `src/main/ipc.ts`                                          |
+| Spawning, generally                            | argv arrays only, never `shell: true`, for editors, terminals and window helpers | `src/main/{editor,terminal}/launch.ts`, `src/main/window/` |
+| Outbound network                               | One request, main process only, to a URL the renderer cannot name                | `src/main/update/github.ts`                                |
 
 Several of these are already Electron 43 defaults. They are written out anyway:
 a default that flips in a future major is the kind of regression nobody
@@ -170,6 +170,32 @@ launcher. And the startup command is normalised, not filtered
 (`models/terminal.ts`): NUL and CR are stripped because they would be mangled
 downstream, and nothing else is touched. The command is shell code by design;
 containment is argv, not a denylist.
+
+### Nor does closing an editor window
+
+`src/main/window/` spawns three more programs — `powershell.exe`, `osascript`
+and `wmctrl` — and it is the one place in the app where a helper program is
+handed a _script_ rather than only arguments. Four things keep that narrow:
+
+- **Nothing about a container is ever interpolated into any of them.** The
+  Windows and Linux helpers are constants; the matching happens in Node, in a
+  pure function, over the strings the enumeration printed. The close is
+  addressed by a handle that same enumeration produced moments earlier — the
+  shape `switchBranch` uses, where the only values reaching the dangerous call
+  are ones the previous call emitted.
+- **The PowerShell script goes in on STDIN**, not on the command line, so its
+  several hundred characters of C# — quotes, brackets and newlines included —
+  are never parsed by a command-line splitter. The handles the close script
+  names are checked against `/^\d+$/` first.
+- **The macOS helper does interpolate**, because AppleScript has no other way to
+  address a window than by its name. Those two values are a process name from a
+  fixed table and a window title the enumeration just returned, and both go
+  through `appleScriptString` — the same pure, tested quoter the terminal
+  launcher uses, and for the same reason: a window title is attacker-influenced
+  by anything that can put a window on this desktop.
+- **The container's own strings never reach a helper at all.** The workspace
+  folder and the `devcontainer.metadata` name are compared in Node and left
+  there.
 
 That allow-list is a **closed set** and has to stay one. The setup advice
 (`src/models/advice.ts`) links to install instructions for every engine
