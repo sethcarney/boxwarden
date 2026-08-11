@@ -118,7 +118,7 @@
     // — `mdm skills install` — must run as a lifecycle command instead; see
     // post-create.sh.
     // ---------------------------------------------------------------------
-    "ghcr.io/sethcarney/mdm/mdm:1.0.0": {
+    "ghcr.io/sethcarney/mdm/mdm:1.1.0": {
       "version": "1.9.1"
     },
 
