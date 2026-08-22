@@ -664,14 +664,20 @@ nothing extra.
 - **Each flavour draws its own mark** (`EditorGlyph.tsx`), from `react-icons`,
   on a list whose entire job is telling containers apart. A single generic
   two-window glyph was the first version and told you nothing.
-- **It decides how many buttons the card has.** With a window attached the
-  primary action becomes **Focus** and a quieter **New window** appears beside
-  it (`editorActions` in `presenters.ts`). That split exists only then: with
-  nothing attached the two would do the same thing under different names, since
-  the CLI opens a new window either way. `reuse` passes no flag at all, because
-  the CLI's own default resolves the folder URI against the open windows and
-  raises the match — `--reuse-window` would take over whichever window was last
-  active, which is a different and worse thing.
+- **It renames the card's button, and does not add one.** With a window attached
+  the primary action reads **Focus** rather than **Open in VS Code**
+  (`editorAction` in `presenters.ts`), and the click is the same one: handed a
+  folder URI, the CLI resolves it against the open windows and raises the match,
+  or starts a window when nothing matches. No flag is passed to get that —
+  `--reuse-window` would take over whichever window was last active, which is a
+  different and worse thing.
+- **A "New window" button beside it was removed rather than fixed.** VS Code
+  will not put one folder in two windows: it resolves the folder against the
+  open windows before deciding where to place it, so `--new-window` on an
+  already-open folder focuses that window (microsoft/vscode#35207), and the
+  forks inherit the behaviour. Since the button only appeared when an editor was
+  attached, it was only ever shown in the case that gets refused. The mode
+  argument on `openInEditor` went with it.
 - **boxwarden cannot close the window, and does not try.** The `code` CLI can
   open windows and install extensions; it cannot enumerate or close them, and
   killing the host process would take unsaved buffers with it. So Stop is

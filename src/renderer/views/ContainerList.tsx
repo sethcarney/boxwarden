@@ -4,7 +4,6 @@ import type {
   EditorAttachment,
   EditorId,
   GitStatus,
-  OpenInEditorMode,
 } from '../../models/index.js';
 import { ComposeGroup } from '../components/ComposeGroup.js';
 import { ContainerCard } from '../components/ContainerCard.js';
@@ -43,7 +42,7 @@ interface Props {
   readonly branchMenuFor: (id: DevContainer['id']) => BranchMenuBinding;
   readonly onStart: (container: DevContainer) => void;
   readonly onStop: (container: DevContainer) => void;
-  readonly onOpen: (container: DevContainer, mode?: OpenInEditorMode) => void;
+  readonly onOpen: (container: DevContainer) => void;
   readonly onOpenTerminal: (container: DevContainer) => void;
   readonly onStartupCommandChange: (container: DevContainer, command: string) => void;
   readonly onStartAll: (containers: readonly DevContainer[]) => void;

@@ -161,45 +161,44 @@ describe('ContainerCard', () => {
     });
 
     /**
-     * With a window already attached the one action becomes two, and they mean
-     * genuinely different things. Before that they would not — the CLI opens a
-     * new window either way — so the card shows one button and says "Open".
+     * With a window already attached the button renames itself to Focus and
+     * keeps doing the one thing it can do. There was a second button here
+     * offering a new window; it was removed because no editor in this family
+     * will open one on a folder it already has open, so the extra button did
+     * nothing but focus under a name that said otherwise.
      */
     describe('when an editor is already attached', () => {
       const attached = { kind: 'attached', editors: ['vscode'] } as const;
 
-      it('offers Focus and New window, and asks for the right one', async () => {
+      it('renames the one button to Focus and asks for the same open', async () => {
         const container = devContainer();
         const { onOpen } = renderCard(container, { editor: attached });
 
         await userEvent.click(screen.getByRole('button', { name: 'Focus VS Code' }));
-        // No mode argument at all: the default is to focus, decided once in
-        // the ViewModel rather than restated by every caller.
+        // The container and nothing else — there is no mode to pass.
         expect(onOpen.mock.calls.at(-1)).toEqual([container]);
-
-        await userEvent.click(
-          screen.getByRole('button', { name: /new VS Code window on this container/i }),
-        );
-        expect(onOpen.mock.calls.at(-1)).toEqual([container, 'new-window']);
       });
 
-      it('shows only one action while nothing is attached', () => {
-        renderCard(devContainer(), { editor: { kind: 'none' } });
+      /**
+       * The pinning test for the bug this replaced: a `+` beside Focus that
+       * focused. Neither the button nor the mode may come back without a CLI
+       * that can spawn the second window.
+       */
+      it('offers no second window button', () => {
+        const { dom } = renderCard(devContainer(), { editor: attached });
+
         expect(screen.queryByRole('button', { name: /new VS Code window/i })).toBeNull();
-        expect(screen.getByRole('button', { name: 'Open in VS Code' })).toBeDefined();
+        expect(dom.querySelector('.secondary-open')).toBeNull();
+        expect(screen.queryByRole('button', { name: '+' })).toBeNull();
       });
 
-      /** A container with nowhere to open has nowhere to open twice, either. */
-      it('disables both when there is no workspace folder', () => {
+      it('disables it when there is no workspace folder', () => {
         const { workspaceFolder: _omitted, ...rest } = devContainer();
         renderCard(rest as DevContainer, { editor: attached });
 
         expect(screen.getByRole('button', { name: 'Focus VS Code' }).hasAttribute('disabled')).toBe(
           true,
         );
-        expect(
-          screen.getByRole('button', { name: /new VS Code window/i }).hasAttribute('disabled'),
-        ).toBe(true);
       });
     });
   });

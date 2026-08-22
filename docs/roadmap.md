@@ -26,8 +26,7 @@ unblocks the most.
 - **Flags Claude Code sessions running inside a container**, so Stop and "Stop
   all" are not blind to an agent mid-task.
 - **Says which editor is already attached**, from the same process-table read, in
-  that editor's own mark — and turns Open into **Focus** plus a quieter **New
-  window** while a window is up.
+  that editor's own mark — and renames Open to **Focus** while a window is up.
 - **Connects to every engine that answers** and merges their lists, with a
   header picker once two are reachable and the choice persisted; plus a setup
   screen carrying every advisory and every socket tried.

@@ -180,14 +180,13 @@ and were still removed; see "The release check" below. Lifecycle actions return 
 `{ ok: false, message }` data rather than throwing — a thrown main-process
 error crosses IPC as an opaque string with the real message buried.
 
-Every verb that acts on a container or a project takes an **ID**. The main
-process resolves it against its own copy from the last scan and never acts on
-renderer-supplied data. `openInEditor`'s optional `mode` is the one thing
-alongside an id that any container verb accepts, and it is safe on the same
-terms as `updateStatus(force)`: a closed two-arm union, parsed in the main
-process by `parseOpenInEditorMode`, that cannot name a path, a window or a
-binary — and whose default is the less destructive arm. Otherwise:
-`openInEditor` will not take a host path,
+Every verb that acts on a container or a project takes an **ID**, and — apart
+from `updateStatus(force)` and `switchBranch`'s branch name, both discussed
+below — nothing else. The main process resolves the id against its own copy
+from the last scan and never acts on renderer-supplied data. `openInEditor`
+briefly took a `mode` alongside its ids, and it is gone: not because it was
+unsafe, but because the thing it selected does not exist (see "Attached
+editors"). So: `openInEditor` will not take a host path,
 `openProject` will not take a folder, `openTerminal` will not take a startup
 command — it reads its own stored copy — and `claudeStatus` and `gitStatus`
 drop any id that is not in the last scan. `gitStatus` is the sharpest case of
@@ -615,16 +614,28 @@ would double the poll's Docker traffic to learn nothing extra.
   ANNOTATED, the same as it is for a Claude session — `stopWarning` folds both,
   and words them differently on purpose: an agent is ENDED by stopping, a window
   is STRANDED by it.
-- **It also decides how many buttons the card has.** With a window attached, the
-  primary action becomes **Focus** and a quieter **New window** appears beside
-  it (`editorActions` in `presenters.ts`, `OpenInEditorMode` in the models).
-  The split exists ONLY then: with nothing attached the two would do the same
-  thing under different names, since the CLI opens a new window either way.
-  `reuse` passes NO flag, because the CLI's own default is to resolve the folder
-  URI against the open windows and raise the one that matches — `--reuse-window`
-  would be a different and worse thing, taking over whichever window was last
-  active. `--new-window` is therefore the only flag in the table, and the
-  asymmetry is the design rather than an omission.
+- **It renames the card's button, and does not add one.** With a window
+  attached the primary action reads **Focus** instead of **Open in VS Code**
+  (`editorAction` in `presenters.ts`); the click is identical, because the CLI's
+  behaviour is identical — handed a folder URI it resolves it against the open
+  windows and raises the match, or starts a window when nothing matches. No
+  flag is passed to get that: `--reuse-window` is a different and worse thing,
+  taking over whichever window was last active.
+- **There was a second button, and it could never have worked.** A quieter
+  **New window** (`+` in the rows layout) sat beside Focus and sent
+  `mode: 'new-window'`, which put `--new-window` on the command line. **VS Code
+  will not open one folder in two windows.** It resolves the folder against the
+  windows already open BEFORE deciding where to put it, so an open folder
+  focuses its window whatever the flag says — the same refusal the GUI's "Open
+  Folder" makes, deliberately (microsoft/vscode#35207), and inherited by every
+  fork. The button appeared ONLY when an editor was attached, i.e. only in the
+  case that is refused, so it focused every time — which is what a user
+  reported. `OpenInEditorMode`, `parseOpenInEditorMode`, `newWindowFlag`, the
+  IPC argument and the button were removed together; **do not reintroduce them
+  piecemeal**, the same rule as the update-download verbs. The way back is a
+  CLI that can spawn the second window, and there is none: duplicating a
+  workspace is `workbench.action.duplicateWorkspaceInNewWindow`, a command
+  inside a window with no command-line spelling.
 
 ### The workspace branch
 

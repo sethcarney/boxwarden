@@ -5,7 +5,7 @@ import {
   branchChip,
   branchMenu,
   claudeBadge,
-  editorActions,
+  editorAction,
   editorBadge,
   stopWarning,
   containerCountLabel,
@@ -473,81 +473,75 @@ describe('editorBadge', () => {
   });
 });
 
-describe('editorActions', () => {
+describe('editorAction', () => {
   /**
-   * The second button appears only once there is a window to distinguish it
-   * from. Before that, "Open" and "New window" would do the same thing under
-   * two names — and a button that changes meaning without changing appearance
-   * is worse than one that arrives when it starts to matter.
+   * One button, whatever is attached. The label changes because the honest
+   * description of the click changes; the click does not.
    */
-  it('offers one action until an editor is attached', () => {
+  it('says Open until an editor is attached', () => {
     for (const attachment of [
       undefined,
       { kind: 'none' } as const,
       { kind: 'not-applicable' } as const,
       { kind: 'unknown', reason: 'top failed' } as const,
     ]) {
-      const actions = editorActions(attachment, 'VS Code', undefined, false);
-      expect(actions.open.label).toBe('Open in VS Code');
-      expect(actions.newWindow).toBeUndefined();
+      const action = editorAction(attachment, 'VS Code', undefined, false);
+      expect(action.label).toBe('Open in VS Code');
+      expect(action.title).toBe('Open in VS Code');
     }
   });
 
-  it('splits into focus and new window once one is', () => {
-    const actions = editorActions(
+  /**
+   * And Focus once one is — with a tooltip that promises no second window,
+   * because there is no second window to be had. An editor asked for a folder
+   * one of its windows already holds raises that window and ignores
+   * `--new-window`, which is why the button that offered one was removed.
+   */
+  it('says Focus once one is, and promises nothing new', () => {
+    const action = editorAction(
       { kind: 'attached', editors: ['vscode'] },
       'VS Code',
       undefined,
       false,
     );
 
-    expect(actions.open.label).toBe('Focus VS Code');
-    expect(actions.newWindow?.label).toBe('New window');
-    // The primary action must say it opens NOTHING — the whole reason it is
-    // worth a separate button from the one beside it.
-    expect(actions.open.title).toContain('Nothing new is opened');
-    expect(actions.newWindow?.title).toContain('SECOND');
+    expect(action.label).toBe('Focus VS Code');
+    expect(action.title).toContain('Nothing new is opened');
   });
 
   it('names the attached editor, which need not be the chosen one', () => {
     // The badge reports what is running in the container; the button spawns
     // the editor the user picked in the header. A Cursor server left running
     // in a container is exactly when saying "the Cursor window" matters.
-    const actions = editorActions(
+    const action = editorAction(
       { kind: 'attached', editors: ['cursor'] },
       'VS Code',
       undefined,
       false,
     );
-    expect(actions.open.title).toContain('Cursor');
-    expect(actions.newWindow?.title).toContain('VS Code');
+    expect(action.title).toContain('Cursor');
   });
 
-  it('shortens both for the rows layout, keeping the full text in the title', () => {
-    const actions = editorActions(
+  it('shortens the label for the rows layout, keeping the full text in the title', () => {
+    const action = editorAction(
       { kind: 'attached', editors: ['vscode'] },
       'VS Code',
       undefined,
       true,
     );
-    expect(actions.open.label).toBe('Focus');
-    expect(actions.newWindow?.label).toBe('+');
-    expect(actions.newWindow?.title).toContain('VS Code');
+    expect(action.label).toBe('Focus');
+    expect(action.title).toContain('VS Code');
   });
 
-  /**
-   * A container with no workspace folder has nothing to open in any number of
-   * windows, so the reason wins over both tooltips rather than only the first.
-   */
-  it('lets the blocked reason speak for both buttons', () => {
-    const actions = editorActions(
+  /** A container with no workspace folder has nothing to open at all. */
+  it('lets the blocked reason speak for the button', () => {
+    const action = editorAction(
       { kind: 'attached', editors: ['vscode'] },
       'VS Code',
       'This container does not record which folder to open.',
       false,
     );
-    expect(actions.open.title).toBe('This container does not record which folder to open.');
-    expect(actions.newWindow?.title).toBe('This container does not record which folder to open.');
+    expect(action.title).toBe('This container does not record which folder to open.');
   });
 });
 

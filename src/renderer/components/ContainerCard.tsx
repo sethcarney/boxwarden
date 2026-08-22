@@ -4,7 +4,6 @@ import type {
   EditorAttachment,
   EditorId,
   GitStatus,
-  OpenInEditorMode,
 } from '../../models/index.js';
 import {
   canStart,
@@ -20,7 +19,7 @@ import {
   branchMenu as branchMenuView,
   cardTitle,
   claudeBadge,
-  editorActions,
+  editorAction,
   editorBadge,
   stopWarning,
   openBlockedReason,
@@ -96,8 +95,7 @@ interface Props {
   readonly branchMenu?: BranchMenuBinding | undefined;
   readonly onStart: (container: DevContainer) => void;
   readonly onStop: (container: DevContainer) => void;
-  /** `mode` is omitted for the ordinary open; the card only passes it for "New window". */
-  readonly onOpen: (container: DevContainer, mode?: OpenInEditorMode) => void;
+  readonly onOpen: (container: DevContainer) => void;
   readonly onOpenTerminal: (container: DevContainer) => void;
   readonly onStartupCommandChange: (container: DevContainer, command: string) => void;
 }
@@ -139,7 +137,7 @@ export function ContainerCard({
   const attached = editorBadge(editor);
   const branch = branchChip(git);
   const warning = stopWarning([claude], [editor]);
-  const actions = editorActions(editor, editorName, blocked, dense);
+  const action = editorAction(editor, editorName, blocked, dense);
 
   return (
     <article className={cardClass(container.runtime, unresolved)}>
@@ -320,34 +318,20 @@ export function ContainerCard({
       </dl>
 
       <footer className="card-actions">
+        {/* One button. It says Focus once an editor is attached and Open when
+            none is, and it does the same thing either way — see
+            `editorAction`. */}
         <button
           type="button"
           className="primary"
           disabled={busy || blocked !== undefined}
-          title={actions.open.title}
+          title={action.title}
           onClick={() => {
             onOpen(container);
           }}
         >
-          {actions.open.label}
+          {action.label}
         </button>
-
-        {/* Only once an editor is attached — see `editorActions`. Until then
-            the two buttons would do the same thing under different names. */}
-        {actions.newWindow !== undefined && (
-          <button
-            type="button"
-            className="secondary-open"
-            disabled={busy || blocked !== undefined}
-            title={actions.newWindow.title}
-            aria-label={`Open a new ${editorName} window on this container`}
-            onClick={() => {
-              onOpen(container, 'new-window');
-            }}
-          >
-            {actions.newWindow.label}
-          </button>
-        )}
 
         <button
           type="button"

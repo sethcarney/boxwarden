@@ -8,7 +8,6 @@ import type {
   EditorId,
   EngineSelection,
   GitStatus,
-  OpenInEditorMode,
   ProjectId,
   ProjectScan,
   TerminalId,
@@ -100,9 +99,7 @@ export interface FakeApi extends BoxwardenApi {
   readonly start: Mock<(id: ContainerId) => Promise<ActionResult>>;
   readonly stop: Mock<(id: ContainerId) => Promise<ActionResult>>;
   readonly listEditors: Mock<() => Promise<readonly EditorOption[]>>;
-  openInEditor: Mock<
-    (id: ContainerId, editorId: EditorId, mode?: OpenInEditorMode) => Promise<OpenInEditorResult>
-  >;
+  openInEditor: Mock<(id: ContainerId, editorId: EditorId) => Promise<OpenInEditorResult>>;
   readonly selectEngine: Mock<(selection: EngineSelection) => Promise<ActionResult>>;
   readonly scanProjects: Mock<() => Promise<ProjectScan>>;
   openProject: Mock<(id: ProjectId, editorId: EditorId) => Promise<OpenInEditorResult>>;
@@ -215,9 +212,9 @@ export function fakeApi(options: FakeApiOptions = {}): FakeApi {
     start: vi.fn<(id: ContainerId) => Promise<ActionResult>>(() => Promise.resolve({ ok: true })),
     stop: vi.fn<(id: ContainerId) => Promise<ActionResult>>(() => Promise.resolve({ ok: true })),
     listEditors: vi.fn<() => Promise<readonly EditorOption[]>>(() => Promise.resolve(editors)),
-    openInEditor: vi.fn<
-      (id: ContainerId, editorId: EditorId, mode?: OpenInEditorMode) => Promise<OpenInEditorResult>
-    >(() => Promise.resolve({ ok: true, editorId: 'vscode', uri: 'vscode-remote://x' })),
+    openInEditor: vi.fn<(id: ContainerId, editorId: EditorId) => Promise<OpenInEditorResult>>(() =>
+      Promise.resolve({ ok: true, editorId: 'vscode', uri: 'vscode-remote://x' }),
+    ),
     selectEngine: vi.fn<(selection: EngineSelection) => Promise<ActionResult>>(() =>
       Promise.resolve({ ok: true }),
     ),

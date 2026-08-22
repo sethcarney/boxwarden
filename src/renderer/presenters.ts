@@ -138,68 +138,51 @@ export function openBlockedReason(
 }
 
 /**
- * What the card's editor buttons say, and how many there are.
+ * What the card's editor button says.
  *
- * One action or two, decided here rather than in the card, because the decision
- * is the interesting part: **the second button only appears when an editor is
- * already attached.** Offering "New window" on a container nobody has open is
- * offering a distinction without a difference — the CLI opens a new window
- * either way — and a permanently-present button that changes meaning silently
- * is worse than one that appears when it starts to matter.
+ * ONE button, and the label is the whole feature: `Focus` when an editor is
+ * already attached to this container, `Open in <editor>` when none is. The
+ * click is the same either way, because the CLI's own behaviour is the same
+ * either way — it resolves the folder URI against the open windows and raises
+ * the one that matches, or starts a window when nothing does.
  *
- * When one IS attached the two are genuinely different things, and the labels
- * say which is which: `open` focuses the window that exists, `newWindow` adds
- * a second on the same container. Two windows on one dev container is an
- * ordinary way to work — one per branch, one per agent — so this is not an
- * escape hatch, it is the other half of the feature.
+ * There was a second button here, a quieter "New window" beside Focus, and it
+ * was removed rather than repaired: no editor in this family will put one
+ * folder in two windows, and the button only ever appeared when the folder was
+ * already open. It therefore did nothing but focus — which is what the user
+ * saw. The reasoning is in `src/models/editor.ts`; do not add it back without
+ * a CLI that can actually spawn the second window.
  *
- * `blocked` wins over both: a container with no workspace folder has nothing to
- * open in any number of windows.
+ * `blocked` wins over the label: a container with no workspace folder has
+ * nothing to open in any window.
  */
 export interface EditorAction {
   readonly label: string;
   readonly title: string;
 }
 
-export interface EditorActions {
-  readonly open: EditorAction;
-  /** Absent unless an editor is attached — see above. */
-  readonly newWindow: EditorAction | undefined;
-}
-
-export function editorActions(
+export function editorAction(
   attachment: EditorAttachment | undefined,
   editorName: string,
   blocked: string | undefined,
   dense: boolean,
-): EditorActions {
+): EditorAction {
   if (attachment?.kind !== 'attached') {
     return {
-      open: {
-        label: dense ? 'Open' : `Open in ${editorName}`,
-        title: blocked ?? `Open in ${editorName}`,
-      },
-      newWindow: undefined,
+      label: dense ? 'Open' : `Open in ${editorName}`,
+      title: blocked ?? `Open in ${editorName}`,
     };
   }
 
   const names = attachment.editors.map(editorDisplayName).join(', ');
   return {
-    open: {
-      label: dense ? 'Focus' : `Focus ${editorName}`,
-      title:
-        blocked ??
-        // Says what it does AND why it can: the window is found by the folder
-        // URI, so this raises the one showing THIS container rather than
-        // whatever was last in front.
-        `Bring the ${names} window already attached to this container to the front. Nothing new is opened.`,
-    },
-    newWindow: {
-      label: dense ? '+' : 'New window',
-      title:
-        blocked ??
-        `Open a SECOND ${editorName} window on this container, alongside the one already attached.`,
-    },
+    label: dense ? 'Focus' : `Focus ${editorName}`,
+    title:
+      blocked ??
+      // Says what it does AND why it can: the window is found by the folder
+      // URI, so this raises the one showing THIS container rather than
+      // whatever was last in front.
+      `Bring the ${names} window already attached to this container to the front. Nothing new is opened.`,
   };
 }
 

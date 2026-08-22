@@ -23,7 +23,6 @@ import {
   enginesFrom,
   hostPlatform,
   parseEngineSelection,
-  parseOpenInEditorMode,
   readableHostFolder,
 } from '../models/index.js';
 import { IPC } from '../shared/ipc.js';
@@ -357,7 +356,7 @@ export function registerIpcHandlers(context: IpcContext): void {
 
   handle<OpenInEditorResult>(
     IPC.openInEditor,
-    async (rawId, rawEditorId, rawMode) => {
+    async (rawId, rawEditorId) => {
       const container = known.get(rawId as ContainerId);
       if (container === undefined) {
         return {
@@ -442,10 +441,7 @@ export function registerIpcHandlers(context: IpcContext): void {
       }
 
       try {
-        // Parsed rather than trusted: anything that is not the string
-        // 'new-window' is the default, so a malformed message can only ever
-        // ask for the less destructive of the two.
-        await launchEditor(resolved.binaryPath, target, uri, parseOpenInEditorMode(rawMode));
+        await launchEditor(resolved.binaryPath, target, uri);
         return { ok: true, editorId: target.id, uri };
       } catch (error) {
         return {

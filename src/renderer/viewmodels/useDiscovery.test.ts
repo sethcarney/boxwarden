@@ -212,28 +212,15 @@ describe('useDiscovery', () => {
   });
 
   /**
-   * The default is FOCUS, not a new window, and it is the default all the way
-   * down: the card omits the argument, the ViewModel supplies `reuse`, and the
-   * CLI's own behaviour for a folder URI it already has open is to raise that
-   * window. Getting this backwards would mean a second window every time
-   * somebody clicked the card for a container they already had open.
+   * The id and the editor, and nothing after them.
+   *
+   * There used to be a third argument choosing between focusing the open
+   * window and opening a second one, and the second thing does not exist: an
+   * editor handed a folder URI one of its windows already has raises that
+   * window whatever flags it was given. This pins the verb back at two
+   * arguments so the mode cannot creep back in from the renderer's side.
    */
-  it('asks to focus the existing window unless told otherwise', async () => {
-    const api = fakeApi({ snapshot: snapshot({ containers: [running] }) });
-    const { result } = renderHook(() => useDiscovery(api, stubNotices(), 'vscode', undefined));
-    await waitFor(() => {
-      expect(result.current.containers).toHaveLength(1);
-    });
-
-    await act(async () => {
-      result.current.open(running as DevContainer);
-      await vi.waitFor(() => {
-        expect(api.openInEditor).toHaveBeenCalledWith(running.id, 'vscode', 'reuse');
-      });
-    });
-  });
-
-  it('asks for a second window only when the card says so', async () => {
+  it('asks to open with the container id and the editor, and no mode', async () => {
     const api = fakeApi({ snapshot: snapshot({ containers: [running] }) });
     const notices = stubNotices();
     const { result } = renderHook(() => useDiscovery(api, notices, 'vscode', undefined));
@@ -242,16 +229,12 @@ describe('useDiscovery', () => {
     });
 
     await act(async () => {
-      result.current.open(running as DevContainer, 'new-window');
+      result.current.open(running as DevContainer);
       await vi.waitFor(() => {
-        expect(api.openInEditor).toHaveBeenCalledWith(running.id, 'vscode', 'new-window');
+        expect(api.openInEditor).toHaveBeenCalledWith(running.id, 'vscode');
       });
     });
-    // Worded for what was asked for: "Opening webapp…" would read as a
-    // duplicate having been created when one was only brought forward.
-    expect(notices.showInfo).toHaveBeenCalledWith(
-      expect.stringContaining('Opening a new window on'),
-    );
+    expect(notices.showInfo).toHaveBeenCalledWith(expect.stringContaining('Opening'));
   });
 
   it('keeps a failed open URI for the copy button', async () => {

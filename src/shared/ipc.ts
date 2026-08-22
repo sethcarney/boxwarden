@@ -10,7 +10,6 @@ import type {
   EngineSelection,
   EngineSummary,
   GitStatus,
-  OpenInEditorMode,
   ProjectId,
   ProjectScan,
   TerminalId,
@@ -237,18 +236,12 @@ export interface BoxwardenApi {
   /**
    * Open a container's workspace folder in an editor.
    *
-   * `mode` is the third input the renderer supplies anywhere in this surface,
-   * and it is safe for the same reason `updateStatus(force)` is: a closed
-   * two-arm union, parsed in the main process, that cannot name a path, a
-   * window or a binary. It chooses between focusing the window this container
-   * already has and opening a second one — and it defaults to focusing, so an
-   * older renderer that omits it gets the behaviour this verb has always had.
+   * An id and an editor id, and nothing else. A `mode` argument used to sit
+   * here choosing between focusing the open window and opening a second one;
+   * it was removed with the button that sent it, because the CLI cannot open
+   * two windows on one folder at all — see the note in `models/editor.ts`.
    */
-  openInEditor(
-    id: ContainerId,
-    editorId: EditorId,
-    mode?: OpenInEditorMode,
-  ): Promise<OpenInEditorResult>;
+  openInEditor(id: ContainerId, editorId: EditorId): Promise<OpenInEditorResult>;
   /**
    * The sixth verb, and the only one added since the surface was fixed at five.
    * It earns the channel rather than looping over an existing one because it

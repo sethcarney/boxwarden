@@ -35,9 +35,8 @@ your machine, reattaches your editor to them, and opens a shell inside them.
 - Opens them in VS Code, VS Code Insiders, Cursor, or Windsurf — with a
   copyable URI fallback when launching fails.
 - Says which of those is **already attached**, with that editor's own mark, and
-  turns the button into **Focus** with a quieter **New window** beside it. The
-  Stop button says so too: an agent is _ended_ by stopping a container, a window
-  is _stranded_ by it.
+  renames the button to **Focus**. The Stop button says so too: an agent is
+  _ended_ by stopping a container, a window is _stranded_ by it.
 - Opens a shell inside a running container, in your own terminal emulator —
   Terminal.app, iTerm2, GNOME Terminal, Konsole, kitty, WezTerm, Alacritty,
   Windows Terminal and others — with a copyable `docker exec` line when
