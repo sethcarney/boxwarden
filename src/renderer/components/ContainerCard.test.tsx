@@ -47,6 +47,8 @@ function renderCard(
   const handlers = {
     onStart: vi.fn(),
     onStop: vi.fn(),
+    onKill: vi.fn(),
+    onRebuild: vi.fn(),
     onOpen: vi.fn(),
     onOpenTerminal: vi.fn(),
     onStartupCommandChange: vi.fn(),
@@ -61,6 +63,7 @@ function renderCard(
       terminalAvailable
       startupCommand=""
       busy={false}
+      buildGate={{ ready: true }}
       now={NOW}
       {...handlers}
       {...props}
@@ -98,6 +101,9 @@ describe('ContainerCard', () => {
           now={NOW}
           onStart={vi.fn()}
           onStop={vi.fn()}
+          onKill={vi.fn()}
+          onRebuild={vi.fn()}
+          buildGate={{ ready: true }}
           onOpen={vi.fn()}
           onOpenTerminal={vi.fn()}
           onStartupCommandChange={vi.fn()}
@@ -335,11 +341,98 @@ describe('ContainerCard', () => {
       expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
     });
 
-    it('disables everything and says so while an action is in flight', () => {
-      renderCard(devContainer(), { busy: true });
+    it('disables everything and says so while a stop is in flight', () => {
+      renderCard(devContainer(), { busy: true, busyAction: 'stop' });
       const stop = screen.getByRole('button', { name: 'Stopping…' });
       expect(stop.hasAttribute('disabled')).toBe(true);
       expect(screen.getByRole('button', { name: 'Open in VS Code' }).hasAttribute('disabled')).toBe(
+        true,
+      );
+    });
+
+    /**
+     * "Stopping…" was every busy state's label, so opening a terminal briefly
+     * relabelled the Stop button with a thing that was not happening. The verb
+     * on the claim is what lets the label tell the truth.
+     */
+    it('does not say Stopping… when the busy action is not a stop', () => {
+      renderCard(devContainer(), { busy: true, busyAction: 'terminal' });
+      expect(screen.queryByRole('button', { name: 'Stopping…' })).toBeNull();
+      expect(screen.getByRole('button', { name: 'Stop' }).hasAttribute('disabled')).toBe(true);
+    });
+  });
+
+  describe('the Force stop button', () => {
+    it('kills the container it sits on', async () => {
+      const container = devContainer();
+      const { onKill } = renderCard(container);
+      await userEvent.click(screen.getByRole('button', { name: 'Force stop' }));
+      expect(onKill.mock.calls.at(-1)).toEqual([container]);
+    });
+
+    it('is only offered where Stop is', () => {
+      renderCard(
+        devContainer({
+          runtime: { state: 'exited', exitCode: 0, finishedAt: new Date(NOW - 3_600_000) },
+        }),
+      );
+      expect(screen.queryByRole('button', { name: 'Force stop' })).toBeNull();
+    });
+
+    /**
+     * The one moment this button matters is when a stop hung, and that is a
+     * busy state — so it must stay clickable through exactly that claim, and
+     * no other.
+     */
+    it('stays clickable while a stop is in flight, and only then', () => {
+      renderCard(devContainer(), { busy: true, busyAction: 'stop' });
+      expect(screen.getByRole('button', { name: 'Force stop' }).hasAttribute('disabled')).toBe(
+        false,
+      );
+    });
+
+    it('is disabled while its own kill is in flight', () => {
+      renderCard(devContainer(), { busy: true, busyAction: 'kill' });
+      const kill = screen.getByRole('button', { name: 'Killing…' });
+      expect(kill.hasAttribute('disabled')).toBe(true);
+    });
+
+    it('explains itself, with the stop warning folded in when a session is live', () => {
+      renderCard(devContainer(), {
+        claude: {
+          kind: 'running',
+          sessions: [
+            { pid: 4242, command: 'claude', activity: { kind: 'idle' }, elapsed: '2m1.0s' },
+          ],
+        },
+      });
+      const kill = screen.getByRole('button', { name: 'Force stop' });
+      expect(kill.getAttribute('title')).toContain('SIGKILL');
+      expect(kill.getAttribute('title')).toContain('Claude Code session');
+    });
+  });
+
+  describe('the Rebuild button', () => {
+    it('rebuilds the container it sits on', async () => {
+      const container = devContainer();
+      const { onRebuild } = renderCard(container);
+      await userEvent.click(screen.getByRole('button', { name: 'Rebuild' }));
+      expect(onRebuild.mock.calls.at(-1)).toEqual([container]);
+    });
+
+    /** A disabled Rebuild always says why — the branch menu's own promise. */
+    it('is disabled with the reason when the tools are missing', () => {
+      renderCard(devContainer(), {
+        buildGate: { ready: false, reason: 'The devcontainer CLI was not found on this machine.' },
+      });
+      const rebuild = screen.getByRole('button', { name: 'Rebuild' });
+      expect(rebuild.hasAttribute('disabled')).toBe(true);
+      expect(rebuild.getAttribute('title')).toContain('devcontainer CLI');
+    });
+
+    it('says Rebuilding… while its own claim is in flight', () => {
+      renderCard(devContainer(), { busy: true, busyAction: 'rebuild' });
+      expect(screen.getByRole('button', { name: 'Rebuilding…' }).hasAttribute('disabled')).toBe(
         true,
       );
     });
@@ -380,6 +473,9 @@ describe('ContainerCard', () => {
           now={NOW}
           onStart={vi.fn()}
           onStop={vi.fn()}
+          onKill={vi.fn()}
+          onRebuild={vi.fn()}
+          buildGate={{ ready: true }}
           onOpen={vi.fn()}
           onOpenTerminal={vi.fn()}
           onStartupCommandChange={vi.fn()}

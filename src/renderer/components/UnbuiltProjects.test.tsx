@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { DevContainerProject, ProjectScan } from '../../models/index.js';
+import type { DevContainerProject, ProjectId, ProjectScan } from '../../models/index.js';
 import { asProjectId } from '../../models/index.js';
 import { summariseProjects } from '../presenters.js';
 import type { ProjectsViewModel } from '../viewmodels/index.js';
@@ -50,6 +50,8 @@ interface VmOptions {
   readonly addRoot?: () => void;
   readonly removeRoot?: (root: string) => void;
   readonly openProject?: (project: DevContainerProject) => void;
+  readonly build?: (project: DevContainerProject) => void;
+  readonly buildingId?: ProjectId;
 }
 
 /** The real `summariseProjects` is used so the summary assertions stay honest. */
@@ -71,12 +73,19 @@ function projectsVm(options: VmOptions = {}): ProjectsViewModel {
     addRoot: options.addRoot ?? vi.fn(),
     removeRoot: options.removeRoot ?? vi.fn(),
     openProject: options.openProject ?? vi.fn(),
+    build: options.build ?? vi.fn(),
+    buildingId: options.buildingId,
   };
 }
 
-function renderPanel(options: VmOptions = {}, editorAvailable = true) {
+function renderPanel(
+  options: VmOptions = {},
+  editorAvailable = true,
+  buildGate: { readonly ready: boolean; readonly reason?: string } = { ready: true },
+) {
   return render(
     <UnbuiltProjects
+      buildGate={buildGate}
       projects={projectsVm(options)}
       editorName="VS Code"
       editorAvailable={editorAvailable}
@@ -129,11 +138,45 @@ describe('UnbuiltProjects', () => {
     expect(openProject).toHaveBeenCalledWith(project());
   });
 
-  it('offers the devcontainer up command for the folder, rather than running it', () => {
+  it('still offers the devcontainer up command for copying, beside the Build button', () => {
     renderPanel();
     expect(screen.getByRole('button', { name: 'Copy devcontainer up' }).getAttribute('title')).toBe(
       'devcontainer up --workspace-folder /home/dev/code/api',
     );
+  });
+
+  it('builds the project it sits on', async () => {
+    const build = vi.fn();
+    renderPanel({ build });
+    await userEvent.click(screen.getByRole('button', { name: 'Build container' }));
+    expect(build).toHaveBeenCalledWith(project());
+  });
+
+  /** A disabled Build always says why — same promise as every gate here. */
+  it('is disabled with the reason when the tools are missing', () => {
+    renderPanel({}, true, { ready: false, reason: 'The devcontainer CLI was not found.' });
+    const button = screen.getByRole('button', { name: 'Build container' });
+    expect(button.hasAttribute('disabled')).toBe(true);
+    expect(button.getAttribute('title')).toContain('devcontainer CLI');
+  });
+
+  /**
+   * One build at a time: the row mid-build says so on its own button, and
+   * every OTHER row waits with the reason in its title.
+   */
+  it('marks the building row and holds the others', () => {
+    const second: DevContainerProject = {
+      ...project(),
+      id: asProjectId('/home/dev/code/web/.devcontainer/devcontainer.json'),
+      name: 'Web',
+      folder: { kind: 'posix', path: '/home/dev/code/web' },
+    };
+    renderPanel({ unbuilt: [project(), second], buildingId: project().id });
+
+    expect(screen.getByRole('button', { name: 'Building…' }).hasAttribute('disabled')).toBe(true);
+    const waiting = screen.getByRole('button', { name: 'Build container' });
+    expect(waiting.hasAttribute('disabled')).toBe(true);
+    expect(waiting.getAttribute('title')).toContain('Another build is already running');
   });
 
   it('names each root and what it found, so an empty list is explainable', () => {

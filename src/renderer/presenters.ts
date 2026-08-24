@@ -19,6 +19,7 @@ import type {
   ClaudeSession,
   ClaudeStatus,
   DevContainer,
+  DockerEnvironment,
   EditorAttachment,
   EditorFlavour,
   EndpointProbe,
@@ -691,6 +692,116 @@ function describeActivity(activity: SessionActivity): string {
           return 'working — running a command, using CPU';
       }
   }
+}
+
+/**
+ * The Force stop button's face.
+ *
+ * A separate button from Stop because it makes a different promise: Stop is
+ * SIGTERM plus the daemon's grace period, Force stop is SIGKILL now. The
+ * title says so in those terms, because the one honest reason to click it is
+ * that a Stop is hanging — and the button is deliberately left clickable in
+ * exactly that state (see `busyVerb` in `useDiscovery`).
+ *
+ * The stop warning is folded in ABOVE the explanation when present: whatever
+ * a graceful stop would have ended or stranded, a kill ends and strands with
+ * less ceremony, so the warning is at least as true here.
+ */
+export interface KillAction {
+  readonly label: string;
+  readonly title: string;
+}
+
+export function killAction(warning: string | undefined, dense: boolean): KillAction {
+  const base =
+    'SIGKILL, immediately — nothing inside gets a chance to save or clean up. For the container an ordinary Stop cannot end.';
+  return {
+    label: dense ? 'Kill' : 'Force stop',
+    title: warning === undefined ? base : `${warning}\n${base}`,
+  };
+}
+
+/**
+ * Whether Build and Rebuild have the tools they need, and why not when not.
+ *
+ * Both shell out to the devcontainer CLI, which drives the docker binary
+ * underneath — two probes, two different install steps, so the reason names
+ * whichever leg is missing rather than a generic "can't build". No snapshot
+ * yet reads as not-ready with nothing to say: buttons stay quietly disabled
+ * during the first poll rather than flashing an accusation at a machine
+ * nobody has looked at.
+ */
+export interface BuildGate {
+  readonly ready: boolean;
+  readonly reason?: string;
+}
+
+export function devcontainerBuildGate(environment: DockerEnvironment | undefined): BuildGate {
+  if (environment === undefined) return { ready: false };
+  if (!environment.cli.ok) {
+    return {
+      ready: false,
+      reason:
+        'The docker command was not found on this machine — the devcontainer CLI drives it underneath.',
+    };
+  }
+  if (!environment.devcontainer.ok) {
+    return {
+      ready: false,
+      reason:
+        'The devcontainer CLI was not found on this machine. Install it with: npm install -g @devcontainers/cli',
+    };
+  }
+  return { ready: true };
+}
+
+/**
+ * The Rebuild button's face, and whether it is allowed to be one.
+ *
+ * Rebuild is `devcontainer up --remove-existing-container`: the container is
+ * REMOVED and a fresh one is built from the devcontainer.json — the same
+ * thing the Dev Containers extension's own "Rebuild Container" does. The
+ * title says the destructive half in plain words, because "Rebuild" alone
+ * reads as a refresh to anyone who has not met the flag.
+ *
+ * `disabledReason` is always present when the button is off — the same rule
+ * the branch menu holds itself to: a control that is off for no stated
+ * reason is the thing this app keeps choosing not to ship.
+ */
+export interface RebuildAction {
+  readonly label: string;
+  readonly title: string;
+  readonly disabledReason?: string;
+}
+
+export function rebuildAction(
+  container: DevContainer,
+  gate: BuildGate,
+  warning: string | undefined,
+  dense: boolean,
+): RebuildAction {
+  // One word in both layouts — unlike Force stop there is no shorter honest
+  // spelling, and `dense` stays in the signature so the callers stay uniform.
+  void dense;
+  const label = 'Rebuild';
+  const blocked =
+    gate.reason ??
+    (gate.ready
+      ? container.localFolder.kind === 'unresolved'
+        ? 'This container\u2019s devcontainer.local_folder label could not be parsed, so there is no workspace folder to rebuild from.'
+        : container.localFolder.kind === 'wsl'
+          ? 'This workspace lives inside a WSL distro, and rebuilding it means running the devcontainer CLI in there — run devcontainer up inside the distro instead.'
+          : undefined
+      : 'Waiting for the first look at this machine\u2019s tools.');
+
+  if (blocked !== undefined) return { label, title: blocked, disabledReason: blocked };
+
+  const base =
+    'Removes this container and builds a fresh one from its devcontainer.json. Anything not in the workspace folder or a volume is lost with it. Takes minutes.';
+  return {
+    label,
+    title: warning === undefined ? base : `${warning}\n${base}`,
+  };
 }
 
 /**

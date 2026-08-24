@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { BranchListing, ClaudeStatus, EngineId } from '../models/index.js';
-import { devContainer } from './test-fixtures.js';
+import { devContainer, unresolvedContainer } from './test-fixtures.js';
 import {
   branchChip,
   branchMenu,
   claudeBadge,
   editorAction,
+  killAction,
+  devcontainerBuildGate,
+  rebuildAction,
   editorBadge,
   stopWarning,
   containerCountLabel,
@@ -344,6 +347,80 @@ describe('claudeBadge', () => {
     expect(badge?.denseLabel).toBe('?');
     expect(badge?.tone).toBe('unknown');
     expect(badge?.title).toContain('connect ENOENT');
+  });
+});
+
+describe('killAction', () => {
+  it('says what it is in signal terms, and shortens for rows', () => {
+    expect(killAction(undefined, false).label).toBe('Force stop');
+    expect(killAction(undefined, true).label).toBe('Kill');
+    expect(killAction(undefined, false).title).toContain('SIGKILL');
+  });
+
+  /**
+   * Whatever a graceful stop would have ended or stranded, a kill does with
+   * less ceremony — so the stop warning rides ABOVE the explanation rather
+   * than being replaced by it.
+   */
+  it('folds the stop warning in above its own explanation', () => {
+    const action = killAction('A Claude Code session is running in here. Stopping ends it.', false);
+    expect(action.title.startsWith('A Claude Code session')).toBe(true);
+    expect(action.title).toContain('SIGKILL');
+  });
+});
+
+describe('devcontainerBuildGate', () => {
+  // The healthy environment the fake snapshot ships, with one leg knocked out
+  // at a time — the gate has to name WHICH leg, not just say no.
+  const healthy = snapshot().environment;
+
+  it('names whichever leg is missing, innermost first', () => {
+    expect(devcontainerBuildGate(undefined)).toEqual({ ready: false });
+
+    const noDocker = { ...healthy, cli: { ok: false as const, code: 'not-on-path' as const } };
+    expect(devcontainerBuildGate(noDocker).reason).toContain('docker command');
+
+    const noDevcontainer = {
+      ...healthy,
+      devcontainer: { ok: false as const, code: 'not-on-path' as const },
+    };
+    expect(devcontainerBuildGate(noDevcontainer).reason).toContain(
+      'npm install -g @devcontainers/cli',
+    );
+
+    expect(devcontainerBuildGate(healthy)).toEqual({ ready: true });
+  });
+});
+
+describe('rebuildAction', () => {
+  const gate = { ready: true } as const;
+
+  it('says the destructive half in plain words, with the stop warning folded in', () => {
+    const action = rebuildAction(devContainer(), gate, undefined, false);
+    expect(action.disabledReason).toBeUndefined();
+    expect(action.title).toContain('Removes this container');
+
+    const warned = rebuildAction(
+      devContainer(),
+      gate,
+      'A Claude Code session is running in here. Stopping ends it.',
+      false,
+    );
+    expect(warned.title.startsWith('A Claude Code session')).toBe(true);
+  });
+
+  /** A disabled Rebuild always says why — the branch menu's own promise. */
+  it('is disabled with the gate reason, and for an unparseable label', () => {
+    const blocked = rebuildAction(
+      devContainer(),
+      { ready: false, reason: 'no CLI' },
+      undefined,
+      false,
+    );
+    expect(blocked.disabledReason).toBe('no CLI');
+
+    const unresolved = rebuildAction(unresolvedContainer(), gate, undefined, false);
+    expect(unresolved.disabledReason).toContain('could not be parsed');
   });
 });
 

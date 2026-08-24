@@ -13,7 +13,7 @@ import {
   statusLabel,
   statusTextClass,
 } from '../format.js';
-import type { BranchChip, BranchMenuBinding } from '../presenters.js';
+import type { BranchChip, BranchMenuBinding, BuildGate } from '../presenters.js';
 import {
   branchChip,
   branchMenu as branchMenuView,
@@ -21,6 +21,8 @@ import {
   claudeBadge,
   editorAction,
   editorBadge,
+  killAction,
+  rebuildAction,
   stopWarning,
   openBlockedReason,
   portLabel,
@@ -28,6 +30,7 @@ import {
   terminalBlockedReason,
   visiblePorts,
 } from '../presenters.js';
+import type { LifecycleVerb } from '../viewmodels/useDiscovery.js';
 import { BranchMenu } from './BranchMenu.js';
 import { ClaudeGlyph } from './ClaudeGlyph.js';
 import { EditorGlyph } from './EditorGlyph.js';
@@ -45,6 +48,15 @@ interface Props {
   /** '' when none is set. */
   readonly startupCommand: string;
   readonly busy: boolean;
+  /**
+   * Which action is holding the busy claim — see `busyVerb` in `useDiscovery`.
+   *
+   * What lets Stop say "Stopping…" only when a stop is what is running, and
+   * what keeps Force stop clickable while one is: the moment a stop hangs is
+   * the moment that button exists for, and it must not be behind the busy
+   * state the hang set.
+   */
+  readonly busyAction?: LifecycleVerb | undefined;
   readonly now: number;
   /**
    * Rows layout: one line per container. Trims the labels that do not fit on
@@ -93,8 +105,12 @@ interface Props {
    * an empty box.
    */
   readonly branchMenu?: BranchMenuBinding | undefined;
+  /** Whether Build/Rebuild have their tools — decided upstream, never here. */
+  readonly buildGate: BuildGate;
   readonly onStart: (container: DevContainer) => void;
   readonly onStop: (container: DevContainer) => void;
+  readonly onKill: (container: DevContainer) => void;
+  readonly onRebuild: (container: DevContainer) => void;
   readonly onOpen: (container: DevContainer) => void;
   readonly onOpenTerminal: (container: DevContainer) => void;
   readonly onStartupCommandChange: (container: DevContainer, command: string) => void;
@@ -116,14 +132,18 @@ export function ContainerCard({
   terminalAvailable,
   startupCommand,
   busy,
+  busyAction,
   now,
   dense = false,
   claude,
   editor,
   git,
   branchMenu,
+  buildGate,
   onStart,
   onStop,
+  onKill,
+  onRebuild,
   onOpen,
   onOpenTerminal,
   onStartupCommandChange,
@@ -138,6 +158,8 @@ export function ContainerCard({
   const branch = branchChip(git);
   const warning = stopWarning([claude], [editor]);
   const action = editorAction(editor, editorName, blocked, dense);
+  const kill = killAction(warning, dense);
+  const rebuild = rebuildAction(container, buildGate, warning, dense);
 
   return (
     <article className={cardClass(container.runtime, unresolved)}>
@@ -359,7 +381,26 @@ export function ContainerCard({
               onStop(container);
             }}
           >
-            {busy ? 'Stopping…' : 'Stop'}
+            {/* "Stopping…" only when a STOP holds the claim — an open or a
+                terminal resolving on this card is not a stop, and saying so
+                used to be this label's one small lie. */}
+            {busy && busyAction === 'stop' ? 'Stopping…' : 'Stop'}
+          </button>
+        )}
+
+        {canStop(container.runtime) && (
+          <button
+            type="button"
+            className={warning === undefined ? 'kill' : 'kill warn'}
+            title={kill.title}
+            // Clickable THROUGH a hanging stop — that is this button's whole
+            // reason to exist. Disabled once a kill of its own is in flight.
+            disabled={busy && busyAction !== 'stop'}
+            onClick={() => {
+              onKill(container);
+            }}
+          >
+            {busy && busyAction === 'kill' ? 'Killing…' : kill.label}
           </button>
         )}
 
@@ -371,9 +412,24 @@ export function ContainerCard({
               onStart(container);
             }}
           >
-            {busy ? 'Starting…' : 'Start'}
+            {busy && busyAction === 'start' ? 'Starting…' : 'Start'}
           </button>
         )}
+
+        {/* Last and quiet: the rarest action on the row, and the slowest. A
+            disabled Rebuild always says why in its title — same promise the
+            branch menu makes. */}
+        <button
+          type="button"
+          className="rebuild"
+          title={rebuild.title}
+          disabled={busy || rebuild.disabledReason !== undefined}
+          onClick={() => {
+            onRebuild(container);
+          }}
+        >
+          {busy && busyAction === 'rebuild' ? 'Rebuilding…' : rebuild.label}
+        </button>
       </footer>
     </article>
   );

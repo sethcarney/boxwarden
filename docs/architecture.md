@@ -455,10 +455,18 @@ Three details that are easy to get wrong:
   because nothing is launched from the result — see the raw label rule above for
   the case where it would not be.
 
-The panel offers and does not act. Opening the folder locally is a real button,
-because the editor's own "Reopen in Container" prompt is the supported path;
-building is a **copy** button for `devcontainer up`, because that command pulls
-images and runs `postCreateCommand` out of whatever the user last cloned.
+The panel now acts as well as offers. Opening the folder locally is one
+button, because the editor's own "Reopen in Container" prompt is a supported
+path; **Build container** is another, running `devcontainer up` for the row it
+sits on — the same trust decision as that prompt, made on an explicit click on
+a named project, with the cost and the code execution stated in the button's
+title. The **copy** button stays beside it: it is still the whole path for a
+WSL project (the CLI has to run inside the distro), for a machine without the
+CLI installed, and for anyone who wants the build output in a terminal they
+control. The spawn is an argv with `shell: false`, and the id the renderer
+sends resolves against the main process's own last scan — this is the one verb
+family where a renderer-supplied path would be executed rather than opened,
+which is why it never takes one.
 
 `folderUri` in `editor/uri.ts` builds the local-open URI, and the WSL arm is the
 one that matters: a `file:` URI pointing at `\\wsl.localhost\Ubuntu\...` opens

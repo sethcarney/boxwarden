@@ -90,6 +90,129 @@ describe('useDiscovery', () => {
     expect(api.discover).toHaveBeenCalledTimes(2);
   });
 
+  it('kills through its own verb, and the busy claim says so', async () => {
+    const api = fakeApi({ snapshot: snapshot({ containers: [running] }) });
+    const gate = deferred<ActionResult>();
+    api.kill.mockReturnValue(gate.promise);
+
+    const notices = stubNotices();
+    const { result } = renderHook(() => useDiscovery(api, notices, 'vscode', 'gnome-terminal'));
+    await waitFor(() => {
+      expect(result.current.containers).toHaveLength(1);
+    });
+
+    act(() => {
+      result.current.kill(running);
+    });
+    await waitFor(() => {
+      expect(result.current.busyVerb(running.id)).toBe('kill');
+    });
+    expect(api.kill).toHaveBeenCalledWith(running.id);
+
+    await act(async () => {
+      gate.resolve({ ok: true });
+      await gate.promise;
+    });
+    await waitFor(() => {
+      expect(result.current.isBusy(running.id)).toBe(false);
+    });
+  });
+
+  /**
+   * The overlap the whole verb exists for: a stop that hangs, and a kill fired
+   * at it. The kill landing must release only its OWN claim — released by id,
+   * it would clear the stop's too and re-enable every button while the stop is
+   * still in flight against a container that did not die.
+   */
+  it("a kill landing mid-stop releases its own claim and leaves the stop's", async () => {
+    const api = fakeApi({ snapshot: snapshot({ containers: [running] }) });
+    const hangingStop = deferred<ActionResult>();
+    const killGate = deferred<ActionResult>();
+    api.stop.mockReturnValue(hangingStop.promise);
+    api.kill.mockReturnValue(killGate.promise);
+
+    const notices = stubNotices();
+    const { result } = renderHook(() => useDiscovery(api, notices, 'vscode', 'gnome-terminal'));
+    await waitFor(() => {
+      expect(result.current.containers).toHaveLength(1);
+    });
+
+    act(() => {
+      result.current.stop(running);
+    });
+    await waitFor(() => {
+      expect(result.current.busyVerb(running.id)).toBe('stop');
+    });
+
+    // The kill supersedes the stop as the claim the buttons reflect.
+    act(() => {
+      result.current.kill(running);
+    });
+    await waitFor(() => {
+      expect(result.current.busyVerb(running.id)).toBe('kill');
+    });
+
+    await act(async () => {
+      killGate.resolve({ ok: true });
+      await killGate.promise;
+    });
+
+    // The stop has not landed, so the container is still busy — with the
+    // stop's claim back in front.
+    await waitFor(() => {
+      expect(result.current.busyVerb(running.id)).toBe('stop');
+    });
+    expect(result.current.isBusy(running.id)).toBe(true);
+
+    await act(async () => {
+      hangingStop.resolve({ ok: true });
+      await hangingStop.promise;
+    });
+    await waitFor(() => {
+      expect(result.current.isBusy(running.id)).toBe(false);
+    });
+  });
+
+  /**
+   * A rebuild runs for minutes, and it must NOT freeze the poll the way the
+   * short verbs do — a frozen poll during a rebuild freezes every other card
+   * on screen, and hides the one interesting thing this action produces: the
+   * container going away and coming back. Fake timers, same reasons as the
+   * hidden-window suite below.
+   */
+  it('keeps polling while a rebuild is in flight', async () => {
+    vi.useFakeTimers();
+    const notices = stubNotices();
+    const api = fakeApi({ snapshot: snapshot({ containers: [running] }) });
+    // A promise that never lands — the executor ignores its resolvers on
+    // purpose, which is the eslint exception being suppressed.
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
+    api.rebuild.mockReturnValue(new Promise(() => {}));
+
+    try {
+      const { result } = renderHook(() => useDiscovery(api, notices, 'vscode', undefined));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(api.discover).toHaveBeenCalledTimes(1);
+
+      act(() => {
+        result.current.rebuild(running as DevContainer);
+      });
+      expect(result.current.busyVerb(running.id)).toBe('rebuild');
+      expect(notices.showInfo.mock.calls.at(-1)?.[0]).toContain('few minutes');
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(REFRESH_INTERVAL_MS * 3);
+      });
+      // Three more readings landed while the rebuild ran. A stop in the same
+      // position holds the poll — that contrast is the point.
+      expect(api.discover.mock.calls.length).toBeGreaterThan(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('reports a lifecycle failure as a message rather than swallowing it', async () => {
     const api = fakeApi({ snapshot: snapshot({ containers: [stopped] }) });
     api.start.mockResolvedValue({ ok: false, message: 'no such image' });

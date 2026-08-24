@@ -62,6 +62,7 @@ VIEWMODEL   src/renderer/viewmodels/   state, commands, derived values (React ho
 MODEL       src/models/                pure types and functions, imports nothing
             src/main/                  the impure shells that fill them
               docker/     endpoint discovery, dockerode, inspect→model
+              devcontainer/  the devcontainer CLI: probe, up argv, spawn
               discovery/  finding a binary on this machine
               editor/     URI building, spawn
               terminal/   docker exec argv, emulator quoting, spawn
@@ -80,6 +81,7 @@ MODEL       src/models/                pure types and functions, imports nothing
    | `docker/client.ts` (dockerode)    | `docker/mapping.ts`, `docker/host-path.ts` |
    | `docker/client.ts` (probing)      | `docker/endpoint.ts`                       |
    | `editor/launch.ts` (spawn)        | `editor/uri.ts`                            |
+   | `devcontainer/run.ts` (spawn)     | `devcontainer/command.ts`                  |
    | `terminal/launch.ts` (spawn)      | `terminal/command.ts`                      |
    | `discovery/resolve.ts` (fs, exec) | `editor/targets.ts`, `terminal/targets.ts` |
    | `projects/scan.ts` (fs walk)      | `models/project.ts`                        |
@@ -106,19 +108,19 @@ Docker daemon or a display, and why the shells stay small.
 `useAppViewModel()` composes eleven, kept separate because their lifetimes
 genuinely differ:
 
-| Hook              | Owns                                                        | Cadence                    |
-| ----------------- | ----------------------------------------------------------- | -------------------------- |
-| `useDiscovery`    | snapshot, busy set, start/stop/open/terminal, engine choice | polled every 5s            |
-| `useProjects`     | scan, roots, unbuilt/built partition                        | on open, on ask            |
-| `useEditors`      | installed editors, the chosen one                           | read once                  |
-| `useTerminals`    | installed emulators, the chosen one, startup commands       | read once                  |
-| `useNotices`      | the message bar and the copyable fallback                   | event-driven               |
-| `useClaudeStatus` | Claude Code presence per container                          | polled every 15s           |
-| `useGitStatus`    | the branch each workspace folder is on                      | polled every 30s           |
-| `useBranches`     | the open branch menu, its listing, and switching            | on click only              |
-| `useUpdate`       | the release check: banner, footer line, dismiss, off switch | asked hourly, GitHub daily |
-| `useAdvisories`   | which advice is hidden, and which screen is showing         | never touches IPC          |
-| `useTheme`        | layout + theme, persisted to localStorage                   | never touches IPC          |
+| Hook              | Owns                                                                                        | Cadence                    |
+| ----------------- | ------------------------------------------------------------------------------------------- | -------------------------- |
+| `useDiscovery`    | snapshot, busy set, lifecycle verbs (start/stop/kill/rebuild), open/terminal, engine choice | polled every 5s            |
+| `useProjects`     | scan, roots, unbuilt/built partition                                                        | on open, on ask            |
+| `useEditors`      | installed editors, the chosen one                                                           | read once                  |
+| `useTerminals`    | installed emulators, the chosen one, startup commands                                       | read once                  |
+| `useNotices`      | the message bar and the copyable fallback                                                   | event-driven               |
+| `useClaudeStatus` | Claude Code presence per container                                                          | polled every 15s           |
+| `useGitStatus`    | the branch each workspace folder is on                                                      | polled every 30s           |
+| `useBranches`     | the open branch menu, its listing, and switching                                            | on click only              |
+| `useUpdate`       | the release check: banner, footer line, dismiss, off switch                                 | asked hourly, GitHub daily |
+| `useAdvisories`   | which advice is hidden, and which screen is showing                                         | never touches IPC          |
+| `useTheme`        | layout + theme, persisted to localStorage                                                   | never touches IPC          |
 
 Four conventions hold this together:
 
@@ -128,13 +130,19 @@ Four conventions hold this together:
   `notices`** rather than depending on the object. `useNotices` returns a fresh
   object literal each render, and depending on it would re-run the poll effect
   on every notice.
-- **Actions live next to the state they change.** Start/stop/open/terminal sit
-  in `useDiscovery` because they share the busy set — the poll, the busy set and
-  the lifecycle verbs are one state machine, and splitting them lets a stop land
-  on top of a refresh and get overwritten with pre-stop state. `useTerminals`
-  owns the emulator list and the startup commands but NOT `openTerminal`, for
-  exactly that reason: two busy sets would let one re-enable a button the other
-  still considers busy.
+- **Actions live next to the state they change.** Start/stop/kill/rebuild/open/
+  terminal sit in `useDiscovery` because they share the busy set — the poll, the
+  busy set and the lifecycle verbs are one state machine, and splitting them
+  lets a stop land on top of a refresh and get overwritten with pre-stop state.
+  `useTerminals` owns the emulator list and the startup commands but NOT
+  `openTerminal`, for exactly that reason: two busy sets would let one re-enable
+  a button the other still considers busy. The busy set holds `{id, verb}`
+  CLAIMS, compared by identity when released, because two actions can
+  legitimately overlap on one container — a kill fired at a hanging stop is the
+  kill button's whole job, and a release keyed by id would let the first to
+  land re-enable every button while the second still runs. A rebuild is the
+  one verb that does not freeze the poll while it runs: it takes minutes, and
+  a frozen poll would freeze every other card with it.
 - **Failures report through `useNotices`**, never through a second message
   channel, so a later failure cannot hide behind an earlier one. `useUpdate` is
   the one exception, and it is a narrow one: every other ViewModel reports a
@@ -144,14 +152,23 @@ Four conventions hold this together:
   is an arm of `UpdateStatus` instead, so it renders where the answer would
   have.
 
-**The IPC surface is twenty-one narrow verbs** — see `src/shared/ipc.ts` — all
+**The IPC surface is twenty-four narrow verbs** — see `src/shared/ipc.ts` — all
 declared as a `BoxwardenApi` interface consumed by the renderer without
 importing Electron. They fall into three groups by cadence:
 
-- **Docker, polled every 5s**: `discover`, `start`, `stop`, `listEditors`,
-  `openInEditor`, `selectEngine`.
+- **Docker, polled every 5s**: `discover`, `start`, `stop`, `kill`,
+  `listEditors`, `openInEditor`, `selectEngine`. `kill` is SIGKILL with no
+  grace — a separate verb and not a flag on `stop`, because the two make
+  different promises to the process inside, and because the moment it matters
+  is while a `stop` is still hanging.
 - **Filesystem, on demand only**: `scanProjects`, `openProject`,
   `addProjectRoot`, `removeProjectRoot`.
+- **The devcontainer CLI, on a click and then for minutes**: `buildProject`
+  and `rebuild`, which spawn `devcontainer up` — a process no combination of
+  the other verbs can, the same bar the terminal verbs cleared. They run code
+  out of the repository they point at (`postCreateCommand` and friends), which
+  is why their ids resolve against the main process's own last scan and
+  nothing else does — see below.
 - **Terminals, read once then on demand**: `listTerminals`, `openTerminal`,
   `getStartupCommands`, `setStartupCommand`.
 - **Container processes, polled every 15s**: `containerActivity` — Claude Code
@@ -299,7 +316,9 @@ Persisted by `src/main/preferences.ts` and applied before the window opens.
 `Advice[]` (title, body, copyable commands, doc links), computed in the main
 process at discover time and shipped in the snapshot. It covers missing WSL, a
 WSL distro without socat, nothing installed (per-platform install menu),
-`EACCES` on a socket, a socket that refuses, and an engine too old.
+`EACCES` on a socket, a socket that refuses, an engine too old, and — as
+info-severity notes, once an engine is otherwise healthy — the `docker` and
+`devcontainer` binaries that Build and Rebuild shell out to being missing.
 
 Two rules when adding to it:
 
@@ -399,9 +418,19 @@ of the story on a machine where nothing has been built yet.
 - **Roots** default to `$HOME` (+ `/workspaces` on Linux) and are persisted in
   `preferences.json`. `undefined` means "use the defaults"; `[]` means "the user
   removed them all" — `parseProjectRoots` keeps those distinct on purpose.
-- **`devcontainer up` is copied, never run** — same rule as the setup advice, and
-  a stronger case: it pulls images and executes `postCreateCommand` from the
-  repo.
+- **`devcontainer up` now RUNS from the Build button, and the posture change
+  is deliberate.** The whole MVP copied the command instead, because it pulls
+  images and executes `postCreateCommand` from the repo. What changed is not
+  the risk but who elects it: Build runs on an explicit click on a named
+  project, the same trust decision as the editor's own "Reopen in Container"
+  prompt, with the destructive/expensive half stated in the button's title.
+  Three things survived the change on purpose: the id resolves against the
+  main process's own scan (a renderer-supplied path here would be EXECUTED,
+  not just opened); the spawn is an argv with `shell: false`; and the Copy
+  button remains — it is still the whole path for a WSL project, for a
+  machine without the CLI, and for watching the build output. The setup
+  advice's commands are still shown and never run; they reboot machines and
+  use `sudo`, and no click elects that.
 
 ### Opening a terminal
 

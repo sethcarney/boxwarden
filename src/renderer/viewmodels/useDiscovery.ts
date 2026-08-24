@@ -10,12 +10,28 @@ import type { ActionResult, BoxwardenApi, DiscoverySnapshot } from '../../shared
 import { canStart, canStop } from '../format.js';
 import type { ContainerGroup } from '../grouping.js';
 import { groupContainers } from '../grouping.js';
-import type { EngineChip } from '../presenters.js';
-import { emptyListMessage, engineChip } from '../presenters.js';
+import type { BuildGate, EngineChip } from '../presenters.js';
+import { devcontainerBuildGate, emptyListMessage, engineChip } from '../presenters.js';
 import { useMounted } from './useMounted.js';
 import type { NoticesViewModel } from './useNotices.js';
 
 export const REFRESH_INTERVAL_MS = 5_000;
+
+/** Which lifecycle action holds a container's busy claim. */
+export type LifecycleVerb = 'start' | 'stop' | 'kill' | 'open' | 'terminal' | 'rebuild';
+
+/**
+ * One in-flight action's claim on one container.
+ *
+ * Compared by IDENTITY when released, not by id — see `withBusy`. Two actions
+ * can legitimately overlap on one container (a kill fired at a hanging stop is
+ * the whole point of the kill), and the first to finish must release only its
+ * own claim.
+ */
+interface BusyEntry {
+  readonly id: ContainerId;
+  readonly verb: LifecycleVerb;
+}
 
 export interface DiscoveryViewModel {
   readonly snapshot: DiscoverySnapshot | undefined;
@@ -29,10 +45,33 @@ export interface DiscoveryViewModel {
   readonly emptyMessage: string;
   readonly anyBusy: boolean;
   readonly isBusy: (id: ContainerId) => boolean;
+  /**
+   * The MOST RECENT action still holding this container, or undefined.
+   *
+   * What the card reads to say "Stopping…" only when a stop is what is
+   * running, and to keep Force stop clickable while it is — the one moment
+   * that button matters is precisely when everything else on the card is
+   * disabled by the stop that hung.
+   */
+  readonly busyVerb: (id: ContainerId) => LifecycleVerb | undefined;
   readonly isGroupBusy: (group: ContainerGroup) => boolean;
   readonly refresh: () => void;
   readonly start: (container: DevContainer) => void;
   readonly stop: (container: DevContainer) => void;
+  /**
+   * SIGKILL, now. Allowed while a `stop` on the same container is still in
+   * flight — that is not a race to guard against, it is the button's job.
+   */
+  readonly kill: (container: DevContainer) => void;
+  /**
+   * `devcontainer up --remove-existing-container` for this container's
+   * workspace. Minutes, not seconds — the poll keeps running underneath it
+   * (see `withBusy`), so the card shows the container going away and coming
+   * back as the CLI works.
+   */
+  readonly rebuild: (container: DevContainer) => void;
+  /** Whether Build and Rebuild have their tools, and why not when not. */
+  readonly buildGate: BuildGate;
   readonly startAll: (containers: readonly DevContainer[]) => void;
   readonly stopAll: (containers: readonly DevContainer[]) => void;
   /**
@@ -64,7 +103,7 @@ export function useDiscovery(
   terminalId: TerminalId | undefined,
 ): DiscoveryViewModel {
   const [snapshot, setSnapshot] = useState<DiscoverySnapshot | undefined>(undefined);
-  const [busy, setBusy] = useState<readonly ContainerId[]>([]);
+  const [busy, setBusy] = useState<readonly BusyEntry[]>([]);
   const mounted = useMounted();
 
   /**
@@ -138,18 +177,33 @@ export function useDiscovery(
    * otherwise the siblings look actionable while they are mid-stop.
    */
   const withBusy = useCallback(
-    async (targets: readonly DevContainer[], action: () => Promise<ActionResult>) => {
-      const ids = targets.map((target) => target.id);
-      setBusy((current) => [...current, ...ids]);
-      inFlight.current = true;
+    async (
+      targets: readonly DevContainer[],
+      verb: LifecycleVerb,
+      action: () => Promise<ActionResult>,
+    ) => {
+      const entries: readonly BusyEntry[] = targets.map((target) => ({ id: target.id, verb }));
+      setBusy((current) => [...current, ...entries]);
+      // A rebuild runs for MINUTES, and freezing the poll for its whole
+      // duration would freeze every other card on screen too — so it alone
+      // leaves the poll running, which is also what lets its own card show
+      // the container going away and coming back. The short verbs keep the
+      // guard: a poll landing mid-stop overwrites the row with pre-stop state.
+      const blockPoll = verb !== 'rebuild';
+      if (blockPoll) inFlight.current = true;
       try {
         const result = await action();
         if (!result.ok) showError(result.message);
       } catch (error) {
         showThrown(error);
       } finally {
-        if (mounted.current) setBusy((current) => current.filter((id) => !ids.includes(id)));
-        inFlight.current = false;
+        // Released by IDENTITY, not by id. A kill fired at a hanging stop puts
+        // two claims on one container, and whichever action lands first must
+        // not release the other's — filtering by id here would re-enable every
+        // button while the second action is still running.
+        if (mounted.current)
+          setBusy((current) => current.filter((entry) => !entries.includes(entry)));
+        if (blockPoll) inFlight.current = false;
         // Re-read rather than patching the row optimistically: Docker is the
         // source of truth, and a container that failed to start for its own
         // reasons should show that, not the state we hoped for.
@@ -162,7 +216,7 @@ export function useDiscovery(
   const start = useCallback(
     (container: DevContainer) => {
       if (api === undefined) return;
-      void withBusy([container], () => api.start(container.id));
+      void withBusy([container], 'start', () => api.start(container.id));
     },
     [api, withBusy],
   );
@@ -170,9 +224,29 @@ export function useDiscovery(
   const stop = useCallback(
     (container: DevContainer) => {
       if (api === undefined) return;
-      void withBusy([container], () => api.stop(container.id));
+      void withBusy([container], 'stop', () => api.stop(container.id));
     },
     [api, withBusy],
+  );
+
+  const kill = useCallback(
+    (container: DevContainer) => {
+      if (api === undefined) return;
+      void withBusy([container], 'kill', () => api.kill(container.id));
+    },
+    [api, withBusy],
+  );
+
+  const rebuild = useCallback(
+    (container: DevContainer) => {
+      if (api === undefined) return;
+      // Said up front, because the next several minutes look like nothing
+      // happening followed by the container disappearing — both of which are
+      // the feature working.
+      showInfo(`Rebuilding ${container.name} — this can take a few minutes…`);
+      void withBusy([container], 'rebuild', () => api.rebuild(container.id));
+    },
+    [api, showInfo, withBusy],
   );
 
   /**
@@ -193,7 +267,7 @@ export function useDiscovery(
       );
       if (eligible.length === 0) return;
 
-      void withBusy(eligible, async (): Promise<ActionResult> => {
+      void withBusy(eligible, verb, async (): Promise<ActionResult> => {
         const results = await Promise.allSettled(
           eligible.map((container) =>
             verb === 'start' ? api.start(container.id) : api.stop(container.id),
@@ -234,7 +308,7 @@ export function useDiscovery(
   const open = useCallback(
     (container: DevContainer) => {
       if (api === undefined) return;
-      void withBusy([container], async (): Promise<ActionResult> => {
+      void withBusy([container], 'open', async (): Promise<ActionResult> => {
         const result = await api.openInEditor(container.id, editorId);
         if (result.ok) {
           showInfo(`Opening ${container.name}…`);
@@ -268,7 +342,7 @@ export function useDiscovery(
   const openTerminal = useCallback(
     (container: DevContainer) => {
       if (api === undefined || terminalId === undefined) return;
-      void withBusy([container], async (): Promise<ActionResult> => {
+      void withBusy([container], 'terminal', async (): Promise<ActionResult> => {
         const result = await api.openTerminal(container.id, terminalId);
         if (result.ok) {
           showInfo(`Opening a terminal in ${container.name}…`);
@@ -316,12 +390,24 @@ export function useDiscovery(
   const groups = groupContainers(containers);
   const engine = snapshot === undefined ? undefined : engineChip(snapshot);
 
-  const isBusy = useCallback((id: ContainerId) => busy.includes(id), [busy]);
+  const isBusy = useCallback((id: ContainerId) => busy.some((entry) => entry.id === id), [busy]);
+  // The LAST claim, not the first: a kill fired at a hanging stop is the more
+  // recent statement of intent, and it is the one the buttons should reflect.
+  const busyVerb = useCallback(
+    (id: ContainerId) => {
+      for (let index = busy.length - 1; index >= 0; index--) {
+        const entry = busy[index];
+        if (entry?.id === id) return entry.verb;
+      }
+      return undefined;
+    },
+    [busy],
+  );
   const isGroupBusy = useCallback(
     (group: ContainerGroup) =>
       group.kind === 'single'
-        ? busy.includes(group.container.id)
-        : group.containers.some((container) => busy.includes(container.id)),
+        ? busy.some((entry) => entry.id === group.container.id)
+        : group.containers.some((container) => busy.some((entry) => entry.id === container.id)),
     [busy],
   );
 
@@ -337,11 +423,15 @@ export function useDiscovery(
         ? ''
         : emptyListMessage(snapshot.selection, engine?.connectedCount ?? 0),
     anyBusy: busy.length > 0,
+    buildGate: devcontainerBuildGate(snapshot?.environment),
     isBusy,
+    busyVerb,
     isGroupBusy,
     refresh: useCallback(() => void refresh(), [refresh]),
     start,
     stop,
+    kill,
+    rebuild,
     startAll,
     stopAll,
     open,

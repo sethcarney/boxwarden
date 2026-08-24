@@ -26,7 +26,9 @@ your machine, reattaches your editor to them, and opens a shell inside them.
   exposed-only ports.
 - Groups Docker Compose projects, so stopping a workspace does not leave its
   database running.
-- Starts and stops them, individually or per project.
+- Starts and stops them, individually or per project — with a **Force stop**
+  (SIGKILL) that stays clickable while an ordinary stop hangs, for the
+  container whose PID 1 shrugs at SIGTERM.
 - Shows the **branch each workspace is on**, read from the checkout on your own
   disk — so a row of cards from the same repository is not four identical names.
 - Flags containers with a **Claude Code session running inside**, and says so on
@@ -41,6 +43,11 @@ your machine, reattaches your editor to them, and opens a shell inside them.
   Terminal.app, iTerm2, GNOME Terminal, Konsole, kitty, WezTerm, Alacritty,
   Windows Terminal and others — with a copyable `docker exec` line when
   launching fails.
+- **Builds and rebuilds** through the devcontainer CLI: a Build button on any
+  `devcontainer.json` found on disk, and a Rebuild button on every card that
+  removes the container and builds it fresh from its config — with a copyable
+  `devcontainer up` beside both for when you want the output in your own
+  terminal.
 - Remembers a **startup command** per container, run inside it before the
   interactive shell each time you open a terminal. Stored against the host
   folder, so it survives a rebuild.

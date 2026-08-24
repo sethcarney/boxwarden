@@ -8,7 +8,8 @@ import type {
 import { ComposeGroup } from '../components/ComposeGroup.js';
 import { ContainerCard } from '../components/ContainerCard.js';
 import type { ContainerGroup } from '../grouping.js';
-import type { BranchMenuBinding } from '../presenters.js';
+import type { BranchMenuBinding, BuildGate } from '../presenters.js';
+import type { LifecycleVerb } from '../viewmodels/useDiscovery.js';
 import type { LayoutMode } from '../view.js';
 
 interface Props {
@@ -22,6 +23,7 @@ interface Props {
   readonly startupCommandFor: (container: DevContainer) => string;
   readonly now: number;
   readonly isBusy: (id: DevContainer['id']) => boolean;
+  readonly busyVerb: (id: DevContainer['id']) => LifecycleVerb | undefined;
   readonly isGroupBusy: (group: ContainerGroup) => boolean;
   /** Claude Code presence, looked up per container. Undefined means "no answer yet". */
   readonly claudeFor: (id: DevContainer['id']) => ClaudeStatus | undefined;
@@ -40,8 +42,11 @@ interface Props {
    * callbacks, already bound to that container's id by the ViewModel.
    */
   readonly branchMenuFor: (id: DevContainer['id']) => BranchMenuBinding;
+  readonly buildGate: BuildGate;
   readonly onStart: (container: DevContainer) => void;
   readonly onStop: (container: DevContainer) => void;
+  readonly onKill: (container: DevContainer) => void;
+  readonly onRebuild: (container: DevContainer) => void;
   readonly onOpen: (container: DevContainer) => void;
   readonly onOpenTerminal: (container: DevContainer) => void;
   readonly onStartupCommandChange: (container: DevContainer, command: string) => void;
@@ -67,6 +72,7 @@ export function ContainerList({
   startupCommandFor,
   now,
   isBusy,
+  busyVerb,
   isGroupBusy,
   claudeFor,
   claudeForAll,
@@ -74,8 +80,11 @@ export function ContainerList({
   editorsForAll,
   gitFor,
   branchMenuFor,
+  buildGate,
   onStart,
   onStop,
+  onKill,
+  onRebuild,
   onOpen,
   onOpenTerminal,
   onStartupCommandChange,
@@ -95,6 +104,7 @@ export function ContainerList({
       terminalAvailable={terminalAvailable}
       startupCommand={startupCommandFor(container)}
       busy={isBusy(container.id)}
+      busyAction={busyVerb(container.id)}
       now={now}
       // Rows mode is one line per container, and "Open in VS Code Insiders"
       // does not fit on it. The full label stays as the button's title.
@@ -103,8 +113,11 @@ export function ContainerList({
       editor={editorFor(container.id)}
       git={gitFor(container.id)}
       branchMenu={branchMenuFor(container.id)}
+      buildGate={buildGate}
       onStart={onStart}
       onStop={onStop}
+      onKill={onKill}
+      onRebuild={onRebuild}
       onOpen={onOpen}
       onOpenTerminal={onOpenTerminal}
       onStartupCommandChange={onStartupCommandChange}

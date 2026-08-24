@@ -863,6 +863,38 @@ button.warn:hover:not(:disabled) {
   background: var(--claude-bg);
 }
 
+/*
+ * Force stop, beside Stop.
+ *
+ * Quieter than the button it follows — Stop is the ordinary action and this is
+ * its sharper variant, the same weight relationship the old secondary-open had
+ * to the primary. It must NOT be louder: a red button on every running card
+ * would read as the recommended way to stop things, which is exactly backwards.
+ */
+.card-actions .kill {
+  padding-inline: 10px;
+  font-weight: 500;
+  opacity: 0.85;
+}
+
+.card-actions .kill:hover:not(:disabled) {
+  opacity: 1;
+  border-color: var(--transitional);
+  color: var(--transitional);
+}
+
+/* Rebuild: rarest and slowest action on the row, so quietest — same weight
+   drop as Force stop, without the warning hue. */
+.card-actions .rebuild {
+  padding-inline: 10px;
+  font-weight: 500;
+  opacity: 0.85;
+}
+
+.card-actions .rebuild:hover:not(:disabled) {
+  opacity: 1;
+}
+
 .tag {
   font-size: 10px;
   text-transform: uppercase;
