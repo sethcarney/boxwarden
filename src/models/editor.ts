@@ -49,39 +49,25 @@ export interface EditorTarget {
    * default window, which looks exactly like the editor ignoring the flag.
    */
   readonly devContainerSpec: 'local-folder' | 'config-json';
-  /**
-   * The flag that forces a SECOND window on a folder that already has one.
-   *
-   * Without it, `code --folder-uri X` finds the window already showing X and
-   * focuses that, which is the behaviour boxwarden wants by default: a card
-   * saying an editor is attached should offer to bring that window forward, not
-   * to open a duplicate of it. `--new-window` is how the user asks for the
-   * other thing — a second window on the same container, which is an ordinary
-   * way to work (one window per branch, one per agent).
-   *
-   * Configurable per target for the same reason as the two fields above, and
-   * with the same caveat: nobody has confirmed it against a Cursor or Windsurf
-   * install.
-   */
-  readonly newWindowFlag: string;
 }
 
 /**
- * Which of the two things "open" means for a container an editor is already
- * attached to.
+ * There is deliberately NO `newWindowFlag` here, and no mode alongside the id
+ * on `openInEditor`. Both existed, and both were removed once the thing they
+ * described turned out not to be a thing the CLI can do.
  *
- * `reuse` is not "reuse whatever window is in front" — that is VS Code's `-r`,
- * and it would hijack an unrelated window. It is the CLI's DEFAULT behaviour,
- * which resolves the folder URI against the open windows and focuses the one
- * that matches. The distinction matters because the wrong one of those two
- * would replace the contents of the window a developer was looking at.
+ * `code --new-window --folder-uri X` does not open a second window on X. VS
+ * Code resolves the folder against the windows that are already open BEFORE it
+ * decides where to put it, so a folder that is open anywhere focuses that
+ * window whatever the flag says — the same refusal the GUI's "Open Folder"
+ * makes, and a deliberate one (microsoft/vscode#35207). The forks inherit it.
+ *
+ * That mattered here because the button offering it only ever appeared when an
+ * editor was ATTACHED — i.e. exactly and only in the case the CLI refuses. It
+ * could not have worked once. A second window on one folder is
+ * `workbench.action.duplicateWorkspaceInNewWindow`, a command inside a window
+ * with no CLI spelling, so there is nothing for boxwarden to spawn.
  */
-export type OpenInEditorMode = 'reuse' | 'new-window';
-
-/** Total, so a value arriving over IPC can only ever be one of the two arms. */
-export function parseOpenInEditorMode(value: unknown): OpenInEditorMode {
-  return value === 'new-window' ? 'new-window' : 'reuse';
-}
 
 export type ResolvedEditor =
   | {

@@ -527,7 +527,14 @@ button.link {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  cursor: help;
+  /*
+   * NOT `help`. That cursor is an arrow with a question mark hanging off it,
+   * and on a chip that is a button in every path the app actually renders it
+   * read as a fault rather than as an offer — which is exactly how it was
+   * reported. The tooltip is discovered by hovering whatever the cursor looks
+   * like, so the cursor was buying nothing.
+   */
+  cursor: default;
 }
 
 .branch-chip-icon {
@@ -856,6 +863,38 @@ button.warn:hover:not(:disabled) {
   background: var(--claude-bg);
 }
 
+/*
+ * Force stop, beside Stop.
+ *
+ * Quieter than the button it follows — Stop is the ordinary action and this is
+ * its sharper variant, the same weight relationship the old secondary-open had
+ * to the primary. It must NOT be louder: a red button on every running card
+ * would read as the recommended way to stop things, which is exactly backwards.
+ */
+.card-actions .kill {
+  padding-inline: 10px;
+  font-weight: 500;
+  opacity: 0.85;
+}
+
+.card-actions .kill:hover:not(:disabled) {
+  opacity: 1;
+  border-color: var(--transitional);
+  color: var(--transitional);
+}
+
+/* Rebuild: rarest and slowest action on the row, so quietest — same weight
+   drop as Force stop, without the warning hue. */
+.card-actions .rebuild {
+  padding-inline: 10px;
+  font-weight: 500;
+  opacity: 0.85;
+}
+
+.card-actions .rebuild:hover:not(:disabled) {
+  opacity: 1;
+}
+
 .tag {
   font-size: 10px;
   text-transform: uppercase;
@@ -1010,30 +1049,6 @@ button.warn:hover:not(:disabled) {
      wherever each card's metadata happened to end. */
   margin-top: auto;
   padding-top: 12px;
-}
-
-/*
- * "New window", beside Focus, and only when an editor is already attached.
- *
- * Deliberately quieter than the button it sits next to: focusing the window
- * that exists is the common action, and opening a second one is the deliberate
- * one. Sizing it to `.primary`'s weight would make the pair read as a choice
- * rather than as an action and its variant.
- */
-.card-actions .secondary-open {
-  padding-inline: 10px;
-  font-weight: 500;
-  opacity: 0.85;
-}
-
-.card-actions .secondary-open:hover:not(:disabled) {
-  opacity: 1;
-}
-
-/* Dense is a bare `+`, so it needs to stay square rather than collapse. */
-.list[data-layout='rows'] .card-actions .secondary-open {
-  min-width: 26px;
-  padding-inline: 6px;
 }
 
 /* ---------- rows layout ---------- */

@@ -50,12 +50,16 @@ function environment(
   attempts: readonly EndpointProbe[],
   wsl: WslStatus = { kind: 'not-applicable' },
   cliOk = true,
+  devcontainerOk = true,
 ): DockerEnvironment {
   const first = attempts[0] ?? failed('/var/run/docker.sock', { code: 'not-present', detail: '' });
   return {
     api: first,
     cli: cliOk
       ? { ok: true, binaryPath: 'docker', version: '29.3.1' }
+      : { ok: false, code: 'not-on-path' },
+    devcontainer: devcontainerOk
+      ? { ok: true, binaryPath: '/usr/local/bin/devcontainer', version: '0.88.0' }
       : { ok: false, code: 'not-on-path' },
     attempts,
     wsl,
@@ -315,6 +319,36 @@ describe('the docker CLI', () => {
       false,
     );
     expect(ids(advise('linux', broken))).not.toContain('docker-cli-missing');
+  });
+});
+
+describe('the devcontainer CLI', () => {
+  it('is a note with the install command, only once the engine and docker are working', () => {
+    const working = environment([connected('/var/run/docker.sock')], undefined, true, false);
+    const advice = advise('linux', working);
+    expect(ids(advice)).toEqual(['devcontainer-cli-missing']);
+    expect(advice[0]?.severity).toBe('info');
+    expect(advice[0]?.commands).toContain('npm install -g @devcontainers/cli');
+  });
+
+  /**
+   * With docker itself missing the devcontainer note would be step two of a
+   * fix whose step one is already on screen — one advisory per missing leg,
+   * innermost first.
+   */
+  it('yields to the docker-cli advisory when both are missing', () => {
+    const working = environment([connected('/var/run/docker.sock')], undefined, false, false);
+    expect(ids(advise('linux', working))).toEqual(['docker-cli-missing']);
+  });
+
+  it('says nothing while no engine is reachable', () => {
+    const broken = environment(
+      [failed('/var/run/docker.sock', { code: 'not-present', detail: 'ENOENT' })],
+      undefined,
+      true,
+      false,
+    );
+    expect(ids(advise('linux', broken))).not.toContain('devcontainer-cli-missing');
   });
 });
 

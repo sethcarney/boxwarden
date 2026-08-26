@@ -16,10 +16,10 @@ import type { EditorDiscovery, EditorTarget, KnownEditorId } from '../../models/
  * refuses to run directly. `Code.exe` accepts the same `--folder-uri` flag. See
  * the note on WINDOWS_SPAWNABLE_EXTENSIONS in resolve.ts.
  *
- * `newWindowFlag` is `--new-window` and not `--reuse-window`, and the asymmetry
- * is the point: reusing is what the CLI already does when a window has the
- * folder open, so the flag is only ever needed to ask for the OTHER thing. See
- * `OpenInEditorMode`.
+ * There is no new-window flag in this table any more. `--new-window` was here,
+ * and it did nothing that could be seen: no editor in this family will open a
+ * second window on a folder one of its windows already has. See the note in
+ * `src/models/editor.ts`.
  */
 
 function vsCodeBundle(bundleId: string): EditorDiscovery {
@@ -54,7 +54,6 @@ const TARGETS: Record<KnownEditorId, EditorTarget> = {
     remoteScheme: 'vscode-remote',
     folderUriFlag: '--folder-uri',
     devContainerSpec: 'local-folder',
-    newWindowFlag: '--new-window',
   },
 
   'vscode-insiders': {
@@ -77,7 +76,6 @@ const TARGETS: Record<KnownEditorId, EditorTarget> = {
     remoteScheme: 'vscode-remote',
     folderUriFlag: '--folder-uri',
     devContainerSpec: 'local-folder',
-    newWindowFlag: '--new-window',
   },
 
   cursor: {
@@ -103,7 +101,6 @@ const TARGETS: Record<KnownEditorId, EditorTarget> = {
     // blob, not a hex-encoded folder path. From Cursor's own docs, "Opening
     // Remote Containers via the CLI".
     devContainerSpec: 'config-json',
-    newWindowFlag: '--new-window',
   },
 
   windsurf: {
@@ -128,7 +125,6 @@ const TARGETS: Record<KnownEditorId, EditorTarget> = {
     // diverges — unlike Cursor, whose docs say plainly that it does. Still
     // unverified against a real install; see docs/roadmap.md.
     devContainerSpec: 'local-folder',
-    newWindowFlag: '--new-window',
   },
 };
 

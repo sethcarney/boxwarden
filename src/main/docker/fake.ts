@@ -447,6 +447,11 @@ export class FakeDockerBackend implements DockerBackend {
     return Promise.resolve({
       api,
       cli: { ok: true, binaryPath: '/usr/bin/docker (fake)', version: '29.3.1' },
+      devcontainer: {
+        ok: true,
+        binaryPath: '/usr/local/bin/devcontainer (fake)',
+        version: '0.88.0',
+      },
       attempts: FAKE_PROBES,
       // A distro with podman in it and no relay — the case that renders as a
       // silently short container list on a real machine.
@@ -514,6 +519,15 @@ export class FakeDockerBackend implements DockerBackend {
     return this.#transition(id, {
       Status: 'exited',
       ExitCode: 0,
+      FinishedAt: new Date().toISOString(),
+    });
+  }
+
+  /** 137 = 128 + SIGKILL, the exit code a real kill leaves behind. */
+  kill(id: ContainerId): Promise<void> {
+    return this.#transition(id, {
+      Status: 'exited',
+      ExitCode: 137,
       FinishedAt: new Date().toISOString(),
     });
   }

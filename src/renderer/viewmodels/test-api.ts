@@ -8,7 +8,6 @@ import type {
   EditorId,
   EngineSelection,
   GitStatus,
-  OpenInEditorMode,
   ProjectId,
   ProjectScan,
   TerminalId,
@@ -56,6 +55,7 @@ export function snapshot(overrides: Partial<DiscoverySnapshot> = {}): DiscoveryS
       wsl: { kind: 'not-applicable' },
       api,
       cli: { ok: true, binaryPath: '/usr/bin/docker', version: '27.1.1' },
+      devcontainer: { ok: true, binaryPath: '/usr/local/bin/devcontainer', version: '0.88.0' },
       attempts: [api],
     },
     containers: [],
@@ -79,6 +79,7 @@ export function unreachableSnapshot(): DiscoverySnapshot {
       wsl: { kind: 'not-applicable' },
       api: failed,
       cli: { ok: false, code: 'not-on-path' },
+      devcontainer: { ok: true, binaryPath: '/usr/local/bin/devcontainer', version: '0.88.0' },
       attempts: [failed],
     },
   });
@@ -99,10 +100,11 @@ export interface FakeApi extends BoxwardenApi {
   readonly discover: Mock<() => Promise<DiscoverySnapshot>>;
   readonly start: Mock<(id: ContainerId) => Promise<ActionResult>>;
   readonly stop: Mock<(id: ContainerId) => Promise<ActionResult>>;
+  readonly kill: Mock<(id: ContainerId) => Promise<ActionResult>>;
+  readonly rebuild: Mock<(id: ContainerId) => Promise<ActionResult>>;
+  readonly buildProject: Mock<(id: ProjectId) => Promise<ActionResult>>;
   readonly listEditors: Mock<() => Promise<readonly EditorOption[]>>;
-  openInEditor: Mock<
-    (id: ContainerId, editorId: EditorId, mode?: OpenInEditorMode) => Promise<OpenInEditorResult>
-  >;
+  openInEditor: Mock<(id: ContainerId, editorId: EditorId) => Promise<OpenInEditorResult>>;
   readonly selectEngine: Mock<(selection: EngineSelection) => Promise<ActionResult>>;
   readonly scanProjects: Mock<() => Promise<ProjectScan>>;
   openProject: Mock<(id: ProjectId, editorId: EditorId) => Promise<OpenInEditorResult>>;
@@ -214,10 +216,15 @@ export function fakeApi(options: FakeApiOptions = {}): FakeApi {
     discover: vi.fn<() => Promise<DiscoverySnapshot>>(() => Promise.resolve(current)),
     start: vi.fn<(id: ContainerId) => Promise<ActionResult>>(() => Promise.resolve({ ok: true })),
     stop: vi.fn<(id: ContainerId) => Promise<ActionResult>>(() => Promise.resolve({ ok: true })),
+    kill: vi.fn<(id: ContainerId) => Promise<ActionResult>>(() => Promise.resolve({ ok: true })),
+    rebuild: vi.fn<(id: ContainerId) => Promise<ActionResult>>(() => Promise.resolve({ ok: true })),
+    buildProject: vi.fn<(id: ProjectId) => Promise<ActionResult>>(() =>
+      Promise.resolve({ ok: true }),
+    ),
     listEditors: vi.fn<() => Promise<readonly EditorOption[]>>(() => Promise.resolve(editors)),
-    openInEditor: vi.fn<
-      (id: ContainerId, editorId: EditorId, mode?: OpenInEditorMode) => Promise<OpenInEditorResult>
-    >(() => Promise.resolve({ ok: true, editorId: 'vscode', uri: 'vscode-remote://x' })),
+    openInEditor: vi.fn<(id: ContainerId, editorId: EditorId) => Promise<OpenInEditorResult>>(() =>
+      Promise.resolve({ ok: true, editorId: 'vscode', uri: 'vscode-remote://x' }),
+    ),
     selectEngine: vi.fn<(selection: EngineSelection) => Promise<ActionResult>>(() =>
       Promise.resolve({ ok: true }),
     ),

@@ -534,15 +534,28 @@ export function adviseEnvironment(input: AdviceInput): readonly Advice[] {
   const ssh = adviseSshAgent(platform, input.sshAgent);
   if (ssh !== undefined) advice.push(ssh);
 
-  // Lowest priority, and only once the important things are working: the CLI
-  // gates features that do not exist yet, so it is a note and never a warning.
+  // Lowest priority, and only once the important things are working: these
+  // two gate Build and Rebuild alone, so they are notes and never warnings.
+  // Listing, starting, stopping and opening containers all go over the API
+  // socket and keep working without either binary.
   if (anyEngineReachable && !environment.cli.ok) {
     advice.push({
       id: 'docker-cli-missing',
       severity: 'info',
       title: 'The docker command is not on your PATH',
-      body: `Nothing boxwarden does today needs it (${environment.cli.code}) — listing, starting and opening containers all go over the API socket. Rebuilding and creating containers will need it, because those shell out to the devcontainer CLI.`,
+      body: `Everything in the container list works without it (${environment.cli.code}) — those verbs go over the API socket. What needs it is Build and Rebuild: they shell out to the devcontainer CLI, which drives the docker binary underneath.`,
       commands: [],
+      links: [DOCS.devcontainers],
+    });
+  }
+
+  if (anyEngineReachable && environment.cli.ok && !environment.devcontainer.ok) {
+    advice.push({
+      id: 'devcontainer-cli-missing',
+      severity: 'info',
+      title: 'The devcontainer CLI is not on your PATH',
+      body: 'Build and Rebuild shell out to @devcontainers/cli, and it was not found — those buttons will say so until it is installed. Everything else here works without it.',
+      commands: ['npm install -g @devcontainers/cli'],
       links: [DOCS.devcontainers],
     });
   }

@@ -22,6 +22,17 @@ export interface DockerBackend {
   listDevContainers(): Promise<readonly DevContainer[]>;
   start(id: ContainerId): Promise<void>;
   stop(id: ContainerId): Promise<void>;
+  /**
+   * SIGKILL, now — no SIGTERM, no grace period.
+   *
+   * A separate verb rather than a flag on `stop`, because the two are
+   * different promises to the process inside: `stop` lets an agent flush what
+   * it was writing, `kill` does not. It exists for the container whose PID 1
+   * shrugs at SIGTERM, where `stop` means pinning the card on "Stopping…" for
+   * the daemon's whole grace period — or past it, when the daemon itself is
+   * wedged.
+   */
+  kill(id: ContainerId): Promise<void>;
 
   /**
    * Which engine to use when several answer.
