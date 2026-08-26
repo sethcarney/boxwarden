@@ -25,6 +25,7 @@ import {
   selectionIncludes,
 } from '../../models/index.js';
 import type { ContainerActivity } from '../../shared/ipc.js';
+import { probeDevcontainerCli } from '../devcontainer/resolve.js';
 import type { DockerBackend } from './backend.js';
 import {
   MINIMUM_API_VERSION,
@@ -276,6 +277,7 @@ export class DockerodeBackend implements DockerBackend {
     this.#endpointById.clear();
 
     const cli = await probeCli();
+    const devcontainer = await probeDevcontainerCli();
 
     // The headline. The SELECTED engine when it answered, so the header chip
     // agrees with the list below it; otherwise the first success in candidate
@@ -296,7 +298,7 @@ export class DockerodeBackend implements DockerBackend {
         failure: { code: 'not-present', detail: 'No candidate endpoints for this platform.' },
       };
 
-    return { api, cli, attempts, wsl: wsl.status };
+    return { api, cli, devcontainer, attempts, wsl: wsl.status };
   }
 
   /**
@@ -459,6 +461,17 @@ export class DockerodeBackend implements DockerBackend {
     const docker = await this.#ownerOf(id);
     try {
       await docker.getContainer(id).stop();
+    } catch (error) {
+      this.#invalidate();
+      throw error;
+    }
+  }
+
+  /** SIGKILL with no grace — see the note on the interface. */
+  async kill(id: ContainerId): Promise<void> {
+    const docker = await this.#ownerOf(id);
+    try {
+      await docker.getContainer(id).kill();
     } catch (error) {
       this.#invalidate();
       throw error;

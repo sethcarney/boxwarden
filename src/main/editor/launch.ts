@@ -1,15 +1,16 @@
 import { spawn } from 'node:child_process';
-import type { EditorTarget, OpenInEditorMode } from '../../models/index.js';
+import type { EditorTarget } from '../../models/index.js';
 
 /**
  * Launch an editor at a `vscode-remote://` URI.
  *
- * `mode` decides whether an already-open window on this folder is FOCUSED or
- * duplicated. `reuse` passes no flag at all, because the CLI's own default is
- * to resolve the folder URI against the open windows and raise the one that
- * matches — which is the behaviour a card showing "VS Code attached" should
- * offer. `--reuse-window` would be a different and worse thing: it takes over
- * whichever window was last active, whatever the developer had in it.
+ * The URI and nothing else. No `--new-window`, because the CLI will not open a
+ * second window on a folder that already has one (see `models/editor.ts`), and
+ * no `--reuse-window` either — that is a different and worse thing, taking over
+ * whichever window was last active whatever the developer had in it. Passing
+ * neither is what makes an editor resolve the folder URI against its open
+ * windows and raise the one that matches, which is the behaviour a card showing
+ * "VS Code attached" wants.
  *
  * Two deliberate choices, both security-relevant:
  *
@@ -26,18 +27,9 @@ import type { EditorTarget, OpenInEditorMode } from '../../models/index.js';
  *     with it. Without this the editor is a child process in our process
  *     group and dies with us.
  */
-export function launchEditor(
-  binaryPath: string,
-  target: EditorTarget,
-  uri: string,
-  mode: OpenInEditorMode = 'reuse',
-): Promise<void> {
+export function launchEditor(binaryPath: string, target: EditorTarget, uri: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const args =
-      mode === 'new-window'
-        ? [target.newWindowFlag, target.folderUriFlag, uri]
-        : [target.folderUriFlag, uri];
-    const child = spawn(binaryPath, args, {
+    const child = spawn(binaryPath, [target.folderUriFlag, uri], {
       detached: true,
       stdio: 'ignore',
       shell: false,

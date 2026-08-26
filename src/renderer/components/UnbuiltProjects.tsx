@@ -1,5 +1,6 @@
-import type { DevContainerProject, ProjectScan } from '../../models/index.js';
+import type { DevContainerProject, ProjectId, ProjectScan } from '../../models/index.js';
 import { devcontainerUpCommand, hostPathLabel, relativeTime } from '../format.js';
+import type { BuildGate } from '../presenters.js';
 import { scanRootHint } from '../presenters.js';
 import type { ProjectsViewModel } from '../viewmodels/index.js';
 import { useCopyToClipboard } from '../viewmodels/useCopyToClipboard.js';
@@ -17,10 +18,12 @@ import { useDisclosure } from '../viewmodels/useDisclosure.js';
  * dev containers found" and the useful one is "here are fifteen you could
  * build".
  *
- * The panel stops at OFFERING. Opening the folder in an editor is a real
- * action, because the editor's own "Reopen in Container" prompt is the
- * supported path and the user stays in control of it. Building from here is
- * not, and the copy button exists instead — see `devcontainerUpCommand`.
+ * The panel used to stop at OFFERING, and no longer does: Build runs
+ * `devcontainer up` for the row it sits on, which is the same trust decision
+ * as the editor's own "Reopen in Container" prompt — an explicit click on a
+ * named project, not a background action. The copy button stays, because it
+ * is still the path for a WSL project, for a machine without the CLI, and
+ * for anyone who wants the build output in a terminal they control.
  *
  * A View: it binds to `ProjectsViewModel` and computes nothing. The partition,
  * the summary sentence and the scan state all arrive already derived.
@@ -32,13 +35,15 @@ interface Props {
   readonly projects: ProjectsViewModel;
   readonly editorName: string;
   readonly editorAvailable: boolean;
+  /** Whether Build has its tools — decided upstream, the row only repeats it. */
+  readonly buildGate: BuildGate;
   readonly now: number;
 }
 
 /** Where the panel's own open/closed state is remembered. */
 const PANEL_STORAGE_KEY = 'boxwarden.projects.expanded';
 
-export function UnbuiltProjects({ projects, editorName, editorAvailable, now }: Props) {
+export function UnbuiltProjects({ projects, editorName, editorAvailable, buildGate, now }: Props) {
   // TWO disclosures, and they are not the same kind of thing. `list` truncates
   // a long listing and is per-run — "show 12 more" is about one scan. `panel`
   // folds the whole section away and is a standing preference, so it persists;
@@ -115,7 +120,10 @@ export function UnbuiltProjects({ projects, editorName, editorAvailable, now }: 
                   project={project}
                   editorName={editorName}
                   editorAvailable={editorAvailable}
+                  buildGate={buildGate}
+                  buildingId={projects.buildingId}
                   onOpen={projects.openProject}
+                  onBuild={projects.build}
                 />
               ))}
             </ul>
@@ -143,15 +151,34 @@ function ProjectRow({
   project,
   editorName,
   editorAvailable,
+  buildGate,
+  buildingId,
   onOpen,
+  onBuild,
 }: {
   readonly project: DevContainerProject;
   readonly editorName: string;
   readonly editorAvailable: boolean;
+  readonly buildGate: BuildGate;
+  readonly buildingId: ProjectId | undefined;
   readonly onOpen: (project: DevContainerProject) => void;
+  readonly onBuild: (project: DevContainerProject) => void;
 }) {
   const clipboard = useCopyToClipboard();
   const command = devcontainerUpCommand(project);
+  // ONE build at a time (see `build` in useProjects): this row is the one
+  // building, or some other row is and this one waits its turn.
+  const building = buildingId === project.id;
+  const buildElsewhere = buildingId !== undefined && !building;
+  const buildBlocked =
+    buildGate.reason ??
+    (buildGate.ready
+      ? project.folder.kind === 'wsl'
+        ? 'This project lives inside a WSL distro — copy the command and run it in the distro instead.'
+        : buildElsewhere
+          ? 'Another build is already running. One at a time keeps the daemon responsive.'
+          : undefined
+      : 'Waiting for the first look at this machine\u2019s tools.');
 
   return (
     <li className="project">
@@ -180,6 +207,19 @@ function ProjectRow({
           }}
         >
           Open in {editorName}
+        </button>
+        <button
+          type="button"
+          title={
+            buildBlocked ??
+            `Runs devcontainer up for this folder: pulls the image, runs its lifecycle commands, and starts the container. Takes minutes, and executes what the repo\u2019s devcontainer.json says to.`
+          }
+          disabled={building || buildBlocked !== undefined}
+          onClick={() => {
+            onBuild(project);
+          }}
+        >
+          {building ? 'Building…' : 'Build container'}
         </button>
         <button
           type="button"

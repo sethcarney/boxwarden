@@ -69,6 +69,7 @@ export function ContainersView({ vm }: Props) {
         startupCommandFor={terminals.startupCommandFor}
         now={now}
         isBusy={discovery.isBusy}
+        busyVerb={discovery.busyVerb}
         isGroupBusy={discovery.isGroupBusy}
         claudeFor={activity.claudeFor}
         claudeForAll={activity.claudeForAll}
@@ -76,8 +77,11 @@ export function ContainersView({ vm }: Props) {
         editorsForAll={activity.editorsForAll}
         gitFor={git.statusFor}
         branchMenuFor={branches.bindingFor}
+        buildGate={discovery.buildGate}
         onStart={discovery.start}
         onStop={discovery.stop}
+        onKill={discovery.kill}
+        onRebuild={discovery.rebuild}
         onOpen={discovery.open}
         onOpenTerminal={discovery.openTerminal}
         onStartupCommandChange={terminals.setStartupCommand}
@@ -95,6 +99,7 @@ export function ContainersView({ vm }: Props) {
         projects={projects}
         editorName={editors.editorName}
         editorAvailable={editors.editorAvailable}
+        buildGate={discovery.buildGate}
         now={now}
       />
     </>

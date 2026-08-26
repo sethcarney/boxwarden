@@ -25,6 +25,7 @@ function environment(attempts: readonly EndpointProbe[]): DockerEnvironment {
   return {
     api: first,
     cli: { ok: true, binaryPath: 'docker', version: '29.3.1' },
+    devcontainer: { ok: true, binaryPath: '/usr/local/bin/devcontainer', version: '0.88.0' },
     attempts,
     wsl: { kind: 'not-applicable' },
   };

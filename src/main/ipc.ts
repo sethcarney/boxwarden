@@ -23,7 +23,6 @@ import {
   enginesFrom,
   hostPlatform,
   parseEngineSelection,
-  parseOpenInEditorMode,
   readableHostFolder,
 } from '../models/index.js';
 import { IPC } from '../shared/ipc.js';
@@ -45,6 +44,9 @@ import { resolveEditor } from './editor/resolve.js';
 import { launchEditor } from './editor/launch.js';
 import { cursorDevContainerUri, devContainerUri, folderUri } from './editor/uri.js';
 import { scanForProjects } from './projects/scan.js';
+import { devcontainerUpInvocation, parseUpOutcome } from './devcontainer/command.js';
+import { probeDevcontainerCli } from './devcontainer/resolve.js';
+import { runDevcontainerUp } from './devcontainer/run.js';
 import { probeSshAgent } from './ssh-agent.js';
 import {
   containerExecArgv,
@@ -338,6 +340,15 @@ export function registerIpcHandlers(context: IpcContext): void {
     (message) => ({ ok: false, message }),
   );
 
+  handle<ActionResult>(
+    IPC.kill,
+    async (id) => {
+      await context.backend.kill(id as ContainerId);
+      return { ok: true };
+    },
+    (message) => ({ ok: false, message }),
+  );
+
   handle<readonly EditorOption[]>(
     IPC.listEditors,
     async () => {
@@ -357,7 +368,7 @@ export function registerIpcHandlers(context: IpcContext): void {
 
   handle<OpenInEditorResult>(
     IPC.openInEditor,
-    async (rawId, rawEditorId, rawMode) => {
+    async (rawId, rawEditorId) => {
       const container = known.get(rawId as ContainerId);
       if (container === undefined) {
         return {
@@ -442,10 +453,7 @@ export function registerIpcHandlers(context: IpcContext): void {
       }
 
       try {
-        // Parsed rather than trusted: anything that is not the string
-        // 'new-window' is the default, so a malformed message can only ever
-        // ask for the less destructive of the two.
-        await launchEditor(resolved.binaryPath, target, uri, parseOpenInEditorMode(rawMode));
+        await launchEditor(resolved.binaryPath, target, uri);
         return { ok: true, editorId: target.id, uri };
       } catch (error) {
         return {
@@ -534,6 +542,120 @@ export function registerIpcHandlers(context: IpcContext): void {
       }
     },
     (message) => ({ ok: false, code: 'launch-failed', message }),
+  );
+
+  /**
+   * One `devcontainer up`, from probe to outcome. Shared by Build and Rebuild
+   * because they are one CLI call with one flag between them, and every step
+   * that can fail should fail in the same words for both.
+   *
+   * `workspaceFolderRaw` and `configPath` only ever arrive from `known` or
+   * `knownProjects` — the main process's own copies. That matters more here
+   * than anywhere else in this file: this is the one handler family that goes
+   * on to EXECUTE code out of the folder it is pointed at (`postCreateCommand`
+   * and friends), so a renderer-supplied path would not just open the wrong
+   * thing, it would run it.
+   */
+  async function runUp(options: {
+    readonly workspaceFolderRaw: string;
+    readonly flavour: 'posix' | 'windows' | 'wsl';
+    readonly configPath?: string;
+    readonly removeExistingContainer?: boolean;
+  }): Promise<ActionResult> {
+    const cli = await probeDevcontainerCli();
+    if (!cli.ok) {
+      return {
+        ok: false,
+        message:
+          'The devcontainer CLI was not found on this machine. Install it with: npm install -g @devcontainers/cli',
+      };
+    }
+
+    const invocation = devcontainerUpInvocation({
+      binaryPath: cli.binaryPath,
+      workspaceFolderRaw: options.workspaceFolderRaw,
+      flavour: options.flavour,
+      ...(options.configPath === undefined ? {} : { configPath: options.configPath }),
+      ...(options.removeExistingContainer === undefined
+        ? {}
+        : { removeExistingContainer: options.removeExistingContainer }),
+    });
+    if (!invocation.ok) return { ok: false, message: invocation.reason };
+
+    const run = await runDevcontainerUp(invocation.command, invocation.args);
+    if (run.timedOut) {
+      return {
+        ok: false,
+        message:
+          'The build did not finish within fifteen minutes and was abandoned. The container engine may still be pulling — check it directly.',
+      };
+    }
+
+    const outcome = parseUpOutcome(run.stdout);
+    if (outcome.kind === 'success') return { ok: true };
+    if (outcome.kind === 'error') return { ok: false, message: outcome.message };
+
+    // The CLI died before it could report — argument parsing, a config it
+    // could not read. Its stderr tail is the only message there is.
+    const stderrTail = run.stderr.trim().split(/\r?\n/).slice(-4).join('\n');
+    return {
+      ok: false,
+      message:
+        stderrTail === ''
+          ? `devcontainer up exited with code ${String(run.exitCode ?? 'unknown')} without reporting an outcome.`
+          : stderrTail,
+    };
+  }
+
+  handle<ActionResult>(
+    IPC.buildProject,
+    async (rawId) => {
+      const project = knownProjects.get(rawId as ProjectId);
+      if (project === undefined) {
+        return {
+          ok: false,
+          message: 'That project is no longer in the last scan. Rescan and try again.',
+        };
+      }
+      return runUp({
+        workspaceFolderRaw: project.folder.path,
+        flavour: project.folder.kind,
+        configPath: project.configPath,
+      });
+    },
+    (message) => ({ ok: false, message }),
+  );
+
+  handle<ActionResult>(
+    IPC.rebuild,
+    async (rawId) => {
+      const container = known.get(rawId as ContainerId);
+      if (container === undefined) {
+        return {
+          ok: false,
+          message: 'That container is no longer in the last scan. Refresh and try again.',
+        };
+      }
+      if (container.localFolder.kind === 'unresolved') {
+        return {
+          ok: false,
+          message:
+            'This container\u2019s devcontainer.local_folder label could not be parsed, so there is no workspace folder to rebuild from.',
+        };
+      }
+
+      // The RAW label, not the parsed path — the CLI finds the container it is
+      // replacing by matching this label, exact-match first, and a spelling we
+      // cleaned up is a container it cannot find. See devcontainerUpInvocation.
+      const configPath = container.labels.configFileRaw;
+      return runUp({
+        workspaceFolderRaw: container.labels.localFolderRaw,
+        flavour: container.localFolder.kind,
+        ...(configPath === undefined || configPath.trim() === '' ? {} : { configPath }),
+        removeExistingContainer: true,
+      });
+    },
+    (message) => ({ ok: false, message }),
   );
 
   handle<ProjectRootsResult>(

@@ -3,6 +3,7 @@ import type {
   DevContainer,
   DevContainerProject,
   EditorId,
+  ProjectId,
   ProjectScan,
 } from '../../models/index.js';
 import { partitionProjects } from '../../models/index.js';
@@ -27,6 +28,15 @@ export interface ProjectsViewModel {
   readonly addRoot: () => void;
   readonly removeRoot: (root: string) => void;
   readonly openProject: (project: DevContainerProject) => void;
+  /**
+   * `devcontainer up` for one project. Minutes, not seconds, and ONE at a
+   * time — a second build queued behind the first would thrash the same
+   * daemon for no faster result, so `build` is a no-op while `buildingId` is
+   * set and every Build button disables together.
+   */
+  readonly build: (project: DevContainerProject) => void;
+  /** Which project is mid-build, for its row to say so. */
+  readonly buildingId: ProjectId | undefined;
 }
 
 /**
@@ -46,6 +56,7 @@ export function useProjects(
 ): ProjectsViewModel {
   const [scan, setScan] = useState<ProjectScan | undefined>(undefined);
   const [scanning, setScanning] = useState(false);
+  const [buildingId, setBuildingId] = useState<ProjectId | undefined>(undefined);
   const mounted = useMounted();
 
   const { showThrown, showError, showInfo, showLaunchFailure } = notices;
@@ -136,6 +147,36 @@ export function useProjects(
     [api, editorId, showInfo, showLaunchFailure, showThrown],
   );
 
+  const build = useCallback(
+    (project: DevContainerProject) => {
+      if (api === undefined || buildingId !== undefined) return;
+      setBuildingId(project.id);
+      // Said up front: the next several minutes look like nothing happening,
+      // and that is the feature working. The container appears in the list
+      // above on the discovery poll's own cadence once the CLI finishes.
+      showInfo(`Building ${project.name} — this can take a few minutes…`);
+      void api
+        .buildProject(project.id)
+        .then(
+          (result) => {
+            if (!mounted.current) return;
+            if (result.ok) {
+              showInfo(`Built ${project.name}. It will appear in the container list above.`);
+              return;
+            }
+            showError(result.message);
+          },
+          (error: unknown) => {
+            if (mounted.current) showThrown(error);
+          },
+        )
+        .finally(() => {
+          if (mounted.current) setBuildingId(undefined);
+        });
+    },
+    [api, buildingId, mounted, showError, showInfo, showThrown],
+  );
+
   /**
    * Partitioning is a pure model function given the two lists, and both change
    * on every poll — `containers` is refreshed every five seconds. Memoising
@@ -159,5 +200,7 @@ export function useProjects(
     addRoot,
     removeRoot,
     openProject,
+    build,
+    buildingId,
   };
 }

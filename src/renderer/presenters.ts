@@ -19,6 +19,7 @@ import type {
   ClaudeSession,
   ClaudeStatus,
   DevContainer,
+  DockerEnvironment,
   EditorAttachment,
   EditorFlavour,
   EndpointProbe,
@@ -138,68 +139,51 @@ export function openBlockedReason(
 }
 
 /**
- * What the card's editor buttons say, and how many there are.
+ * What the card's editor button says.
  *
- * One action or two, decided here rather than in the card, because the decision
- * is the interesting part: **the second button only appears when an editor is
- * already attached.** Offering "New window" on a container nobody has open is
- * offering a distinction without a difference — the CLI opens a new window
- * either way — and a permanently-present button that changes meaning silently
- * is worse than one that appears when it starts to matter.
+ * ONE button, and the label is the whole feature: `Focus` when an editor is
+ * already attached to this container, `Open in <editor>` when none is. The
+ * click is the same either way, because the CLI's own behaviour is the same
+ * either way — it resolves the folder URI against the open windows and raises
+ * the one that matches, or starts a window when nothing does.
  *
- * When one IS attached the two are genuinely different things, and the labels
- * say which is which: `open` focuses the window that exists, `newWindow` adds
- * a second on the same container. Two windows on one dev container is an
- * ordinary way to work — one per branch, one per agent — so this is not an
- * escape hatch, it is the other half of the feature.
+ * There was a second button here, a quieter "New window" beside Focus, and it
+ * was removed rather than repaired: no editor in this family will put one
+ * folder in two windows, and the button only ever appeared when the folder was
+ * already open. It therefore did nothing but focus — which is what the user
+ * saw. The reasoning is in `src/models/editor.ts`; do not add it back without
+ * a CLI that can actually spawn the second window.
  *
- * `blocked` wins over both: a container with no workspace folder has nothing to
- * open in any number of windows.
+ * `blocked` wins over the label: a container with no workspace folder has
+ * nothing to open in any window.
  */
 export interface EditorAction {
   readonly label: string;
   readonly title: string;
 }
 
-export interface EditorActions {
-  readonly open: EditorAction;
-  /** Absent unless an editor is attached — see above. */
-  readonly newWindow: EditorAction | undefined;
-}
-
-export function editorActions(
+export function editorAction(
   attachment: EditorAttachment | undefined,
   editorName: string,
   blocked: string | undefined,
   dense: boolean,
-): EditorActions {
+): EditorAction {
   if (attachment?.kind !== 'attached') {
     return {
-      open: {
-        label: dense ? 'Open' : `Open in ${editorName}`,
-        title: blocked ?? `Open in ${editorName}`,
-      },
-      newWindow: undefined,
+      label: dense ? 'Open' : `Open in ${editorName}`,
+      title: blocked ?? `Open in ${editorName}`,
     };
   }
 
   const names = attachment.editors.map(editorDisplayName).join(', ');
   return {
-    open: {
-      label: dense ? 'Focus' : `Focus ${editorName}`,
-      title:
-        blocked ??
-        // Says what it does AND why it can: the window is found by the folder
-        // URI, so this raises the one showing THIS container rather than
-        // whatever was last in front.
-        `Bring the ${names} window already attached to this container to the front. Nothing new is opened.`,
-    },
-    newWindow: {
-      label: dense ? '+' : 'New window',
-      title:
-        blocked ??
-        `Open a SECOND ${editorName} window on this container, alongside the one already attached.`,
-    },
+    label: dense ? 'Focus' : `Focus ${editorName}`,
+    title:
+      blocked ??
+      // Says what it does AND why it can: the window is found by the folder
+      // URI, so this raises the one showing THIS container rather than
+      // whatever was last in front.
+      `Bring the ${names} window already attached to this container to the front. Nothing new is opened.`,
   };
 }
 
@@ -708,6 +692,116 @@ function describeActivity(activity: SessionActivity): string {
           return 'working — running a command, using CPU';
       }
   }
+}
+
+/**
+ * The Force stop button's face.
+ *
+ * A separate button from Stop because it makes a different promise: Stop is
+ * SIGTERM plus the daemon's grace period, Force stop is SIGKILL now. The
+ * title says so in those terms, because the one honest reason to click it is
+ * that a Stop is hanging — and the button is deliberately left clickable in
+ * exactly that state (see `busyVerb` in `useDiscovery`).
+ *
+ * The stop warning is folded in ABOVE the explanation when present: whatever
+ * a graceful stop would have ended or stranded, a kill ends and strands with
+ * less ceremony, so the warning is at least as true here.
+ */
+export interface KillAction {
+  readonly label: string;
+  readonly title: string;
+}
+
+export function killAction(warning: string | undefined, dense: boolean): KillAction {
+  const base =
+    'SIGKILL, immediately — nothing inside gets a chance to save or clean up. For the container an ordinary Stop cannot end.';
+  return {
+    label: dense ? 'Kill' : 'Force stop',
+    title: warning === undefined ? base : `${warning}\n${base}`,
+  };
+}
+
+/**
+ * Whether Build and Rebuild have the tools they need, and why not when not.
+ *
+ * Both shell out to the devcontainer CLI, which drives the docker binary
+ * underneath — two probes, two different install steps, so the reason names
+ * whichever leg is missing rather than a generic "can't build". No snapshot
+ * yet reads as not-ready with nothing to say: buttons stay quietly disabled
+ * during the first poll rather than flashing an accusation at a machine
+ * nobody has looked at.
+ */
+export interface BuildGate {
+  readonly ready: boolean;
+  readonly reason?: string;
+}
+
+export function devcontainerBuildGate(environment: DockerEnvironment | undefined): BuildGate {
+  if (environment === undefined) return { ready: false };
+  if (!environment.cli.ok) {
+    return {
+      ready: false,
+      reason:
+        'The docker command was not found on this machine — the devcontainer CLI drives it underneath.',
+    };
+  }
+  if (!environment.devcontainer.ok) {
+    return {
+      ready: false,
+      reason:
+        'The devcontainer CLI was not found on this machine. Install it with: npm install -g @devcontainers/cli',
+    };
+  }
+  return { ready: true };
+}
+
+/**
+ * The Rebuild button's face, and whether it is allowed to be one.
+ *
+ * Rebuild is `devcontainer up --remove-existing-container`: the container is
+ * REMOVED and a fresh one is built from the devcontainer.json — the same
+ * thing the Dev Containers extension's own "Rebuild Container" does. The
+ * title says the destructive half in plain words, because "Rebuild" alone
+ * reads as a refresh to anyone who has not met the flag.
+ *
+ * `disabledReason` is always present when the button is off — the same rule
+ * the branch menu holds itself to: a control that is off for no stated
+ * reason is the thing this app keeps choosing not to ship.
+ */
+export interface RebuildAction {
+  readonly label: string;
+  readonly title: string;
+  readonly disabledReason?: string;
+}
+
+export function rebuildAction(
+  container: DevContainer,
+  gate: BuildGate,
+  warning: string | undefined,
+  dense: boolean,
+): RebuildAction {
+  // One word in both layouts — unlike Force stop there is no shorter honest
+  // spelling, and `dense` stays in the signature so the callers stay uniform.
+  void dense;
+  const label = 'Rebuild';
+  const blocked =
+    gate.reason ??
+    (gate.ready
+      ? container.localFolder.kind === 'unresolved'
+        ? 'This container\u2019s devcontainer.local_folder label could not be parsed, so there is no workspace folder to rebuild from.'
+        : container.localFolder.kind === 'wsl'
+          ? 'This workspace lives inside a WSL distro, and rebuilding it means running the devcontainer CLI in there — run devcontainer up inside the distro instead.'
+          : undefined
+      : 'Waiting for the first look at this machine\u2019s tools.');
+
+  if (blocked !== undefined) return { label, title: blocked, disabledReason: blocked };
+
+  const base =
+    'Removes this container and builds a fresh one from its devcontainer.json. Anything not in the workspace folder or a volume is lost with it. Takes minutes.';
+  return {
+    label,
+    title: warning === undefined ? base : `${warning}\n${base}`,
+  };
 }
 
 /**

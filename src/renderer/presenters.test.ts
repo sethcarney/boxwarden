@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { BranchListing, ClaudeStatus, EngineId } from '../models/index.js';
-import { devContainer } from './test-fixtures.js';
+import { devContainer, unresolvedContainer } from './test-fixtures.js';
 import {
   branchChip,
   branchMenu,
   claudeBadge,
-  editorActions,
+  editorAction,
+  killAction,
+  devcontainerBuildGate,
+  rebuildAction,
   editorBadge,
   stopWarning,
   containerCountLabel,
@@ -347,6 +350,80 @@ describe('claudeBadge', () => {
   });
 });
 
+describe('killAction', () => {
+  it('says what it is in signal terms, and shortens for rows', () => {
+    expect(killAction(undefined, false).label).toBe('Force stop');
+    expect(killAction(undefined, true).label).toBe('Kill');
+    expect(killAction(undefined, false).title).toContain('SIGKILL');
+  });
+
+  /**
+   * Whatever a graceful stop would have ended or stranded, a kill does with
+   * less ceremony — so the stop warning rides ABOVE the explanation rather
+   * than being replaced by it.
+   */
+  it('folds the stop warning in above its own explanation', () => {
+    const action = killAction('A Claude Code session is running in here. Stopping ends it.', false);
+    expect(action.title.startsWith('A Claude Code session')).toBe(true);
+    expect(action.title).toContain('SIGKILL');
+  });
+});
+
+describe('devcontainerBuildGate', () => {
+  // The healthy environment the fake snapshot ships, with one leg knocked out
+  // at a time — the gate has to name WHICH leg, not just say no.
+  const healthy = snapshot().environment;
+
+  it('names whichever leg is missing, innermost first', () => {
+    expect(devcontainerBuildGate(undefined)).toEqual({ ready: false });
+
+    const noDocker = { ...healthy, cli: { ok: false as const, code: 'not-on-path' as const } };
+    expect(devcontainerBuildGate(noDocker).reason).toContain('docker command');
+
+    const noDevcontainer = {
+      ...healthy,
+      devcontainer: { ok: false as const, code: 'not-on-path' as const },
+    };
+    expect(devcontainerBuildGate(noDevcontainer).reason).toContain(
+      'npm install -g @devcontainers/cli',
+    );
+
+    expect(devcontainerBuildGate(healthy)).toEqual({ ready: true });
+  });
+});
+
+describe('rebuildAction', () => {
+  const gate = { ready: true } as const;
+
+  it('says the destructive half in plain words, with the stop warning folded in', () => {
+    const action = rebuildAction(devContainer(), gate, undefined, false);
+    expect(action.disabledReason).toBeUndefined();
+    expect(action.title).toContain('Removes this container');
+
+    const warned = rebuildAction(
+      devContainer(),
+      gate,
+      'A Claude Code session is running in here. Stopping ends it.',
+      false,
+    );
+    expect(warned.title.startsWith('A Claude Code session')).toBe(true);
+  });
+
+  /** A disabled Rebuild always says why — the branch menu's own promise. */
+  it('is disabled with the gate reason, and for an unparseable label', () => {
+    const blocked = rebuildAction(
+      devContainer(),
+      { ready: false, reason: 'no CLI' },
+      undefined,
+      false,
+    );
+    expect(blocked.disabledReason).toBe('no CLI');
+
+    const unresolved = rebuildAction(unresolvedContainer(), gate, undefined, false);
+    expect(unresolved.disabledReason).toContain('could not be parsed');
+  });
+});
+
 describe('stopWarning', () => {
   it('says nothing when nothing is running', () => {
     expect(stopWarning([])).toBeUndefined();
@@ -473,81 +550,75 @@ describe('editorBadge', () => {
   });
 });
 
-describe('editorActions', () => {
+describe('editorAction', () => {
   /**
-   * The second button appears only once there is a window to distinguish it
-   * from. Before that, "Open" and "New window" would do the same thing under
-   * two names — and a button that changes meaning without changing appearance
-   * is worse than one that arrives when it starts to matter.
+   * One button, whatever is attached. The label changes because the honest
+   * description of the click changes; the click does not.
    */
-  it('offers one action until an editor is attached', () => {
+  it('says Open until an editor is attached', () => {
     for (const attachment of [
       undefined,
       { kind: 'none' } as const,
       { kind: 'not-applicable' } as const,
       { kind: 'unknown', reason: 'top failed' } as const,
     ]) {
-      const actions = editorActions(attachment, 'VS Code', undefined, false);
-      expect(actions.open.label).toBe('Open in VS Code');
-      expect(actions.newWindow).toBeUndefined();
+      const action = editorAction(attachment, 'VS Code', undefined, false);
+      expect(action.label).toBe('Open in VS Code');
+      expect(action.title).toBe('Open in VS Code');
     }
   });
 
-  it('splits into focus and new window once one is', () => {
-    const actions = editorActions(
+  /**
+   * And Focus once one is — with a tooltip that promises no second window,
+   * because there is no second window to be had. An editor asked for a folder
+   * one of its windows already holds raises that window and ignores
+   * `--new-window`, which is why the button that offered one was removed.
+   */
+  it('says Focus once one is, and promises nothing new', () => {
+    const action = editorAction(
       { kind: 'attached', editors: ['vscode'] },
       'VS Code',
       undefined,
       false,
     );
 
-    expect(actions.open.label).toBe('Focus VS Code');
-    expect(actions.newWindow?.label).toBe('New window');
-    // The primary action must say it opens NOTHING — the whole reason it is
-    // worth a separate button from the one beside it.
-    expect(actions.open.title).toContain('Nothing new is opened');
-    expect(actions.newWindow?.title).toContain('SECOND');
+    expect(action.label).toBe('Focus VS Code');
+    expect(action.title).toContain('Nothing new is opened');
   });
 
   it('names the attached editor, which need not be the chosen one', () => {
     // The badge reports what is running in the container; the button spawns
     // the editor the user picked in the header. A Cursor server left running
     // in a container is exactly when saying "the Cursor window" matters.
-    const actions = editorActions(
+    const action = editorAction(
       { kind: 'attached', editors: ['cursor'] },
       'VS Code',
       undefined,
       false,
     );
-    expect(actions.open.title).toContain('Cursor');
-    expect(actions.newWindow?.title).toContain('VS Code');
+    expect(action.title).toContain('Cursor');
   });
 
-  it('shortens both for the rows layout, keeping the full text in the title', () => {
-    const actions = editorActions(
+  it('shortens the label for the rows layout, keeping the full text in the title', () => {
+    const action = editorAction(
       { kind: 'attached', editors: ['vscode'] },
       'VS Code',
       undefined,
       true,
     );
-    expect(actions.open.label).toBe('Focus');
-    expect(actions.newWindow?.label).toBe('+');
-    expect(actions.newWindow?.title).toContain('VS Code');
+    expect(action.label).toBe('Focus');
+    expect(action.title).toContain('VS Code');
   });
 
-  /**
-   * A container with no workspace folder has nothing to open in any number of
-   * windows, so the reason wins over both tooltips rather than only the first.
-   */
-  it('lets the blocked reason speak for both buttons', () => {
-    const actions = editorActions(
+  /** A container with no workspace folder has nothing to open at all. */
+  it('lets the blocked reason speak for the button', () => {
+    const action = editorAction(
       { kind: 'attached', editors: ['vscode'] },
       'VS Code',
       'This container does not record which folder to open.',
       false,
     );
-    expect(actions.open.title).toBe('This container does not record which folder to open.');
-    expect(actions.newWindow?.title).toBe('This container does not record which folder to open.');
+    expect(action.title).toBe('This container does not record which folder to open.');
   });
 });
 

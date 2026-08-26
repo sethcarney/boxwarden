@@ -133,6 +133,63 @@ describe('useProjects', () => {
     expect(notices.showInfo.mock.calls[0]?.[0]).toContain('reopen it in a container');
   });
 
+  it('builds one project at a time, and says so at both ends', async () => {
+    const api = fakeApi({ scan: projectScan({ projects: [project] }) });
+    let resolveBuild!: (value: { ok: true }) => void;
+    api.buildProject.mockReturnValue(
+      new Promise((resolve) => {
+        resolveBuild = resolve;
+      }),
+    );
+    const notices = stubNotices();
+    const { result } = renderHook(() => useProjects(api, notices, 'vscode', []));
+    await waitFor(() => {
+      expect(result.current.unbuilt).toHaveLength(1);
+    });
+
+    act(() => {
+      result.current.build(project);
+    });
+    await waitFor(() => {
+      expect(result.current.buildingId).toBe(project.id);
+    });
+    expect(api.buildProject).toHaveBeenCalledWith(project.id);
+    expect(notices.showInfo.mock.calls.at(-1)?.[0]).toContain('can take a few minutes');
+
+    // A second click while one runs is a no-op, not a queue — see the hook.
+    act(() => {
+      result.current.build(project);
+    });
+    expect(api.buildProject).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveBuild({ ok: true });
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(result.current.buildingId).toBeUndefined();
+    });
+    expect(notices.showInfo.mock.calls.at(-1)?.[0]).toContain('container list');
+  });
+
+  it('reports a failed build in the CLI’s own words', async () => {
+    const api = fakeApi({ scan: projectScan({ projects: [project] }) });
+    api.buildProject.mockResolvedValue({ ok: false, message: 'Dockerfile not found.' });
+    const notices = stubNotices();
+    const { result } = renderHook(() => useProjects(api, notices, 'vscode', []));
+    await waitFor(() => {
+      expect(result.current.unbuilt).toHaveLength(1);
+    });
+
+    await act(async () => {
+      result.current.build(project);
+      await vi.waitFor(() => {
+        expect(notices.showError).toHaveBeenCalledWith('Dockerfile not found.');
+      });
+    });
+    expect(result.current.buildingId).toBeUndefined();
+  });
+
   it('keeps the URI when opening a project fails', async () => {
     const api = fakeApi({ scan: projectScan({ projects: [project] }) });
     api.openProject = vi.fn(() =>

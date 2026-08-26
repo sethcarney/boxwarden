@@ -10,7 +10,6 @@ import type {
   EngineSelection,
   EngineSummary,
   GitStatus,
-  OpenInEditorMode,
   ProjectId,
   ProjectScan,
   TerminalId,
@@ -204,11 +203,14 @@ export const IPC = {
   discover: 'boxwarden:discover',
   start: 'boxwarden:start',
   stop: 'boxwarden:stop',
+  kill: 'boxwarden:kill',
   listEditors: 'boxwarden:list-editors',
   openInEditor: 'boxwarden:open-in-editor',
   selectEngine: 'boxwarden:select-engine',
   scanProjects: 'boxwarden:scan-projects',
   openProject: 'boxwarden:open-project',
+  buildProject: 'boxwarden:build-project',
+  rebuild: 'boxwarden:rebuild',
   addProjectRoot: 'boxwarden:add-project-root',
   removeProjectRoot: 'boxwarden:remove-project-root',
   listTerminals: 'boxwarden:list-terminals',
@@ -233,22 +235,35 @@ export interface BoxwardenApi {
   discover(): Promise<DiscoverySnapshot>;
   start(id: ContainerId): Promise<ActionResult>;
   stop(id: ContainerId): Promise<ActionResult>;
+  /**
+   * SIGKILL, immediately. The third lifecycle verb, in the same family as the
+   * two above and safe on the same terms: an id resolved against the main
+   * process's own last scan, and nothing else. It exists because `stop` can
+   * take the daemon's whole grace period — or hang past it — and the one
+   * button that helps then must not be behind the busy state `stop` set.
+   */
+  kill(id: ContainerId): Promise<ActionResult>;
+  /**
+   * `devcontainer up --remove-existing-container` for the workspace this
+   * container was built from: the existing container is REMOVED and a fresh
+   * one is built and started, exactly what the Dev Containers extension's own
+   * "Rebuild Container" does. An id and nothing else — the workspace folder
+   * handed to the CLI is the main process's own copy of the raw label, for
+   * the same reason `openInEditor` will not take a host path. Runs for
+   * minutes and resolves when the CLI does; failure carries the CLI's own
+   * outcome message.
+   */
+  rebuild(id: ContainerId): Promise<ActionResult>;
   listEditors(): Promise<readonly EditorOption[]>;
   /**
    * Open a container's workspace folder in an editor.
    *
-   * `mode` is the third input the renderer supplies anywhere in this surface,
-   * and it is safe for the same reason `updateStatus(force)` is: a closed
-   * two-arm union, parsed in the main process, that cannot name a path, a
-   * window or a binary. It chooses between focusing the window this container
-   * already has and opening a second one — and it defaults to focusing, so an
-   * older renderer that omits it gets the behaviour this verb has always had.
+   * An id and an editor id, and nothing else. A `mode` argument used to sit
+   * here choosing between focusing the open window and opening a second one;
+   * it was removed with the button that sent it, because the CLI cannot open
+   * two windows on one folder at all — see the note in `models/editor.ts`.
    */
-  openInEditor(
-    id: ContainerId,
-    editorId: EditorId,
-    mode?: OpenInEditorMode,
-  ): Promise<OpenInEditorResult>;
+  openInEditor(id: ContainerId, editorId: EditorId): Promise<OpenInEditorResult>;
   /**
    * The sixth verb, and the only one added since the surface was fixed at five.
    * It earns the channel rather than looping over an existing one because it
@@ -284,6 +299,15 @@ export interface BoxwardenApi {
    * scan rather than spawning an editor at a path the renderer supplied.
    */
   openProject(id: ProjectId, editorId: EditorId): Promise<OpenInEditorResult>;
+  /**
+   * `devcontainer up` for a project that has never been built. The id is the
+   * config path from the main process's own last scan — the same id rule as
+   * every other verb, and the sharpest case after `gitStatus`: what it
+   * resolves to is a folder whose devcontainer.json's lifecycle commands are
+   * about to be EXECUTED, so it must be one boxwarden found itself, never a
+   * path that arrived over IPC.
+   */
+  buildProject(id: ProjectId): Promise<ActionResult>;
 
   /**
    * Add a scan root, chosen in the OS folder picker.

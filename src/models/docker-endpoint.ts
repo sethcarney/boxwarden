@@ -1,15 +1,16 @@
 /**
- * Docker connectivity is modelled as TWO independent probes.
+ * Docker connectivity is modelled as THREE independent probes.
  *
- * Socket reachability and `docker` being on PATH fail separately and gate
- * different features:
+ * Socket reachability, `docker` on PATH and `devcontainer` on PATH fail
+ * separately and gate different features:
  *
- *   api.ok -> discover, start, stop. That is all of v0.
- *   cli.ok -> anything shelling out through @devcontainers/cli.
+ *   api.ok          -> discover, start, stop, kill — everything over the socket.
+ *   cli.ok          -> what @devcontainers/cli needs underneath it.
+ *   devcontainer.ok -> Build and Rebuild, which shell out to that CLI.
  *
  * Collapsing them into one "Docker is ready" boolean forces a bad choice:
- * refuse to start when `docker` is missing even though v0 never needs it, or
- * report ready and fail later at the CLI call site.
+ * refuse to start when `docker` is missing even though the socket features
+ * never need it, or report ready and fail later at the CLI call site.
  */
 
 import type { WslStatus } from './wsl.js';
@@ -111,6 +112,11 @@ export type EndpointProbe =
 /**
  * Separate from the API probe. @devcontainers/cli shells out to the `docker`
  * binary, so its presence is its own question.
+ *
+ * The same shape also reports the `devcontainer` binary itself (see
+ * `DockerEnvironment.devcontainer`): both are "is a program on this machine,
+ * and which one" questions, and giving the second its own type would only be
+ * a second spelling of this one.
  */
 export type DockerCliProbe =
   | { readonly ok: true; readonly binaryPath: string; readonly version: string }
@@ -143,6 +149,15 @@ export interface DockerEnvironment {
    */
   readonly api: EndpointProbe;
   readonly cli: DockerCliProbe;
+  /**
+   * The `devcontainer` binary (@devcontainers/cli), probed separately from
+   * both of the above because it gates a third set of features: Build and
+   * Rebuild shell out to it, and it in turn shells out to `cli`. All three
+   * fail independently — a machine can have a healthy socket, a docker binary
+   * and no devcontainer CLI, and the UI has to say which leg is missing
+   * rather than a generic "can't build".
+   */
+  readonly devcontainer: DockerCliProbe;
   /**
    * Every candidate tried and rejected, in probe order. This is not logging —
    * it is the diagnostic UI. Probing five runtimes and reporting only
