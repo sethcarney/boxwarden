@@ -17,8 +17,10 @@ unblocks the most.
   CLI (`devcontainer up`, with `--remove-existing-container` for Rebuild),
   gated on a third environment probe for the `devcontainer` binary and refused
   with the reason where it cannot work (WSL workspaces, missing CLI).
-- Open in VS Code / Insiders / Cursor / Windsurf via `vscode-remote://`, with a
-  **Copy URI** fallback when launching fails.
+- Open in VS Code via `vscode-remote://`, with a **Copy URI** fallback when
+  launching fails. Fork launch support (Insiders, Cursor, Windsurf) was
+  removed on purpose — see item 1 — though attached forks are still detected
+  and badged.
 - **Open a terminal** in a running container, via `docker exec -it` in the
   user's own emulator, with a **Copy command** fallback. Twelve emulators
   across macOS, Linux and Windows, selected from the footer.
@@ -32,6 +34,11 @@ unblocks the most.
   all" are not blind to an agent mid-task.
 - **Says which editor is already attached**, from the same process-table read, in
   that editor's own mark — and renames Open to **Focus** while a window is up.
+- **Quits VS Code from the card** when a VS Code window is attached: the whole
+  application — every window, stated in the button's own words, because VS
+  Code is one process and no CLI can close a single window. Graceful first
+  (hot exit keeps unsaved work), SIGKILL only for a quit that was ignored —
+  the same Stop/Force-stop shape the containers get.
 - **Connects to every engine that answers** and merges their lists, with a
   header picker once two are reachable and the choice persisted; plus a setup
   screen carrying every advisory and every socket tried.
@@ -112,7 +119,15 @@ things this document spent its first several revisions listing as unproven:
   install gets past the URI and into container setup, which is what proves the
   spec is right. What has not been seen through is a completed attach; the run
   that got that far stopped on the machine's own `spawn podman ENOENT`, which is
-  Cursor's container CLI configuration and not this app's.
+  Cursor's container CLI configuration and not this app's. (Since overtaken:
+  fork launch support has been removed — item 1 — so this path no longer
+  ships; the finding stays recorded for whenever a fork returns.)
+
+- **The Quit VS Code button against a real VS Code.** The plan is pinned by
+  unit tests per platform (`quit-command.test.ts`) and the graceful arm is
+  the ordinary app quit, but the sequence — probe, graceful, re-probe,
+  force — has not yet been watched against a live window on each OS. The
+  same bar every other spawn path in this app had to clear by hand.
 
 **Three further things remain unverified**, and all three are about trusting a
 build somebody else made rather than about the app working:
@@ -126,31 +141,25 @@ build somebody else made rather than about the app working:
 
 ---
 
-## 1. Delete the fork insurance, or keep it on purpose
+## 1. ~~Delete the fork insurance~~ — done, by deleting the forks
 
-`EditorTarget.remoteScheme` and `folderUriFlag` exist purely as insurance:
-every VS Code fork is _expected_ to use `vscode-remote` and `--folder-uri`, and
-Cursor and Windsurf now demonstrably do. So the fields are two levels of
-indirection carrying one value each.
+Fork launch support (Insiders, Cursor, Windsurf) was removed outright: the
+editor-lifecycle features — Focus, and the Quit VS Code button — are only
+ever exercised against VS Code, and an untested fork path is how Cursor's
+authority divergence originally reached production silently. The removal
+took `EditorTarget.remoteScheme`, `folderUriFlag` and `devContainerSpec`
+with it (the first two were the insurance this item wanted deleted; the
+third had one value left once Cursor was gone), plus the Cursor URI builder
+in `uri.ts`. Attached-editor DETECTION still covers every flavour — a badge
+before a Stop strands a window is true whoever's window it is.
 
-The instruction this section used to give itself was **delete both if neither
-diverges**, and that condition is now met. It is still listed rather than done
-because deleting them is a small, deliberate change to a launch path that is
-currently working on three platforms, and it wants its own commit rather than a
-drive-by.
-
-**But do not read that as "the forks agree".** They do not, and the divergence
-was simply somewhere neither field was looking: the `dev-container` authority's
-SPEC. VS Code hex-encodes the `devcontainer.local_folder` label; Cursor
-hex-encodes a JSON blob naming the workspace and its `devcontainer.json`. That
-is what `EditorTarget.devContainerSpec` now carries, and it is a field added
-because a fork demonstrably diverges rather than in case one might — which is
-the opposite of the two above and the reason it should outlive them.
-
-The lesson worth keeping when these two are deleted: the insurance was bought
-against the wrong risk. A fork changing the scheme or the flag would have
-failed loudly; changing the spec fails SILENTLY, because an authority the
-editor cannot resolve just opens a default window.
+The lesson worth keeping is recorded in `src/models/editor.ts` and CLAUDE.md:
+the insurance was bought against the wrong risk. No fork ever changed the
+scheme or the flag — the divergence was the `dev-container` authority's SPEC
+(VS Code hex-encodes the label; Cursor hex-encodes a JSON blob naming the
+workspace and its `devcontainer.json`), and that failure is SILENT, because
+an authority the editor cannot resolve just opens a default window. If a
+fork ever returns, `devContainerSpec` comes back first.
 
 ## 2. WSL host paths — strategies 2 and 3
 

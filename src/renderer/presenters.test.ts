@@ -7,6 +7,7 @@ import {
   claudeBadge,
   editorAction,
   killAction,
+  quitEditorAction,
   devcontainerBuildGate,
   rebuildAction,
   editorBadge,
@@ -107,8 +108,8 @@ describe('openBlockedReason', () => {
   });
 
   it('blames the machine when the editor is missing, and names it', () => {
-    expect(openBlockedReason(devContainer(), false, 'Cursor')).toBe(
-      'Cursor was not found on this machine.',
+    expect(openBlockedReason(devContainer(), false, 'VS Code')).toBe(
+      'VS Code was not found on this machine.',
     );
   });
 });
@@ -950,5 +951,40 @@ describe('branchMenu', () => {
     expect(view.kind).toBe('unavailable');
     if (view.kind !== 'unavailable') return;
     expect(view.reason).toContain('no local branches');
+  });
+});
+
+describe('quitEditorAction', () => {
+  it('offers the button only when stable VS Code is attached', () => {
+    expect(quitEditorAction({ kind: 'attached', editors: ['vscode'] }, false)).toBeDefined();
+    expect(
+      quitEditorAction({ kind: 'attached', editors: ['cursor', 'vscode'] }, false),
+    ).toBeDefined();
+  });
+
+  it('offers nothing for no attachment, an unknown read, or another editor alone', () => {
+    expect(quitEditorAction(undefined, false)).toBeUndefined();
+    expect(quitEditorAction({ kind: 'none' }, false)).toBeUndefined();
+    expect(quitEditorAction({ kind: 'not-applicable' }, false)).toBeUndefined();
+    expect(quitEditorAction({ kind: 'unknown', reason: 'top failed' }, false)).toBeUndefined();
+    expect(quitEditorAction({ kind: 'attached', editors: ['windsurf'] }, false)).toBeUndefined();
+  });
+
+  /**
+   * The honesty requirement: the operation is app-wide, because VS Code is one
+   * process and no CLI closes a single window, so the title must say "every
+   * window" rather than implying the click is scoped to this container.
+   */
+  it('states the blast radius and the safety net in the title', () => {
+    const action = quitEditorAction({ kind: 'attached', editors: ['vscode'] }, false);
+    expect(action?.title).toMatch(/every VS Code window/i);
+    expect(action?.title).toMatch(/hot exit/i);
+    expect(action?.label).toBe('Quit VS Code');
+  });
+
+  it('shortens the label under dense, keeping the full story in the title', () => {
+    const action = quitEditorAction({ kind: 'attached', editors: ['vscode'] }, true);
+    expect(action?.label).toBe('Quit');
+    expect(action?.title).toMatch(/every VS Code window/i);
   });
 });

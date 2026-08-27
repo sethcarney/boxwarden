@@ -1,5 +1,4 @@
 import { spawn } from 'node:child_process';
-import type { EditorTarget } from '../../models/index.js';
 
 /**
  * Launch an editor at a `vscode-remote://` URI.
@@ -27,9 +26,11 @@ import type { EditorTarget } from '../../models/index.js';
  *     with it. Without this the editor is a child process in our process
  *     group and dies with us.
  */
-export function launchEditor(binaryPath: string, target: EditorTarget, uri: string): Promise<void> {
+export function launchEditor(binaryPath: string, uri: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn(binaryPath, [target.folderUriFlag, uri], {
+    // `--folder-uri` was a per-editor field while forks were supported; every
+    // fork used this spelling, so it is a constant now.
+    const child = spawn(binaryPath, ['--folder-uri', uri], {
       detached: true,
       stdio: 'ignore',
       shell: false,

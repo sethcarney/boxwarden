@@ -50,6 +50,7 @@ function renderCard(
     onKill: vi.fn(),
     onRebuild: vi.fn(),
     onOpen: vi.fn(),
+    onQuitEditor: vi.fn(),
     onOpenTerminal: vi.fn(),
     onStartupCommandChange: vi.fn(),
   };
@@ -105,6 +106,7 @@ describe('ContainerCard', () => {
           onRebuild={vi.fn()}
           buildGate={{ ready: true }}
           onOpen={vi.fn()}
+          onQuitEditor={vi.fn()}
           onOpenTerminal={vi.fn()}
           onStartupCommandChange={vi.fn()}
         />,
@@ -148,22 +150,21 @@ describe('ContainerCard', () => {
     });
 
     it('is disabled, naming the editor, when that editor is not installed', () => {
-      renderCard(devContainer(), { editorAvailable: false, editorName: 'Cursor' });
-      const button = screen.getByRole('button', { name: 'Open in Cursor' });
+      renderCard(devContainer(), { editorAvailable: false, editorName: 'VS Code' });
+      const button = screen.getByRole('button', { name: 'Open in VS Code' });
       expect(button.hasAttribute('disabled')).toBe(true);
-      expect(button.getAttribute('title')).toMatch(/Cursor was not found/i);
+      expect(button.getAttribute('title')).toMatch(/VS Code was not found/i);
     });
 
     /**
-     * Rows layout gives a container one line, and "Open in VS Code Insiders"
-     * does not fit beside a name, a status and two more buttons. The editor's
-     * name moves into the tooltip rather than being lost — a user with four
-     * editors installed still has to be able to tell which one this opens.
+     * Rows layout gives a container one line, and "Open in VS Code" does not
+     * fit beside a name, a status and two more buttons. The editor's name
+     * moves into the tooltip rather than being lost.
      */
     it('drops the editor name from the label, not from the card, when dense', () => {
-      renderCard(devContainer(), { dense: true, editorName: 'VS Code Insiders' });
+      renderCard(devContainer(), { dense: true, editorName: 'VS Code' });
       const button = screen.getByRole('button', { name: 'Open' });
-      expect(button.getAttribute('title')).toBe('Open in VS Code Insiders');
+      expect(button.getAttribute('title')).toBe('Open in VS Code');
     });
 
     /**
@@ -477,6 +478,7 @@ describe('ContainerCard', () => {
           onRebuild={vi.fn()}
           buildGate={{ ready: true }}
           onOpen={vi.fn()}
+          onQuitEditor={vi.fn()}
           onOpenTerminal={vi.fn()}
           onStartupCommandChange={vi.fn()}
         />,
@@ -960,5 +962,51 @@ describe('ContainerCard', () => {
 
       expect(screen.queryByRole('button', { name: 'Copy' })).toBeNull();
     });
+  });
+});
+
+describe('the quit VS Code button', () => {
+  /**
+   * The button exists only where the operation it performs has been seen to
+   * work: stable VS Code, attached. Anything else — no attachment, an
+   * unknown read, some other editor's server — renders no button at all.
+   */
+  it('appears when stable VS Code is attached', () => {
+    renderCard(devContainer(), { editor: { kind: 'attached', editors: ['vscode'] } });
+    const button = screen.getByRole('button', { name: 'Quit VS Code' });
+    // The title must say the honest blast radius: the whole application.
+    expect(button.getAttribute('title')).toMatch(/every VS Code window/i);
+  });
+
+  it('fires the callback with the container whose card was clicked', async () => {
+    const user = userEvent.setup();
+    const container = devContainer();
+    const { onQuitEditor } = renderCard(container, {
+      editor: { kind: 'attached', editors: ['vscode'] },
+    });
+    await user.click(screen.getByRole('button', { name: 'Quit VS Code' }));
+    expect(onQuitEditor).toHaveBeenCalledWith(container);
+  });
+
+  it('does not appear when nothing is attached, or when we could not tell', () => {
+    renderCard(devContainer());
+    expect(screen.queryByRole('button', { name: /Quit/ })).toBeNull();
+    cleanup();
+    renderCard(devContainer(), { editor: { kind: 'unknown', reason: 'top failed' } });
+    expect(screen.queryByRole('button', { name: /Quit/ })).toBeNull();
+  });
+
+  it('does not appear for another editor\u2019s server', () => {
+    renderCard(devContainer(), { editor: { kind: 'attached', editors: ['cursor'] } });
+    expect(screen.queryByRole('button', { name: /Quit/ })).toBeNull();
+  });
+
+  it('says Quitting\u2026 while its own claim is held', () => {
+    renderCard(devContainer(), {
+      editor: { kind: 'attached', editors: ['vscode'] },
+      busy: true,
+      busyAction: 'quit-editor',
+    });
+    expect(screen.getByRole('button', { name: 'Quitting\u2026' })).toBeDefined();
   });
 });

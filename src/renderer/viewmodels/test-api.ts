@@ -105,6 +105,7 @@ export interface FakeApi extends BoxwardenApi {
   readonly buildProject: Mock<(id: ProjectId) => Promise<ActionResult>>;
   readonly listEditors: Mock<() => Promise<readonly EditorOption[]>>;
   openInEditor: Mock<(id: ContainerId, editorId: EditorId) => Promise<OpenInEditorResult>>;
+  readonly quitEditor: Mock<() => Promise<ActionResult>>;
   readonly selectEngine: Mock<(selection: EngineSelection) => Promise<ActionResult>>;
   readonly scanProjects: Mock<() => Promise<ProjectScan>>;
   openProject: Mock<(id: ProjectId, editorId: EditorId) => Promise<OpenInEditorResult>>;
@@ -225,6 +226,7 @@ export function fakeApi(options: FakeApiOptions = {}): FakeApi {
     openInEditor: vi.fn<(id: ContainerId, editorId: EditorId) => Promise<OpenInEditorResult>>(() =>
       Promise.resolve({ ok: true, editorId: 'vscode', uri: 'vscode-remote://x' }),
     ),
+    quitEditor: vi.fn<() => Promise<ActionResult>>(() => Promise.resolve({ ok: true })),
     selectEngine: vi.fn<(selection: EngineSelection) => Promise<ActionResult>>(() =>
       Promise.resolve({ ok: true }),
     ),

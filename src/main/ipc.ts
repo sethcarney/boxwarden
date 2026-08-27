@@ -42,7 +42,8 @@ import type { DockerBackend } from './docker/backend.js';
 import { EDITOR_TARGETS, editorTarget } from './editor/targets.js';
 import { resolveEditor } from './editor/resolve.js';
 import { launchEditor } from './editor/launch.js';
-import { cursorDevContainerUri, devContainerUri, folderUri } from './editor/uri.js';
+import { quitVsCode } from './editor/quit.js';
+import { devContainerUri, folderUri } from './editor/uri.js';
 import { scanForProjects } from './projects/scan.js';
 import { devcontainerUpInvocation, parseUpOutcome } from './devcontainer/command.js';
 import { probeDevcontainerCli } from './devcontainer/resolve.js';
@@ -359,7 +360,7 @@ export function registerIpcHandlers(context: IpcContext): void {
         available: entry.ok,
         // The resolver already knows both of these and used to drop them on the
         // floor here. Carrying them is what lets the setup page say WHICH
-        // `cursor` it found — see the note on EditorOption.
+        // `code` it found — see the note on EditorOption.
         ...(entry.ok ? { binaryPath: entry.binaryPath, via: entry.via } : {}),
       }));
     },
@@ -387,11 +388,6 @@ export function registerIpcHandlers(context: IpcContext): void {
         };
       }
 
-      // The EDITOR is resolved before the URI, and that ordering is the fix for
-      // a real bug: the two VS Code-family forks do not agree on how the
-      // `dev-container` authority is spelled, so a URI built before the target
-      // was known was VS Code's spelling handed to everyone. See
-      // `EditorTarget.devContainerSpec`.
       const target = editorTarget(String(rawEditorId));
       if (target === undefined) {
         return {
@@ -401,37 +397,12 @@ export function registerIpcHandlers(context: IpcContext): void {
         };
       }
 
-      let uri: string | undefined;
-      if (target.devContainerSpec === 'config-json') {
-        // Cursor resolves the container from its CONFIG, so it needs the
-        // devcontainer.json path as well as the workspace. Both labels are
-        // written side by side by the same extension, but a container built
-        // some other way may carry only the first.
-        const devcontainerPath = container.labels.configFileRaw;
-        if (devcontainerPath === undefined || devcontainerPath.trim() === '') {
-          return {
-            ok: false,
-            code: 'unresolved-host-path',
-            message: `${target.displayName} needs the path of this container's devcontainer.json, and it carries no devcontainer.config_file label. VS Code does not need it, so opening in VS Code still works.`,
-          };
-        }
-
-        uri = cursorDevContainerUri(
-          {
-            workspacePath: container.labels.localFolderRaw,
-            devcontainerPath,
-            // A workspace inside a distro needs the nested `@wsl+<distro>`
-            // authority — the paths in the spec are Linux paths.
-            ...(container.localFolder.kind === 'wsl'
-              ? { distro: container.localFolder.distro }
-              : {}),
-          },
-          container.workspaceFolder,
-        );
-      } else {
-        // The RAW label, not the parsed path — see src/main/editor/uri.ts.
-        uri = devContainerUri(container.labels.localFolderRaw, container.workspaceFolder);
-      }
+      // The RAW label, not the parsed path — see src/main/editor/uri.ts.
+      // While forks were supported this could only be built AFTER the editor
+      // was resolved, because Cursor spelled the authority differently; with
+      // VS Code alone there is one spelling, but the ordering is kept so a
+      // future fork cannot silently be handed the wrong one.
+      const uri = devContainerUri(container.labels.localFolderRaw, container.workspaceFolder);
 
       if (uri === undefined) {
         return {
@@ -453,7 +424,7 @@ export function registerIpcHandlers(context: IpcContext): void {
       }
 
       try {
-        await launchEditor(resolved.binaryPath, target, uri);
+        await launchEditor(resolved.binaryPath, uri);
         return { ok: true, editorId: target.id, uri };
       } catch (error) {
         return {
@@ -465,6 +436,15 @@ export function registerIpcHandlers(context: IpcContext): void {
       }
     },
     (message) => ({ ok: false, code: 'launch-failed', message }),
+  );
+
+  handle<ActionResult>(
+    IPC.quitEditor,
+    // No argument crosses the bridge, and none is read: the renderer says the
+    // user asked for VS Code to be quit, and everything else — which
+    // processes, which commands — is the main process's own fixed plan.
+    () => quitVsCode(),
+    (message) => ({ ok: false, message }),
   );
 
   // ---- Unbuilt projects ----
@@ -530,7 +510,7 @@ export function registerIpcHandlers(context: IpcContext): void {
         // container and therefore no attached window to focus or duplicate —
         // the whole point of this verb is that the folder is opened LOCALLY so
         // the editor can offer "Reopen in Container".
-        await launchEditor(resolved.binaryPath, target, uri);
+        await launchEditor(resolved.binaryPath, uri);
         return { ok: true, editorId: target.id, uri };
       } catch (error) {
         return {

@@ -21,7 +21,7 @@ import type { BoxwardenApi } from '../shared/ipc.js';
  *     Anything else arrives as undefined on the far side.
  *
  * The methods are deliberately narrow — no generic "invoke any channel" escape
- * hatch. A renderer bug can misuse only these twenty-one verbs, and every one
+ * hatch. A renderer bug can misuse only these narrow verbs, and every one
  * that acts on a container or a project takes an ID: the main process resolves
  * that to its own copy rather than acting on data the renderer supplied.
  *
@@ -48,6 +48,10 @@ const api: BoxwardenApi = {
   buildProject: (id) => ipcRenderer.invoke(IPC.buildProject, id),
   addProjectRoot: () => ipcRenderer.invoke(IPC.addProjectRoot),
   removeProjectRoot: (root) => ipcRenderer.invoke(IPC.removeProjectRoot, root),
+  // No argument, like addProjectRoot: the renderer cannot name a window, a
+  // process or a binary — the main process quits the VS Code its own fixed
+  // per-platform plan describes.
+  quitEditor: () => ipcRenderer.invoke(IPC.quitEditor),
   listTerminals: () => ipcRenderer.invoke(IPC.listTerminals),
   openTerminal: (id, terminalId) => ipcRenderer.invoke(IPC.openTerminal, id, terminalId),
   getStartupCommands: () => ipcRenderer.invoke(IPC.getStartupCommands),

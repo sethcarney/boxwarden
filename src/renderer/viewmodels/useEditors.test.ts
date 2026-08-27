@@ -6,22 +6,23 @@ import { useEditors } from './useEditors.js';
 
 describe('useEditors', () => {
   /**
-   * On a machine with only Cursor, defaulting to VS Code means every card opens
-   * with its primary action disabled.
+   * `EditorId` is an open union, so the hook stays generic over whatever list
+   * the main process offers — today that is VS Code alone, but a machine where
+   * only some other entry is installed must not default to a disabled one.
    */
   it('defaults to the first editor actually installed', async () => {
     const api = fakeApi({
       editors: [
         { id: 'vscode', displayName: 'VS Code', available: false },
-        { id: 'cursor', displayName: 'Cursor', available: true },
+        { id: 'my-fork', displayName: 'My Fork', available: true },
       ],
     });
     const { result } = renderHook(() => useEditors(api));
 
     await waitFor(() => {
-      expect(result.current.editorId).toBe('cursor');
+      expect(result.current.editorId).toBe('my-fork');
     });
-    expect(result.current.editorName).toBe('Cursor');
+    expect(result.current.editorName).toBe('My Fork');
     expect(result.current.editorAvailable).toBe(true);
   });
 
@@ -48,7 +49,7 @@ describe('useEditors', () => {
     const api = fakeApi({
       editors: [
         { id: 'vscode', displayName: 'VS Code', available: true },
-        { id: 'windsurf', displayName: 'Windsurf', available: true },
+        { id: 'my-fork', displayName: 'My Fork', available: true },
       ],
     });
     const { result } = renderHook(() => useEditors(api));
@@ -57,8 +58,8 @@ describe('useEditors', () => {
     });
 
     act(() => {
-      result.current.chooseEditor('windsurf');
+      result.current.chooseEditor('my-fork');
     });
-    expect(result.current.editorName).toBe('Windsurf');
+    expect(result.current.editorName).toBe('My Fork');
   });
 });

@@ -101,7 +101,7 @@ const EDITORS: readonly EditorOption[] = [
     binaryPath: '/usr/share/code/bin/code',
     via: 'well-known-dir',
   },
-  { id: 'cursor', displayName: 'Cursor', available: false },
+  { id: 'my-fork', displayName: 'My Fork', available: false },
 ];
 
 function renderPage(options: VmOptions = {}, env?: DockerEnvironment) {
@@ -220,7 +220,7 @@ describe('the editor inventory', () => {
 
   it('lists an editor that was not found, rather than omitting it', () => {
     renderPage();
-    expect(screen.getByText('Cursor')).toBeDefined();
+    expect(screen.getByText('My Fork')).toBeDefined();
     expect(screen.getByText('not found')).toBeDefined();
     expect(screen.getByText(/not on PATH/)).toBeDefined();
   });

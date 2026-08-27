@@ -34,11 +34,16 @@ your machine, reattaches your editor to them, and opens a shell inside them.
 - Flags containers with a **Claude Code session running inside**, and says so on
   the Stop button — so stopping one out from under an agent mid-task is a
   deliberate act rather than an accident.
-- Opens them in VS Code, VS Code Insiders, Cursor, or Windsurf — with a
-  copyable URI fallback when launching fails.
-- Says which of those is **already attached**, with that editor's own mark, and
-  renames the button to **Focus**. The Stop button says so too: an agent is
-  _ended_ by stopping a container, a window is _stranded_ by it.
+- Opens them in VS Code — with a copyable URI fallback when launching fails.
+- Says which editor is **already attached** (VS Code, Insiders, Cursor and
+  Windsurf are all detected, with each one's own mark) and renames the button
+  to **Focus**. The Stop button says so too: an agent is _ended_ by stopping a
+  container, a window is _stranded_ by it.
+- Offers **Quit VS Code** on a card with a VS Code window attached — the whole
+  application, every window, because VS Code is one process and no CLI can
+  close a single window, and the button says exactly that. It asks politely
+  first (hot exit keeps unsaved work) and force-kills only what ignores the
+  ask.
 - Opens a shell inside a running container, in your own terminal emulator —
   Terminal.app, iTerm2, GNOME Terminal, Konsole, kitty, WezTerm, Alacritty,
   Windows Terminal and others — with a copyable `docker exec` line when

@@ -18,7 +18,8 @@ import type { NoticesViewModel } from './useNotices.js';
 export const REFRESH_INTERVAL_MS = 5_000;
 
 /** Which lifecycle action holds a container's busy claim. */
-export type LifecycleVerb = 'start' | 'stop' | 'kill' | 'open' | 'terminal' | 'rebuild';
+export type LifecycleVerb =
+  'start' | 'stop' | 'kill' | 'open' | 'terminal' | 'rebuild' | 'quit-editor';
 
 /**
  * One in-flight action's claim on one container.
@@ -82,6 +83,13 @@ export interface DiscoveryViewModel {
    * see `src/models/editor.ts`.
    */
   readonly open: (container: DevContainer) => void;
+  /**
+   * Quit VS Code — the application, every window, which is the only per-editor
+   * operation that exists (see `quitEditorAction`). The container is only the
+   * card the click landed on: nothing about it crosses IPC, it just holds the
+   * busy claim so the card's buttons agree something is happening.
+   */
+  readonly quitEditor: (container: DevContainer) => void;
   /** Open a shell in the container. No-op when no terminal emulator was found. */
   readonly openTerminal: (container: DevContainer) => void;
   readonly selectEngine: (selection: EngineSelection) => void;
@@ -189,7 +197,10 @@ export function useDiscovery(
       // leaves the poll running, which is also what lets its own card show
       // the container going away and coming back. The short verbs keep the
       // guard: a poll landing mid-stop overwrites the row with pre-stop state.
-      const blockPoll = verb !== 'rebuild';
+      // Quitting the editor is the other exception, for the other reason: it
+      // waits several seconds for a graceful quit and touches no container
+      // state at all, so there is nothing a poll could overwrite.
+      const blockPoll = verb !== 'rebuild' && verb !== 'quit-editor';
       if (blockPoll) inFlight.current = true;
       try {
         const result = await action();
@@ -332,6 +343,20 @@ export function useDiscovery(
     [api, editorId, showInfo, rememberFallback, withBusy],
   );
 
+  const quitEditor = useCallback(
+    (container: DevContainer) => {
+      if (api === undefined) return;
+      void withBusy([container], 'quit-editor', async (): Promise<ActionResult> => {
+        const result = await api.quitEditor();
+        // Said explicitly on success because the effect is bigger than the
+        // card it was clicked on: every VS Code window on the machine.
+        if (result.ok) showInfo('VS Code has quit — every window, not just this container’s.');
+        return result;
+      });
+    },
+    [api, showInfo, withBusy],
+  );
+
   /**
    * Opening a terminal is not a lifecycle action, but it shares the busy set
    * with them — resolving an emulator and the container CLI spawns `which` a
@@ -435,6 +460,7 @@ export function useDiscovery(
     startAll,
     stopAll,
     open,
+    quitEditor,
     openTerminal,
     selectEngine,
   };

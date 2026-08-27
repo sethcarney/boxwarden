@@ -188,6 +188,34 @@ export function editorAction(
 }
 
 /**
+ * The Quit VS Code button, or nothing.
+ *
+ * Rendered ONLY when stable VS Code's server is attached to this container —
+ * the one editor whose quit path exists and has been exercised. It cannot be
+ * per-window: VS Code is one process serving every window, and no CLI can
+ * close just one, so the label and title say the true blast radius out loud
+ * rather than implying a precision the operation does not have. The click is
+ * still safe on its own terms — the graceful arm is the same quit ⌘Q
+ * delivers, hot exit keeps unsaved buffers, and force only follows a quit
+ * that was ignored.
+ *
+ * An `unknown` attachment renders nothing, same as the badge's reasoning
+ * reversed: this is a destructive-ish button, and offering it on "we could
+ * not tell" would put it on every card boxwarden cannot read.
+ */
+export function quitEditorAction(
+  attachment: EditorAttachment | undefined,
+  dense: boolean,
+): EditorAction | undefined {
+  if (attachment?.kind !== 'attached' || !attachment.editors.includes('vscode')) return undefined;
+  return {
+    label: dense ? 'Quit' : 'Quit VS Code',
+    title:
+      'Quits VS Code on this machine — every VS Code window closes, not just this container’s. VS Code is asked to quit first, so its hot exit keeps unsaved work and the windows restore on next launch; it is force-killed only if it does not answer.',
+  };
+}
+
+/**
  * Why the Terminal button is disabled, or undefined when it is not.
  *
  * Two preconditions, and the order matters: a stopped container cannot be

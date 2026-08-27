@@ -48,6 +48,7 @@ interface Props {
   readonly onKill: (container: DevContainer) => void;
   readonly onRebuild: (container: DevContainer) => void;
   readonly onOpen: (container: DevContainer) => void;
+  readonly onQuitEditor: (container: DevContainer) => void;
   readonly onOpenTerminal: (container: DevContainer) => void;
   readonly onStartupCommandChange: (container: DevContainer, command: string) => void;
   readonly onStartAll: (containers: readonly DevContainer[]) => void;
@@ -86,6 +87,7 @@ export function ContainerList({
   onKill,
   onRebuild,
   onOpen,
+  onQuitEditor,
   onOpenTerminal,
   onStartupCommandChange,
   onStartAll,
@@ -119,6 +121,7 @@ export function ContainerList({
       onKill={onKill}
       onRebuild={onRebuild}
       onOpen={onOpen}
+      onQuitEditor={onQuitEditor}
       onOpenTerminal={onOpenTerminal}
       onStartupCommandChange={onStartupCommandChange}
     />

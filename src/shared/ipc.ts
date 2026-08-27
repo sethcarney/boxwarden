@@ -213,6 +213,7 @@ export const IPC = {
   rebuild: 'boxwarden:rebuild',
   addProjectRoot: 'boxwarden:add-project-root',
   removeProjectRoot: 'boxwarden:remove-project-root',
+  quitEditor: 'boxwarden:quit-editor',
   listTerminals: 'boxwarden:list-terminals',
   openTerminal: 'boxwarden:open-terminal',
   getStartupCommands: 'boxwarden:get-startup-commands',
@@ -264,6 +265,25 @@ export interface BoxwardenApi {
    * two windows on one folder at all — see the note in `models/editor.ts`.
    */
   openInEditor(id: ContainerId, editorId: EditorId): Promise<OpenInEditorResult>;
+  /**
+   * Quit VS Code on this machine. Every window — VS Code is one process, and
+   * there is no supported way to close one window from outside (the CLI can
+   * open windows but not enumerate or close them), so this is the only honest
+   * spelling of "get that window off my screen". Graceful first — the same
+   * quit ⌘Q delivers, so hot exit keeps unsaved work — then SIGKILL for
+   * whatever ignored it. See src/main/editor/quit-command.ts.
+   *
+   * NO argument, the `addProjectRoot` shape: there is nothing safe for the
+   * renderer to name here. Not a window (they cannot be addressed), not a
+   * process id, not a binary. The plan is a fixed per-platform table in the
+   * main process.
+   *
+   * It earns the channel the way the terminal verbs did: it spawns a process
+   * (`taskkill` / `pkill` / `osascript`) no combination of the other verbs
+   * can express.
+   */
+  quitEditor(): Promise<ActionResult>;
+
   /**
    * The sixth verb, and the only one added since the surface was fixed at five.
    * It earns the channel rather than looping over an existing one because it

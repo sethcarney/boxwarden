@@ -6,8 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 boxwarden is an Electron desktop app (working, pre-1.0) that lists dev containers on
 the local machine — filtered to those carrying the `devcontainer.local_folder`
-label — and reattaches an editor (VS Code, Insiders, Cursor, Windsurf) to
-them. It also groups Docker Compose projects, starts/stops containers
+label — and reattaches VS Code to them (fork support — Insiders, Cursor,
+Windsurf — was removed on purpose; see "The forks were removed" below). It also groups Docker Compose projects, starts/stops containers
 individually or per project, and scans the filesystem for dev container
 projects that have never been built.
 
@@ -108,19 +108,19 @@ Docker daemon or a display, and why the shells stay small.
 `useAppViewModel()` composes eleven, kept separate because their lifetimes
 genuinely differ:
 
-| Hook              | Owns                                                                                        | Cadence                    |
-| ----------------- | ------------------------------------------------------------------------------------------- | -------------------------- |
-| `useDiscovery`    | snapshot, busy set, lifecycle verbs (start/stop/kill/rebuild), open/terminal, engine choice | polled every 5s            |
-| `useProjects`     | scan, roots, unbuilt/built partition                                                        | on open, on ask            |
-| `useEditors`      | installed editors, the chosen one                                                           | read once                  |
-| `useTerminals`    | installed emulators, the chosen one, startup commands                                       | read once                  |
-| `useNotices`      | the message bar and the copyable fallback                                                   | event-driven               |
-| `useClaudeStatus` | Claude Code presence per container                                                          | polled every 15s           |
-| `useGitStatus`    | the branch each workspace folder is on                                                      | polled every 30s           |
-| `useBranches`     | the open branch menu, its listing, and switching                                            | on click only              |
-| `useUpdate`       | the release check: banner, footer line, dismiss, off switch                                 | asked hourly, GitHub daily |
-| `useAdvisories`   | which advice is hidden, and which screen is showing                                         | never touches IPC          |
-| `useTheme`        | layout + theme, persisted to localStorage                                                   | never touches IPC          |
+| Hook              | Owns                                                                                                    | Cadence                    |
+| ----------------- | ------------------------------------------------------------------------------------------------------- | -------------------------- |
+| `useDiscovery`    | snapshot, busy set, lifecycle verbs (start/stop/kill/rebuild), open/terminal/quit-editor, engine choice | polled every 5s            |
+| `useProjects`     | scan, roots, unbuilt/built partition                                                                    | on open, on ask            |
+| `useEditors`      | installed editors, the chosen one                                                                       | read once                  |
+| `useTerminals`    | installed emulators, the chosen one, startup commands                                                   | read once                  |
+| `useNotices`      | the message bar and the copyable fallback                                                               | event-driven               |
+| `useClaudeStatus` | Claude Code presence per container                                                                      | polled every 15s           |
+| `useGitStatus`    | the branch each workspace folder is on                                                                  | polled every 30s           |
+| `useBranches`     | the open branch menu, its listing, and switching                                                        | on click only              |
+| `useUpdate`       | the release check: banner, footer line, dismiss, off switch                                             | asked hourly, GitHub daily |
+| `useAdvisories`   | which advice is hidden, and which screen is showing                                                     | never touches IPC          |
+| `useTheme`        | layout + theme, persisted to localStorage                                                               | never touches IPC          |
 
 Four conventions hold this together:
 
@@ -152,7 +152,7 @@ Four conventions hold this together:
   is an arm of `UpdateStatus` instead, so it renders where the answer would
   have.
 
-**The IPC surface is twenty-four narrow verbs** — see `src/shared/ipc.ts` — all
+**The IPC surface is twenty-five narrow verbs** — see `src/shared/ipc.ts` — all
 declared as a `BoxwardenApi` interface consumed by the renderer without
 importing Electron. They fall into three groups by cadence:
 
@@ -161,6 +161,14 @@ importing Electron. They fall into three groups by cadence:
   grace — a separate verb and not a flag on `stop`, because the two make
   different promises to the process inside, and because the moment it matters
   is while a `stop` is still hanging.
+- **The editor's own lifecycle, on a click**: `quitEditor` — quit VS Code on
+  this machine, gracefully then by force. It takes NO argument (the
+  `addProjectRoot` shape: there is nothing safe for a renderer to name — not
+  a window, not a pid, not a binary), and it is app-wide on purpose: VS Code
+  is one process serving every window and no CLI can close just one, so the
+  honest verb is "quit", said with its real blast radius in the button's own
+  words. It clears the terminal verbs' bar — it spawns `taskkill` / `pkill` /
+  `osascript`, which nothing else can express.
 - **Filesystem, on demand only**: `scanProjects`, `openProject`,
   `addProjectRoot`, `removeProjectRoot`.
 - **The devcontainer CLI, on a click and then for minutes**: `buildProject`
@@ -242,39 +250,30 @@ exist, so VS Code offers to build a new one instead of reattaching. The
 `does not normalise the host path` test in `uri.test.ts` pins this — don't
 "fix" `authorityFor` to normalize.
 
-### The forks do not agree on the authority
+### The forks were removed, and what to know if they return
 
-`vscode-remote://dev-container+<spec>/<container path>` is the shape, and
-**`<spec>` is not the same thing in every editor**. This is the divergence
-`remoteScheme` and `folderUriFlag` were added as insurance against, and it
-turned out to be neither of them — both of those match everywhere.
+Launch support is **VS Code stable only**. Insiders, Cursor and Windsurf were
+supported, verified against real installs, and then removed deliberately: the
+editor-lifecycle features (Focus, and now Quit VS Code) are only ever
+exercised against VS Code, and an untested fork path is how Cursor's
+authority divergence originally reached production silently. What survives
+them:
 
-| Editor            | `devContainerSpec` | `<spec>` is the hex of                                         |
-| ----------------- | ------------------ | -------------------------------------------------------------- |
-| VS Code, Insiders | `local-folder`     | the `devcontainer.local_folder` label, byte for byte           |
-| Cursor            | `config-json`      | `{settingType,workspacePath,devcontainerPath}` as compact JSON |
-| Windsurf          | `local-folder`     | assumed, unverified — no evidence it diverges                  |
-
-Three things follow:
-
-- **The editor is resolved BEFORE the URI is built** (`openInEditor` in
-  `ipc.ts`). It used to be the other way round, which meant every fork got VS
-  Code's spelling. The failure is silent and looks like the editor ignoring the
-  flag: an authority it cannot resolve just opens a default window.
-- **Cursor needs `devcontainer.config_file` as well as
-  `devcontainer.local_folder`.** Both are written side by side by the extension,
-  but a container built another way may carry only the first — so the Open
-  button refuses with a reason that says VS Code will still work.
-- **A workspace inside WSL needs a NESTED authority** —
-  `dev-container+<hex>@wsl+<distro>` — because the paths inside Cursor's JSON
-  are Linux paths. VS Code needs no equivalent, because its spec is the label
-  and the extension already wrote whatever it wrote.
-
-The raw-label rule still governs the `local-folder` arm and is unchanged. The
-`config-json` arm has its own version of it: the JSON is compact and its keys
-are emitted in the order Cursor documents, because the authority is also the
-identity a window is matched against — two spellings of one container would
-open two windows on it.
+- **Attached-editor DETECTION still covers every flavour**
+  (`editor-session.ts`, `EditorGlyph`). Warning before a Stop strands a
+  window is true whoever's window it is, so a Cursor server still shows a
+  badge — it just has no launch or quit path behind it.
+- **The lesson worth keeping**: the forks did NOT agree on the
+  `dev-container` authority's `<spec>`. VS Code hex-encodes the
+  `devcontainer.local_folder` label; Cursor hex-encodes a
+  `{settingType,workspacePath,devcontainerPath}` JSON blob (nested
+  `@wsl+<distro>` for a WSL workspace), and needs `devcontainer.config_file`
+  as well. The failure is silent — an authority the editor cannot resolve
+  just opens a default window — which is why `openInEditor` still resolves
+  the editor BEFORE building the URI. If a fork ever comes back,
+  `devContainerSpec` on `EditorTarget` is the field to bring back first (see
+  `src/models/editor.ts`); `remoteScheme` and `folderUriFlag` were pure
+  insurance and never diverged, so they should not.
 
 ### Discovery
 
@@ -637,12 +636,24 @@ would double the poll's Docker traffic to learn nothing extra.
   The presenter supplies `{ flavour, name }` pairs because a View may not call
   `editorDisplayName`; the lint rule enforces that.
 
-- **boxwarden cannot close the window, and does not try.** The `code` CLI can
-  open windows and install extensions; it cannot enumerate or close them, and
-  killing the host process would take unsaved buffers with it. So Stop is
+- **boxwarden cannot close ONE window, and does not pretend to.** The `code`
+  CLI can open windows and install extensions; it cannot enumerate or close
+  them, and VS Code is one process serving every window. So Stop is
   ANNOTATED, the same as it is for a Claude session — `stopWarning` folds both,
   and words them differently on purpose: an agent is ENDED by stopping, a window
   is STRANDED by it.
+- **What it CAN do is quit VS Code, and it says exactly that.** A card whose
+  attachment includes stable VS Code offers **Quit VS Code** (`quitEditorAction`
+  in `presenters.ts`, the `quitEditor` verb, `src/main/editor/quit-command.ts`
+  - `quit.ts`). Three rules hold it together: the label and title state the
+    real blast radius — every VS Code window on the machine, not this
+    container's — because a scoped-sounding button doing an app-wide thing is a
+    lie; the graceful arm goes first (the same quit ⌘Q delivers, so hot exit
+    keeps unsaved buffers and windows restore on relaunch) and SIGKILL only
+    follows a quit that was ignored, the Stop/Force-stop shape again; and it
+    targets stable VS Code ONLY — the fork removal above exists because this
+    button has never been tested against Insiders, Cursor or Windsurf, so
+    their attachments render a badge and no button.
 - **It renames the card's button, and does not add one.** With a window
   attached the primary action reads **Focus** instead of **Open in VS Code**
   (`editorAction` in `presenters.ts`); the click is identical, because the CLI's

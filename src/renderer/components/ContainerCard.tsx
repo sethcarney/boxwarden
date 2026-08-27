@@ -22,6 +22,7 @@ import {
   editorAction,
   editorBadge,
   killAction,
+  quitEditorAction,
   rebuildAction,
   stopWarning,
   openBlockedReason,
@@ -112,6 +113,7 @@ interface Props {
   readonly onKill: (container: DevContainer) => void;
   readonly onRebuild: (container: DevContainer) => void;
   readonly onOpen: (container: DevContainer) => void;
+  readonly onQuitEditor: (container: DevContainer) => void;
   readonly onOpenTerminal: (container: DevContainer) => void;
   readonly onStartupCommandChange: (container: DevContainer, command: string) => void;
 }
@@ -145,6 +147,7 @@ export function ContainerCard({
   onKill,
   onRebuild,
   onOpen,
+  onQuitEditor,
   onOpenTerminal,
   onStartupCommandChange,
 }: Props) {
@@ -158,6 +161,7 @@ export function ContainerCard({
   const branch = branchChip(git);
   const warning = stopWarning([claude], [editor]);
   const action = editorAction(editor, editorName, blocked, dense);
+  const quitEditor = quitEditorAction(editor, dense);
   const kill = killAction(warning, dense);
   const rebuild = rebuildAction(container, buildGate, warning, dense);
 
@@ -354,6 +358,24 @@ export function ContainerCard({
         >
           {action.label}
         </button>
+
+        {/* Only when stable VS Code's server is attached — the one editor
+            whose quit path exists. The label says the honest scope: the
+            OPERATION is app-wide, because VS Code is one process and no CLI
+            can close a single window. See `quitEditorAction`. */}
+        {quitEditor !== undefined && (
+          <button
+            type="button"
+            className="quit-editor"
+            title={quitEditor.title}
+            disabled={busy}
+            onClick={() => {
+              onQuitEditor(container);
+            }}
+          >
+            {busy && busyAction === 'quit-editor' ? 'Quitting…' : quitEditor.label}
+          </button>
+        )}
 
         <button
           type="button"

@@ -83,6 +83,7 @@ export function ContainersView({ vm }: Props) {
         onKill={discovery.kill}
         onRebuild={discovery.rebuild}
         onOpen={discovery.open}
+        onQuitEditor={discovery.quitEditor}
         onOpenTerminal={discovery.openTerminal}
         onStartupCommandChange={terminals.setStartupCommand}
         onStartAll={discovery.startAll}

@@ -1,6 +1,15 @@
 import type { BinaryDiscovery } from './discovery.js';
 
-export type KnownEditorId = 'vscode' | 'vscode-insiders' | 'cursor' | 'windsurf';
+/**
+ * VS Code only. Insiders, Cursor and Windsurf were supported and were removed
+ * deliberately: the app's editor-lifecycle features (and everything to come —
+ * quitting the editor from a card) are only ever exercised against VS Code,
+ * and shipping launch paths nobody tests is how the Cursor `config-json`
+ * divergence got to production silently. Their ATTACHMENT detection stays —
+ * see `editor-session.ts` — because warning before a Stop strands a window is
+ * true whoever's window it is.
+ */
+export type KnownEditorId = 'vscode';
 
 /** Open-ended: a user-configured fork should not require a code change. */
 export type EditorId = KnownEditorId | (string & {});
@@ -23,33 +32,25 @@ export interface EditorTarget {
   readonly displayName: string;
   /** A user override belongs at the front of this list. */
   readonly discovery: readonly EditorDiscovery[];
-  /**
-   * Almost certainly 'vscode-remote' for every VS Code fork. Configurable as
-   * cheap insurance until Phase 4 can verify Cursor and Windsurf empirically —
-   * if neither diverges, this field and `folderUriFlag` should be deleted.
-   */
-  readonly remoteScheme: string;
-  /** Almost certainly '--folder-uri'. Same caveat as `remoteScheme`. */
-  readonly folderUriFlag: string;
-  /**
-   * How this editor spells the `dev-container` authority's SPEC — the part
-   * after the `+`.
-   *
-   * This is the fork divergence `remoteScheme` and `folderUriFlag` were added
-   * as insurance against, and it turned out to be neither of them:
-   *
-   *   - `local-folder` — VS Code. The hex of the `devcontainer.local_folder`
-   *     label, byte for byte. See `authorityFor`.
-   *   - `config-json` — Cursor. The hex of a JSON blob naming the workspace and
-   *     its devcontainer.json (`{settingType,workspacePath,devcontainerPath}`),
-   *     per Cursor's own "Opening Remote Containers via the CLI" docs.
-   *
-   * The two are not interchangeable and the failure is silent: Cursor given VS
-   * Code's spelling cannot resolve the authority and falls back to opening its
-   * default window, which looks exactly like the editor ignoring the flag.
-   */
-  readonly devContainerSpec: 'local-folder' | 'config-json';
 }
+
+/**
+ * Three fields used to sit on `EditorTarget` and were deleted with the forks:
+ *
+ *   - `remoteScheme` and `folderUriFlag` were insurance against a fork
+ *     changing the URI scheme or the flag. None ever did — the real
+ *     divergence was elsewhere, see below — so with one editor left they were
+ *     two levels of indirection carrying one constant each. The constants now
+ *     live where they are used: `vscode-remote://` in `uri.ts`, `--folder-uri`
+ *     in `launch.ts`.
+ *
+ *   - `devContainerSpec` recorded the divergence that DID happen: Cursor
+ *     spells the `dev-container` authority as the hex of a JSON blob
+ *     (`{settingType,workspacePath,devcontainerPath}`), not the hex of the
+ *     `devcontainer.local_folder` label. If fork support ever returns, that is
+ *     the field to bring back first — the failure mode is silent, because an
+ *     authority the editor cannot resolve just opens a default window.
+ */
 
 /**
  * There is deliberately NO `newWindowFlag` here, and no mode alongside the id
