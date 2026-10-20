@@ -42,7 +42,7 @@
     // the client CLI matters (it talks to the host's socket), so Docker CE vs
     // moby is functionally identical here. If the base image is ever moved
     // back to bookworm, "moby": true becomes available again.
-    "ghcr.io/devcontainers/features/docker-outside-of-docker:1.10.0": {
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1.10.1": {
       "version": "latest",
       "moby": false,
       "installDockerBuildx": true,
